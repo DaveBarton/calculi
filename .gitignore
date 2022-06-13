@@ -1,0 +1,7 @@
+/cabal.project.local
+/cabal.project.local~
+/dist
+/dist-newstyle
+*.prof
+*.eventlog
+.DS_Store

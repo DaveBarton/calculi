@@ -1,0 +1,65 @@
+Math proposed initial directories & rough arXiv/MSC classifications:
+
+Logic                   -- math.LO; 03 Mathematical logic
+Algebra
+    NumberTheory        -- math.NT; 11 Number theory
+    Group               -- math.GR; 20 Group theory
+        Representation  -- math.RT
+        Lie             -- 22 Lie groups
+    Commutative         -- math.AC; 13 Commutative rings
+        Field           -- 12 Field theory
+    AlgGeom             -- math.AG; 14 Algebraic geometry
+    Linear              -- 15 Linear algebra
+    General             -- math.RA
+                        -- 16 Associative rings and algebras
+                        -- 17 Nonassociative rings and algebras
+                        -- 08 General algebraic systems
+                        -- 06 Order, lattices
+    Category            -- math.CT; 18 Category theory, homological algebra
+    KTheory             -- math.KT; 19 K-theory
+    CombinGraph         -- math.CO; 05 Combinatorics and graph theory
+    Quantum             -- math.QA
+Analysis                -- math.CA
+    Real
+                        -- 26 Real functions and elementary calculus
+                        -- 28 Measure and integration
+                        -- 33 Special functions
+                        -- 39 Finite differences and functional equations
+                        -- 40 Sequences and series
+    Complex             -- math.CV
+                        -- 30 Complex variables
+                        -- 31 Potential theory
+                        -- 32 Several complex variables
+    DiffEqs
+        ODEs            -- 34 Ordinary differential equations
+        PDEs            -- math.AP; 35 Partial differential equations
+        DynSys          -- math.DS; 37 Dynamical systems
+                        -- 58 Global analysis, analysis on manifolds
+        IntegralEqs     -- 45 Integral equations
+                        -- 49 Calculus of variations
+    Functional          -- math.FA; 46 Functional analysis
+                        -- 42 Fourier analysis
+                        -- 43 Abstract harmonic analysis
+                        -- 44 Integral transforms
+        Operator        -- math.OA, math.SP; 47 Operator theory
+    Numerical           -- math.NA
+                        -- 65 Numerical analysis
+                        -- 41 Approximations and expansions
+    Optimization        -- math.OC
+                        -- 90 Operations research, mathematical programming
+                        -- 91 Game theory, economics, social and behavioral sciences
+Geometry
+    Metric              -- math.MG
+                        -- 51 Geometry, including classic Euclidean geometry
+                        -- 52 Convex and discrete geometry
+    Differential        -- math.DG; 53 Differential geometry
+    Symplectic          -- math.SG
+    Topology            -- math.GN; 54 General topology
+        Algebraic       -- math.AT; 55 Algebraic topology
+        Geometric       -- math.GT; 57 Manifolds and cell complexes
+Prob                    -- math.PR; 60 Probability theory and stochastic processes
+Stat                    -- math.ST; 62 Statistics
+
+References:
+http://www.math.niu.edu/~rusin/known-math/index/beginners.html
+http://arxiv.org/archive/math

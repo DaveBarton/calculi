@@ -1,0 +1,95 @@
+drb's iMac:
+  Model Identifier:	iMac17,1
+  Processor Name:	Quad-Core Intel Core i5
+  Processor Speed:	3.2 GHz
+  Number of Processors:	1
+  Total Number of Cores:	4
+  L2 Cache (per Core):	256 KB
+  L3 Cache:	6 MB
+  Memory:	16 GB
+
+
+drb$ cabal run time-gb -- +RTS -N3 -A80m -s	# 2022-05-31, ghc 9.2.2
+
+Groebner Basis CPU/Elapsed Times: 11.690964s/4.010303s 
+# SPairs reduced = 877
+# reduction steps = 512624
+generated (redundant) basis has 143 elements with 26130 monomials
+
+Groebner Basis CPU/Elapsed Times: 8.973770s/3.099206s 
+# SPairs reduced = 2075
+# reduction steps = 469794
+generated (redundant) basis has 663 elements with 148417 monomials
+
+Groebner Basis CPU/Elapsed Times: 17.091961s/5.968842s 
+# SPairs reduced = 5752
+# reduction steps = 2475221
+generated (redundant) basis has 900 elements with 290098 monomials
+
+
+drb$ cabal run time-gb -- +RTS -N3 -s	# 2022-05-31, ghc 9.2.2, no -with-rts-opts
+
+Groebner Basis CPU/Elapsed Times: 12.889582s/4.684790s 
+# SPairs reduced = 877
+# reduction steps = 512491
+generated (redundant) basis has 143 elements with 26130 monomials
+
+Groebner Basis CPU/Elapsed Times: 9.521723s/3.438822s 
+# SPairs reduced = 2087
+# reduction steps = 474152
+generated (redundant) basis has 662 elements with 148591 monomials
+
+Groebner Basis CPU/Elapsed Times: 18.952865s/6.923919s 
+# SPairs reduced = 5752
+# reduction steps = 2475674
+generated (redundant) basis has 900 elements with 290098 monomials
+
+
+drb$ cabal run time-gb -- +RTS -N3
+2022-06-07, x86_64-darwin/ghc-9.2.2, using 3 of 4 cores
+
+katsura8 
+Groebner Basis CPU/Elapsed Times: 12.182797s/4.273710s 
+# SPairs reduced = 877
+# reduction steps = 512479
+generated (redundant) basis has 143 elements with 26130 monomials
+
+cyclic7 
+Groebner Basis CPU/Elapsed Times: 9.826072s/3.505138s 
+# SPairs reduced = 2093
+# reduction steps = 486681
+generated (redundant) basis has 658 elements with 147324 monomials
+
+jason210 
+Groebner Basis CPU/Elapsed Times: 17.937811s/6.361226s 
+# SPairs reduced = 5752
+# reduction steps = 2475503
+generated (redundant) basis has 900 elements with 290098 monomials
+
+
+By comparison, Macaulay2 version 1.19.1 times on drb's iMac:
+katsura8: 7.1s
+cyclic7: 6.8s
+jason210: 22.8s
+
+
+drb$ cabal run time-gb -- +RTS -N1
+2022-06-12, x86_64-darwin/ghc-9.2.2, using 1 of 4 cores
+
+katsura8 
+Groebner Basis CPU/Elapsed Times: 10.874222s/10.872163s 
+# SPairs reduced = 877
+# reduction steps = 512836
+generated (redundant) basis has 143 elements with 26130 monomials
+
+cyclic7 
+Groebner Basis CPU/Elapsed Times: 9.136430s/9.131458s 
+# SPairs reduced = 2097
+# reduction steps = 463579
+generated (redundant) basis has 686 elements with 153436 monomials
+
+jason210 
+Groebner Basis CPU/Elapsed Times: 16.291779s/16.278993s 
+# SPairs reduced = 5752
+# reduction steps = 2473426
+generated (redundant) basis has 900 elements with 290098 monomials
