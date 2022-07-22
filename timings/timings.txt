@@ -93,3 +93,62 @@ Groebner Basis CPU/Elapsed Times: 16.291779s/16.278993s
 # SPairs reduced = 5752
 # reduction steps = 2473426
 generated (redundant) basis has 900 elements with 290098 monomials
+
+
+====
+
+
+bmt's MacBook Pro:
+  Model Identifier: MacBookPro16,1
+  Processor Name: 8-Core Intel Core i9
+  Processor Speed: 2.4 GHz
+  Number of Processors: 1
+  Total Number of Cores: 8
+  L2 Cache (per Core): 256 KB
+  L3 Cache: 16 MB
+  Hyper-Threading Technology: Enabled
+  Memory: 32 GB
+
+
+bmt@barrys-mbp calculi-main % cabal run time-gb -- +RTS -N1
+2022-07-21, x86_64-darwin/ghc-8.10, using 1 of 16 (hyperthreaded) cores
+
+katsura8
+Groebner Basis CPU/Elapsed Times: 9.142490s/9.141392s
+# SPairs reduced = 877
+# reduction steps = 512836
+generated (redundant) basis has 143 elements with 26130 monomials
+
+cyclic7
+Groebner Basis CPU/Elapsed Times: 7.713509s/7.711250s
+# SPairs reduced = 2097
+# reduction steps = 463579
+generated (redundant) basis has 686 elements with 153436 monomials
+
+jason210
+Groebner Basis CPU/Elapsed Times: 14.505483s/14.502126s
+# SPairs reduced = 5752
+# reduction steps = 2473426
+generated (redundant) basis has 900 elements with 290098 monomials
+
+
+bmt@barrys-mbp calculi-main % cabal run time-gb -- +RTS -N7
+2022-07-21, x86_64-darwin/ghc-8.10, using 7 of 16 (hyperthreaded) cores
+
+katsura8
+Groebner Basis CPU/Elapsed Times: 13.335607s/1.958879s
+# SPairs reduced = 877
+# reduction steps = 513263
+generated (redundant) basis has 143 elements with 26130 monomials
+
+cyclic7
+Groebner Basis CPU/Elapsed Times: 10.424614s/1.706620s
+# SPairs reduced = 2099
+# reduction steps = 476921
+generated (redundant) basis has 654 elements with 146519 monomials
+
+jason210
+Groebner Basis CPU/Elapsed Times: 20.109366s/3.072288s
+# SPairs reduced = 5752
+# reduction steps = 2476692
+generated (redundant) basis has 900 elements with 290098 monomials
