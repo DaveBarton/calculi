@@ -68,9 +68,9 @@ generated (redundant) basis has 900 elements with 290098 monomials
 
 
 By comparison, Macaulay2 version 1.19.1 times on drb's iMac:
-katsura8: 7.1s
-cyclic7: 6.8s
-jason210: 22.8s
+katsura8: 7.7s (or Algorithm => Sugarless 6.6s, Homogeneous 9.0s, Homogeneous2 6.7s)
+cyclic7: 6.7s (or Algorithm => Sugarless 29.1s)
+jason210: 25.8s (or Algorithm => Sugarless 11.0s, Homogeneous 24.5s, Homogeneous2 10.3s)
 
 
 drb$ cabal run time-gb -- +RTS -N1
@@ -132,23 +132,45 @@ Groebner Basis CPU/Elapsed Times: 14.505483s/14.502126s
 generated (redundant) basis has 900 elements with 290098 monomials
 
 
-bmt@barrys-mbp calculi-main % cabal run time-gb -- +RTS -N7
-2022-07-21, x86_64-darwin/ghc-8.10, using 7 of 16 (hyperthreaded) cores
+bmt@barrys-mbp calculi-main % cabal run time-gb -- +RTS -N6
+2022-07-23, x86_64-darwin/ghc-8.10, using 6 of 16 (hyperthreaded) cores
 
 katsura8
-Groebner Basis CPU/Elapsed Times: 13.335607s/1.958879s
+Groebner Basis CPU/Elapsed Times: 11.634266s/1.976014s
 # SPairs reduced = 877
-# reduction steps = 513263
+# reduction steps = 512922
 generated (redundant) basis has 143 elements with 26130 monomials
 
 cyclic7
-Groebner Basis CPU/Elapsed Times: 10.424614s/1.706620s
-# SPairs reduced = 2099
-# reduction steps = 476921
-generated (redundant) basis has 654 elements with 146519 monomials
+Groebner Basis CPU/Elapsed Times: 8.704270s/1.599766s
+# SPairs reduced = 2050
+# reduction steps = 455289
+generated (redundant) basis has 658 elements with 147172 monomials
 
 jason210
-Groebner Basis CPU/Elapsed Times: 20.109366s/3.072288s
+Groebner Basis CPU/Elapsed Times: 17.878762s/3.149424s
 # SPairs reduced = 5752
-# reduction steps = 2476692
+# reduction steps = 2476318
+generated (redundant) basis has 900 elements with 290098 monomials
+
+
+bmt@barrys-mbp calculi-main % cabal run time-gb -- +RTS -N7
+2022-07-23, x86_64-darwin/ghc-8.10, using 7 of 16 (hyperthreaded) cores
+
+katsura8
+Groebner Basis CPU/Elapsed Times: 13.004408s/1.904797s
+# SPairs reduced = 877
+# reduction steps = 512953
+generated (redundant) basis has 143 elements with 26130 monomials
+
+cyclic7
+Groebner Basis CPU/Elapsed Times: 10.337291s/1.684671s
+# SPairs reduced = 2094
+# reduction steps = 474015
+generated (redundant) basis has 655 elements with 146741 monomials
+
+jason210
+Groebner Basis CPU/Elapsed Times: 19.802120s/3.025716s
+# SPairs reduced = 5752
+# reduction steps = 2477018
 generated (redundant) basis has 900 elements with 290098 monomials
