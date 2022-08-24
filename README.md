@@ -2,7 +2,7 @@
 
 ## “Use all your cores”
 
-![Lines of code](https://img.shields.io/tokei/lines/github/DaveBarton/calculi?label=lines%20of%20code)
+<!-- ![Lines of code](https://img.shields.io/tokei/lines/github/DaveBarton/calculi?label=lines%20of%20code) -->
 ![Code size in bytes](https://img.shields.io/github/languages/code-size/DaveBarton/calculi)
 ![License](https://img.shields.io/github/license/DaveBarton/calculi)
 <!-- ![Hackage](https://img.shields.io/hackage/v/DaveBarton/calculi) -->
