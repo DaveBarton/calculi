@@ -2,19 +2,25 @@
 
 {- |  Groebner Basis demo examples  -}
 
-module Math.Algebra.Commutative.GBDemo {- @@() -} where
+module Math.Algebra.Commutative.GBDemo (
+    gbDemo,
+    simpleDemo, buchberger87, gerdt93, katsura5, katsura6, katsura7, katsura8, katsura10,
+    hCyclic4, cyclic4, hCyclic5, cyclic5, hCyclic6, cyclic6, hCyclic7, cyclic7,
+    hCyclic8, schransTroost, jason210, cyclic8big
+) where
 
 import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
 import Math.Algebra.Commutative.EPoly
+import Math.Algebra.Commutative.GroebnerBasis
 import Math.Algebra.Commutative.Field.ZModP32
 
 
 -- See http://www.math.usm.edu/perry/Research/f5ex.lib as in
 -- https://arxiv.org/pdf/0906.2967.pdf
 
-type Zp         = ZModP32
-type ZpEPoly    = EPoly Zp
+-- type Zp         = ZModP32
+-- type ZpEPoly    = EPoly Zp
 
 gbDemo          :: String -> Integer -> [String] -> [String] -> Int -> IO ()
 gbDemo name p varSs genSs nCores    = do    -- p is a prime < 2^32, varSs have precedence > '^'
@@ -24,10 +30,11 @@ gbDemo name p varSs genSs nCores    = do    -- p is a prime < 2^32, varSs have p
   where
     (cField, cBalRep)   = zzModP32 p
     nVars       = length varSs
-    epru        = epRingUniv nVars gRevLex cField
-    UnivL epRing (RingTgtXs _c2ep varEps) _epUnivF   = epru
+    epru        = withRing cField epRingUniv nVars gRevLex
+    UnivL epRing (RingTgtXs _cToEp varEps) _epUnivF     = epru
     epShow      = epShowPrec varSs (\_prec c -> show (cBalRep c)) 0
-    gens        = map ((\ [(x,"")] -> x) . polynomReads epRing (zip varSs varEps)) genSs
+    gens        = map ((\ [(x,"")] -> x) . withRing epRing polynomReads (zip varSs varEps))
+                    genSs
     gbTrace     = gbTSummary    -- gbTResults will show result generators
 
 simpleDemo, buchberger87, gerdt93, katsura5, katsura6, katsura7, katsura8, katsura10,

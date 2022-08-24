@@ -1,4 +1,4 @@
-{-# LANGUAGE ScopedTypeVariables, Strict #-}
+{-# LANGUAGE Strict #-}
 
 {- |  A 'SparseSum' is a linear combination where zero terms are omitted.
     
@@ -6,7 +6,15 @@
     with a ~.
 -}
 
-module Math.Algebra.General.SparseSum {- @@() -} where
+module Math.Algebra.General.SparseSum (
+    SparseSum(..), SparseSumUniv,
+    ssIsZero, ssDegNZ, ssHeadCoef, ssTail, ssLeadTerm,
+    ssLexCmp, ssDegCmp,
+    ssLead, ssMapC, ssShift, ssShiftMapC, ssFoldr,
+    ssRTails, ssForceTails, ssNumTerms,
+    ssAGUniv, ssDotWith, ssTimes, ssMonicize,
+    ssShowPrec
+) where
 
 import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
@@ -16,7 +24,7 @@ data SparseSum c d  = SSZero | SSNZ c d ~(SparseSum c d)
 -- ^ a sorted list of non-\"zero\" terms, with \"degrees\" decreasing according to a total order
 
 type SparseSumUniv d c  = UnivL AbelianGroup (TgtArrsF (->) c d) (->) (SparseSum c d)
--- ^ an @AbelianGroup (SparseSum c d)@, @dc2ss@ function, and a function for mapping to other
+-- ^ an @AbelianGroup (SparseSum c d)@, @dcToSS@ function, and a function for mapping to other
 -- 'AbelianGroup's that have a @d -> Hom_AG(c, t)@; \(⊕↙d C_d\) where each \(C_d\) is a copy of
 -- \(C\).
 
@@ -106,10 +114,10 @@ ssForceTails x          = ssRTails x `seq` x
 ssNumTerms      :: (SparseSum c d) -> Int
 ssNumTerms      = ssFoldr (\ _ _ t -> t + 1) 0
 
-ssAGUniv        :: forall c d. Cmp d -> AbelianGroup c -> SparseSumUniv d c
-ssAGUniv dCmp cAG@(Group cEq cPlus _ _cIsZero cNeg)      = UnivL ssAG (TgtArrsF dc2ss) univF
+ssAGUniv        :: forall c d. IAbelianGroup c => Cmp d -> SparseSumUniv d c
+ssAGUniv dCmp   = UnivL ssAG (TgtArrsF dcToSS) univF
   where
-    ssLead'     = ssLead (isZero cAG)
+    ssLead'     = ssLead (isZero @c)
     -- {-# SCC ssPlus #-}
     ssPlus      :: Op2 (SparseSum c d)
     ssPlus SSZero          t                    = t
@@ -118,40 +126,42 @@ ssAGUniv dCmp cAG@(Group cEq cPlus _ _cIsZero cNeg)      = UnivL ssAG (TgtArrsF 
         case d `dCmp` d' of
             GT -> SSNZ c  d  (r `ssPlus` t)
             LT -> SSNZ c' d' (s `ssPlus` r')
-            EQ -> ssLead' (cPlus !$ c !$ c') d (r `ssPlus` r')
+            EQ -> ssLead' (c +. c') d (r `ssPlus` r')
     ssNeg       :: Op1 (SparseSum c d)
     ssNeg SSZero        = SSZero
-    ssNeg (SSNZ c d ~t) = SSNZ (cNeg c) d (ssNeg t)
+    ssNeg (SSNZ c d ~t) = SSNZ (neg c) d (ssNeg t)
     ssEq        :: EqRel (SparseSum c d)
     ssEq SSZero SSZero  = True
     ssEq SSZero _       = False
     ssEq _      SSZero  = False
-    ssEq (SSNZ c d ~r) (SSNZ c' d' ~r')     = dCmp d d' == EQ && cEq c c' && ssEq r r'
+    ssEq (SSNZ c d ~r) (SSNZ c' d' ~r')     = dCmp d d' == EQ && c ==. c' && ssEq r r'
     ssAG        = Group ssEq ssPlus SSZero ssIsZero ssNeg
-    dc2ss d c   = ssLead' c d SSZero
-    univF (Group _ vPlus vZero _ _) (TgtArrsF dc2v)   = go
+    dcToSS d c  = ssLead' c d SSZero
+    univF (Group _ vPlus vZero _ _) (TgtArrsF dcToV)    = go
       where
         go SSZero       = vZero
-        go (SSNZ c d t) = vPlus !$ dc2v d c !$ go t
+        go (SSNZ c d t) = vPlus !$ dcToV d c !$ go t
 
-ssDotWith       :: Cmp d -> AbelianGroup c2 -> (c -> c1 -> c2) ->
-    SparseSum c d -> SparseSum c1 d -> c2
-ssDotWith dCmp c2AG f   = dot where
-    dot s t     = if ssIsZero s || ssIsZero t then agZero c2AG else
+ssDotWith       :: IAbelianGroup c2 => Cmp d -> (c -> c1 -> c2) ->
+                        SparseSum c d -> SparseSum c1 d -> c2
+ssDotWith dCmp f    = dot where
+    dot s t     = if ssIsZero s || ssIsZero t then zero else
         let d = ssDegNZ s
             e = ssDegNZ t
         in case d `dCmp` e of
             GT -> dot (ssTail s) t
             LT -> dot s (ssTail t)
-            EQ -> agPlus c2AG !$ (f !$ ssHeadCoef s !$ ssHeadCoef t)
-                    !$ dot (ssTail s) (ssTail t)
+            EQ -> (+.) !$ (f !$ ssHeadCoef s !$ ssHeadCoef t) !$ dot (ssTail s) (ssTail t)
 
-ssTimes         :: SparseSumUniv d c -> Op2 d -> Ring c -> Op2 (SparseSum c d)
+ssTimes         :: IRing c => SparseSumUniv d c -> Op2 d -> Op2 (SparseSum c d)
 -- ^ assumes the @Op2 d@ is order-preserving in each argument
-ssTimes (UnivL ssAG _ univF) dOp2 (Ring cAG cTimes _ _ _) s t     =
-    univF ssAG (TgtArrsF dcTimesT) s
+ssTimes (UnivL ssAG _ univF) dOp2 s t   = univF ssAG (TgtArrsF dcTimesT) s
   where
-    dcTimesT d c    = ssShiftMapC (isZero cAG) (dOp2 d) (cTimes c) t
+    dcTimesT d c    = ssShiftMapC isZero (dOp2 d) (c *.) t
+
+ssMonicize      :: IRing c => Op1 (SparseSum c d)
+-- ^ @(ssMonicize s)@ requires that @s@ is nonzero, and its leading coefficient is a unit
+ssMonicize s    = ssMapC (const False) ((rInv (ssHeadCoef s)) *.) s
 
 
 ssShowPrec      :: ShowPrec d -> ShowPrec c -> ShowPrec (SparseSum c d)

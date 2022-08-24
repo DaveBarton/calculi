@@ -95,6 +95,50 @@ Groebner Basis CPU/Elapsed Times: 16.291779s/16.278993s
 generated (redundant) basis has 900 elements with 290098 monomials
 
 
+drb$ cabal run time-gb -- +RTS -N3
+2022-08-10, x86_64-darwin/ghc-9.4.1, using 3 of 4 cores
+
+katsura8 
+Groebner Basis CPU/Elapsed Times: 10.838396s/3.697921s 
+# SPairs reduced = 877
+# reduction steps = 512591
+generated (redundant) basis has 143 elements with 26130 monomials
+
+cyclic7 
+Groebner Basis CPU/Elapsed Times: 8.476263s/2.893538s 
+# SPairs reduced = 2096
+# reduction steps = 480394
+generated (redundant) basis has 661 elements with 148293 monomials
+
+jason210 
+Groebner Basis CPU/Elapsed Times: 16.076687s/5.674685s 
+# SPairs reduced = 5752
+# reduction steps = 2475135
+generated (redundant) basis has 900 elements with 290098 monomials
+
+
+drb$ cabal run time-gb -- +RTS -N1
+2022-08-10, x86_64-darwin/ghc-9.4.1, using 1 of 4 cores
+
+katsura8 
+Groebner Basis CPU/Elapsed Times: 10.232025s/10.230343s 
+# SPairs reduced = 877
+# reduction steps = 512836
+generated (redundant) basis has 143 elements with 26130 monomials
+
+cyclic7 
+Groebner Basis CPU/Elapsed Times: 8.160656s/8.142235s 
+# SPairs reduced = 2097
+# reduction steps = 463579
+generated (redundant) basis has 686 elements with 153436 monomials
+
+jason210 
+Groebner Basis CPU/Elapsed Times: 14.914773s/14.902089s 
+# SPairs reduced = 5752
+# reduction steps = 2473426
+generated (redundant) basis has 900 elements with 290098 monomials
+
+
 ====
 
 

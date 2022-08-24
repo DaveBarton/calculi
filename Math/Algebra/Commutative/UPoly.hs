@@ -6,7 +6,11 @@
     with a ~.
 -}
 
-module Math.Algebra.Commutative.UPoly {- @@() -} where
+module Math.Algebra.Commutative.UPoly (
+    UPoly, RingTgtX(..), UPolyUniv,
+    upDeg, upMonomTimes, upRingUniv,
+    upShowPrec
+) where
 
 import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
@@ -27,27 +31,25 @@ type UPolyUniv c        = UnivL Ring (RingTgtX c) (->) (UPoly c)
 upDeg           :: UPoly c -> Integer
 upDeg p         = if ssIsZero p then -1 else ssDegNZ p
 
-upMonomTimes    :: Ring c -> c -> Integer -> UPoly c -> UPoly c
-upMonomTimes cRing c d  = if cIs0 c then const SSZero else    -- for efficiency
-    ssShiftMapC cIs0 (+ d) (rTimes cRing c)
-  where cIs0    = rIsZero cRing
+upMonomTimes    :: IRing c => c -> Integer -> UPoly c -> UPoly c
+upMonomTimes c d    = if isZero c then const SSZero else    -- for efficiency
+    ssShiftMapC isZero (+ d) (c *.)
 
-upRingUniv      :: Ring c -> UPolyUniv c
-upRingUniv cRing        = UnivL cxRing (RingTgtX c2cx x) cxUnivF
+upRingUniv      :: forall c. IRing c => UPolyUniv c
+upRingUniv      = UnivL cxRing (RingTgtX cToCx x) cxUnivF
   where
-    Ring cAG _ cOne _ cDiv2 = cRing
-    ssUniv@(UnivL ssAG (TgtArrsF dc2ss) _ssUnivF)   = ssAGUniv compare cAG
-    ssTimesF    = ssTimes ssUniv (+) cRing
-    x           = dc2ss 1 cOne
-    c2cx        = dc2ss 0
-    cxRing      = Ring ssAG cxTimes (c2cx cOne) (c2cx . rFromZ cRing) cxDiv2
+    ssUniv@(UnivL ssAG (TgtArrsF dcToSS) _ssUnivF)   = ssAGUniv compare
+    ssTimesF    = ssTimes ssUniv (+)
+    x           = dcToSS 1 one
+    cToCx       = dcToSS 0
+    cxRing      = Ring ssAG cxTimes (cToCx one) (cToCx . fromZ) cxDiv2
     cxTimes p q
-        | rOneQ cxRing p    = q     -- for efficiency
-        | rOneQ cxRing q    = p     -- for efficiency
+        | rIsOne cxRing p   = q     -- for efficiency
+        | rIsOne cxRing q   = p     -- for efficiency
         | otherwise         = ssTimesF p q
-    ssLead'     = ssLead (isZero cAG)
+    ssLead'     = ssLead (isZero @c)
     cxDiv2 _doFull p0 p1
-        | rOneQ cxRing p1   = (p0, SSZero)  -- for efficiency
+        | rIsOne cxRing p1  = (p0, SSZero)  -- for efficiency
         | ssIsZero p1       = (SSZero, p0)
     cxDiv2 doFull p0 p1     = cxDiv2' p0
       where
@@ -58,26 +60,27 @@ upRingUniv cRing        = UnivL cxRing (RingTgtX c2cx x) cxUnivF
             if ssIsZero p || ssDegNZ p < d1 then (SSZero, p) else
             let d   = ssDegNZ p
                 qd  = d - d1
-                (qc, rc)    = cDiv2 doFull (ssHeadCoef p) c1
+                (qc, rc)    = bDiv2 doFull (ssHeadCoef p) c1
                 -- want p = (qc*x^qd + q2) * (c1*x^d1 + t1) + (rc*x^d + r2):
-                ~p' = agPlus ssAG !$ ssTail p !$ upMonomTimes cRing (agNeg cAG qc) qd t1
-                ~qr2    = if doFull || isZero cAG rc then cxDiv2' p' else (SSZero, p')
+                ~p' = agPlus ssAG !$ ssTail p !$ upMonomTimes (neg qc) qd t1
+                ~qr2    = if doFull || isZero rc then cxDiv2' p' else (SSZero, p')
             in  (ssLead' qc qd (fst qr2), ssLead' rc d (snd qr2))
     cxUnivF     :: Ring t -> RingTgtX c t -> UPoly c -> t
-    cxUnivF tR (RingTgtX c2t xT) p  = case p of     -- uses Horner's rule
+    cxUnivF tR (RingTgtX cToT xT) p     = case p of     -- uses Horner's rule
         SSZero          -> rZero tR
-        (SSNZ c' d' r') -> cx2t (c2t c') d' r'
+        (SSNZ c' d' r') -> cxToT (cToT c') d' r'
           where
-            (*:)                    = rTimes tR
-            cx2t t 0 SSZero         = t
-            cx2t t d SSZero         = t *: expt1 (*:) xT d
-            cx2t t d (SSNZ c e r)   = cx2t (rPlus tR (t *: expt1 (*:) xT (d - e)) (c2t c)) e r
+            (*~)                    = rTimes tR
+            cxToT t 0 SSZero        = t
+            cxToT t d SSZero        = t *~ expt1 (*~) xT d
+            cxToT t d (SSNZ c e r)  = cxToT (rPlus tR (t *~ expt1 (*~) xT (d - e)) (cToT c)) e r
     -- @@ use _ssUnivF !?
 
 -- @@ -> RMod, RAlg (if R comm.), R[X] * M[X] ?
 
 
-upShowPrec      :: String -> ShowPrec c -> ShowPrec (UPoly c)   -- ^ varS prec > '^'
+upShowPrec      :: String -> ShowPrec c -> ShowPrec (UPoly c)
+-- ^ varS prec > '^'
 upShowPrec varS = ssShowPrec dSP
   where
     dSP _prec d = case d of

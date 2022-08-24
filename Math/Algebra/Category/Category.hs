@@ -1,4 +1,4 @@
-{-# LANGUAGE PolyKinds, RankNTypes, Strict #-}
+{-# LANGUAGE NoMonoLocalBinds, PolyKinds, RankNTypes, Strict #-}
 
 {- |  This module defines the most common types of categories, functors and universal
     properties.
@@ -29,12 +29,34 @@
     to import this or those modules partially qualified.
 -}
 
-module Math.Algebra.Category.Category {- @@() -} where
+module Math.Algebra.Category.Category (
+    -- * Categories and functors
+    Unit1(..), Unit2(..), FlipTF(..),
+    -- ** Category
+    Category(..), catOpp, typesCat,
+    -- ** Functor
+    Functor(..), listFunctor,
+    
+    -- * Universal Properties
+    -- $univProp
+    UnivL(..), UnivR(..), InitialObj, FinalObj,
+    -- ** Limits and colimits
+    -- $limits
+    SrcArrs2(..), SrcArrsF(..), TgtArrs2(..), TgtArrsF(..),
+    
+    -- * Additive categories
+    AdditiveCat(..), acSum2, acIm, acCoIm
+    -- ** Abelian categories
+    -- $abelianCat
+) where
 
 import Prelude hiding (Functor)
 import Math.Algebra.General.Algebra
+
 import Data.Kind (Type)
 
+
+-- * Categories and functors
 
 data Unit1 a    = Unit1
 -- ^ like the \"Unit\" type (), but with 1 type argument
@@ -44,7 +66,9 @@ data Unit2 a b  = Unit2
 newtype FlipTF f b a    = FlipTF (f a b)
 
 
--- | @(Category (.:) idArr)@
+-- ** Category
+
+-- | A @(Category (.:) idArr)@
 data Category (obj :: k -> Type) (arr :: k -> k -> Type)   = Category {
     catDot  :: forall a b c. arr b c -> arr a b -> arr a c,
         -- ^ @f .: (g .: h) = (f .: g) .: h@
@@ -57,10 +81,13 @@ catOpp cat      = Category (\ (FlipTF f) (FlipTF g) -> FlipTF (catDot cat g f))
                     (FlipTF . catId cat)
 
 typesCat        :: Category Unit1 (->)
+-- ^ the category of Haskell types and functions
 typesCat        = Category (.) (const id)
 
 
--- | @(Functor objF arrF)@ maps @(Category obj arr)@ to @(Category obj' arr')@ naturally.
+-- ** Functor
+
+-- | A @(Functor objF arrF)@ maps a @(Category obj arr)@ to a @(Category obj' arr')@ naturally.
 data Functor obj arr tF obj' arr'       = Functor {
     ftrObjF :: forall a. obj a -> obj' (tF a),
     ftrArrF :: forall a b. arr a b -> arr' (tF a) (tF b)    -- ^ commutes with @.:@, takes
@@ -74,12 +101,16 @@ listFunctor     :: Functor Unit1 (->) [] Unit1 (->)
 listFunctor     = Functor (const Unit1) map
 
 
--- | An object @U@ in @C@ together with extra data @x@ has a /left universal property/ if there
--- is a functor @F :: C -> ((Sets))@ defining the set of legal \"extra data\" for each object,
--- such that given any object @V@ together with extra data @y@, there is a unique morphism
--- @f :: U -> V@ with @F(f)(x) = y@. This implies that the pair @(U, x)@ is unique up to
--- isomorphism. A /right universal property/ is the dual notion (@F@ is contravariant and @f@
--- goes in the other direction).
+-- * Universal Properties
+
+{- $univProp
+    An object @U@ in @C@ together with extra data @x@ has a /left universal property/ if there
+    is a functor @F :: C -> ((Sets))@ defining the set of legal \"extra data\" for each
+    object, such that given any object @V@ together with extra data @y@, there is a unique
+    morphism @f :: U -> V@ with @F(f)(x) = y@. This implies that the pair @(U, x)@ is unique
+    up to isomorphism. A /right universal property/ is the dual notion (@F@ is contravariant
+    and @f@ goes in the other direction). -}
+
 data UnivL obj extr arr u       = UnivL (obj u) (extr u) (forall t. obj t -> extr t -> arr u t)
 data UnivR obj extr arr u       = UnivR (obj u) (extr u) (forall a. obj a -> extr a -> arr a u)
 
@@ -89,10 +120,13 @@ type InitialObj obj arr u       = UnivL obj Unit1 arr u
 -- | A /final object/ in a category has a unique morphism from each object.
 type FinalObj   obj arr u       = UnivR obj Unit1 arr u
 
--- | A map from a source object to a family of objects and arrows is a set of morphisms from the
--- source object to each object in the family, commuting with the arrows in the family. A
--- (categorical) /limit/ is a right universal object with this property. The dual notions are a
--- map from a family of objects and arrows to a target object, and a /colimit/.
+-- ** Limits and colimits
+
+{- $limits
+    A map from a source object to a family of objects and arrows is a set of morphisms from
+    the source object to each object in the family, commuting with the arrows in the family.
+    A (categorical) /limit/ is a right universal object with this property. The dual notions
+    are a map from a family of objects and arrows to a target object, and a /colimit/. -}
 
 data    SrcArrs2 arr b c a      = SrcArrs2 (arr a b) (arr a c)
 newtype SrcArrsF arr b i a      = SrcArrsF (i -> arr a b)
@@ -101,8 +135,10 @@ data    TgtArrs2 arr b c t      = TgtArrs2 (arr b t) (arr c t)
 newtype TgtArrsF arr b i t      = TgtArrsF (i -> arr b t)
 
 
--- | @(AdditiveCat cat homAG prod2 zeroObj ker coker)@ is defined below. Note that in a general
--- /additive category/, @ker@ and @coker@ may be undefined.
+-- * Additive categories
+
+{- | An @(AdditiveCat cat homAG prod2 zeroObj ~ker ~coker)@ must satisfy the axioms below. Note
+    that in a general /additive category/, @ker@ and @coker@ may be undefined. -}
 data AdditiveCat obj arr prod2TF z cokTF        = AdditiveCat {
     acCat       :: Category obj arr,
     
@@ -123,12 +159,12 @@ data AdditiveCat obj arr prod2TF z cokTF        = AdditiveCat {
 acSum2          :: AdditiveCat obj arr prod2TF z cokTF ->
     obj b -> obj c -> UnivL obj (TgtArrs2 arr b c) arr (prod2TF b c)
 acSum2 (AdditiveCat (Category (.:) idArr) homAG prod2 _ _ _) bObj cObj  =
-    UnivL bcObj (TgtArrs2 b2bc c2bc) sumUnivF
-  where UnivR bcObj (SrcArrs2 bc2b bc2c) prodUnivF  = prod2 bObj cObj
-        b2bc  = prodUnivF bObj (SrcArrs2 (idArr bObj) (agZero (homAG bObj cObj)))
-        c2bc  = prodUnivF cObj (SrcArrs2 (agZero (homAG cObj bObj)) (idArr cObj))
-        sumUnivF tObj (TgtArrs2 b2t c2t)  =
-            agPlus (homAG bcObj tObj) (b2t .: bc2b) (c2t .: bc2c)
+    UnivL bcObj (TgtArrs2 bToBc cToBc) sumUnivF
+  where UnivR bcObj (SrcArrs2 bcToB bcToC) prodUnivF    = prod2 bObj cObj
+        bToBc   = prodUnivF bObj (SrcArrs2 (idArr bObj) (agZero (homAG bObj cObj)))
+        cToBc   = prodUnivF cObj (SrcArrs2 (agZero (homAG cObj bObj)) (idArr cObj))
+        sumUnivF tObj (TgtArrs2 bToT cToT)  =
+            agPlus (homAG bcObj tObj) (bToT .: bcToB) (cToT .: bcToC)
 
 acIm            :: AdditiveCat obj arr prod2TF z cokTF ->
         obj b -> obj c -> arr b c -> UnivR obj (FlipTF arr c) arr c
@@ -142,9 +178,11 @@ acCoIm          :: AdditiveCat obj arr prod2TF z cokTF ->
 acCoIm (AdditiveCat _ _ _ _ ker coker) bObj cObj f      = coker kObj bObj kF
   where UnivR kObj (FlipTF kF) _    = ker bObj cObj f
 
--- | An /Abelian category/ is an additive category where @ker@ and @coker@ must be defined for
--- all arrows @f@, and the natural map @image(f) -> coimage(f)@ is an isomorphism (has a
--- two-sided inverse).
+-- ** Abelian categories
+
+{- $abelianCat An /Abelian category/ is an additive category where @ker@ and @coker@ must be
+    defined for all arrows @f@, and the natural map @image(f) -> coimage(f)@ is an
+    isomorphism (has a two-sided inverse). -}
 
 -- @@ AbelCat isom. inv.?? & examples
 -- @@ LiberalTypeSynonyms? ImpredicativeTypes? ExistentialQuantification??

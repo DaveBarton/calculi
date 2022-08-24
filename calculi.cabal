@@ -16,10 +16,12 @@ maintainer:         dbarton@mathscribe.com
 copyright:          Copyright (c) David R. Barton, 2022
 
 category:           Math
-extra-source-files: CHANGELOG.md Math/dirs.txt
+extra-source-files: CHANGELOG.md Math/dirs.txt timings/timings.txt
 
 common deps
     default-language:   Haskell2010
+    default-extensions: FlexibleContexts FlexibleInstances MonoLocalBinds NamedFieldPuns
+                        NumericUnderscores ScopedTypeVariables TypeApplications
     ghc-options:        -Wall -Wcompat -Wno-incomplete-uni-patterns -feager-blackholing
     build-depends:      base >= 4.9 && < 5
 
@@ -27,19 +29,21 @@ library
     import:             deps
     
     exposed-modules:
-        Math.Algebra.Category.Category
-        Math.Algebra.Commutative.EPoly
-        Math.Algebra.Commutative.GBDemo
-        Math.Algebra.Commutative.UPoly
-        Math.Algebra.Commutative.Field.ZModP32
         Math.Algebra.General.Algebra
+        Math.Algebra.Category.Category
+        Math.Algebra.Commutative.Field.ZModP32
         Math.Algebra.General.SparseSum
+        Math.Algebra.Commutative.UPoly
+        Math.Algebra.Commutative.EPoly
+        Math.Algebra.Commutative.GroebnerBasis
+        Math.Algebra.Commutative.GBDemo
         Math.Prob.Random
 
     -- Modules included in this library but not exported.
     -- other-modules:
 
-    other-extensions:   RankNTypes Strict ScopedTypeVariables TupleSections PolyKinds
+    other-extensions:   ConstraintKinds CPP PolyKinds RankNTypes Strict TupleSections
+                        UndecidableInstances
     
     build-depends:      
         array == 0.5.*,
@@ -67,11 +71,25 @@ library
     -- hs-source-dirs:     app
     -- ghc-options:        -threaded -rtsopts
 
--- test-suite calculi-test
-    -- import:             deps
+test-suite calculi-test
+    import:             deps
     
-    -- type:               ...
-    -- ...
+    type:               exitcode-stdio-1.0
+    
+    main-is:            calculi-test.hs
+
+    other-modules:
+        Math.Algebra.General.TestAlgebra
+        Math.Algebra.Commutative.Field.TestZModP32
+        Math.Algebra.Commutative.TestUPoly
+        Math.Algebra.Commutative.TestEPoly
+
+    default-extensions: OverloadedStrings
+    
+    build-depends:      calculi, extra >= 1.6 && < 1.8, hedgehog == 1.*
+
+    hs-source-dirs:     test
+    ghc-options:        -threaded -rtsopts "-with-rtsopts=-N -A64m"
 
 benchmark time-gb
     import:             deps
@@ -83,10 +101,9 @@ benchmark time-gb
     -- Modules included in this executable, other than Main.
     -- other-modules:
 
-    -- LANGUAGE extensions used by modules in this package.
-    -- other-extensions:
+    other-extensions:   CPP
     
-    build-depends:      calculi, time >= 1.9.3 && < 2
+    build-depends:      calculi, process >= 1.2 && < 2, time >= 1.9.3 && < 2
 
     hs-source-dirs:     timings
     ghc-options:        -threaded -rtsopts "-with-rtsopts=-N -A64m -s"
