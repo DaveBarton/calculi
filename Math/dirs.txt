@@ -61,5 +61,6 @@ Prob                    -- math.PR; 60 Probability theory and stochastic process
 Stat                    -- math.ST; 62 Statistics
 
 References:
-http://www.math.niu.edu/~rusin/known-math/index/beginners.html
-http://arxiv.org/archive/math
+https://web.archive.org/web/20150516045812/http://www.math.niu.edu/~rusin/known-math/index/beginners.html
+https://en.wikipedia.org/wiki/Mathematics_Subject_Classification
+https://arxiv.org/archive/math

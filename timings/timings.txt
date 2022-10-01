@@ -218,3 +218,89 @@ Groebner Basis CPU/Elapsed Times: 19.802120s/3.025716s
 # SPairs reduced = 5752
 # reduction steps = 2477018
 generated (redundant) basis has 900 elements with 290098 monomials
+
+
+====
+
+
+drb's MacBook Pro (M1, 16" 2021):
+  Model Identifier: MacBookPro18,1
+  Chip: Apple M1 Pro
+  Total Number of Cores: 10 (8 performance ~3.2 GHz, 2 efficiency ~2 GHz)
+  Memory: 16 GB
+
+per https://www.anandtech.com/show/17024/apple-m1-max-performance-review :
+Performance Cores: 192 KB L1i x8, 128 KB L1d x8, 12 MB x2 shared L2 (2 4-core clusters)
+Efficiency Cores: 128 KB L1i x2, 64 KB L1d x2, 4 MB shared L2
+System Level Cache: 24 MB
+Memory 204.8 GB/s
+
+2022-09-26, aarch64-darwin/ghc-9.4.2, using 1 of 10 cores
+katsura8 
+Groebner Basis CPU/Elapsed Times: 5.184797s/5.178033s 
+# reduction steps = 512836
+cyclic7 
+Groebner Basis CPU/Elapsed Times: 4.898055s/4.891338s 
+# SPairs reduced = 2097
+# reduction steps = 463579
+generated (redundant) basis has 686 elements with 153436 monomials
+jason210 
+Groebner Basis CPU/Elapsed Times: 8.234183s/8.223017s 
+# reduction steps = 2473426
+
+2022-09-24, aarch64-darwin/ghc-9.4.2, using 6 of 10 cores
+katsura8 
+Groebner Basis CPU/Elapsed Times: 6.075022s/1.056431s 
+# reduction steps = 512991
+cyclic7 
+Groebner Basis CPU/Elapsed Times: 4.949636s/0.931091s 
+# SPairs reduced = 2013
+# reduction steps = 442522
+generated (redundant) basis has 654 elements with 146015 monomials
+jason210 
+Groebner Basis CPU/Elapsed Times: 10.057962s/1.805744s 
+# reduction steps = 2476311
+(5.18 + 4.89 + 8.22) / (1.06 + 0.93 + 1.81) = 4.81 elapsed time speedup
+
+2022-09-26, aarch64-darwin/ghc-9.4.2, using 7 of 10 cores
+katsura8 
+Groebner Basis CPU/Elapsed Times: 6.228588s/0.933637s 
+# reduction steps = 513119
+cyclic7 
+Groebner Basis CPU/Elapsed Times: 5.297726s/0.894453s 
+# SPairs reduced = 2088
+# reduction steps = 483091
+generated (redundant) basis has 640 elements with 142874 monomials
+jason210 
+Groebner Basis CPU/Elapsed Times: 10.272377s/1.637335s 
+# reduction steps = 2476725
+(5.18 + 4.89 + 8.22) / (0.93 + 0.89 + 1.64) = 5.29 elapsed time speedup
+
+2022-09-24, aarch64-darwin/ghc-9.4.2, using 8 of 10 cores
+katsura8 
+Groebner Basis CPU/Elapsed Times: 6.383674s/0.849940s 
+# reduction steps = 513205
+cyclic7 
+Groebner Basis CPU/Elapsed Times: 5.671085s/0.853431s 
+# SPairs reduced = 2133
+# reduction steps = 494413
+generated (redundant) basis has 655 elements with 146753 monomials
+jason210 
+Groebner Basis CPU/Elapsed Times: 10.844570s/1.565723s 
+# SPairs reduced = 5753
+# reduction steps = 2476498
+(5.18 + 4.89 + 8.22) / (0.85 + 0.85 + 1.57) = 5.59 elapsed time speedup
+
+2022-09-24, aarch64-darwin/ghc-9.4.2, using 10 of 10 cores
+katsura8 
+Groebner Basis CPU/Elapsed Times: 7.402435s/0.823984s 
+# reduction steps = 514324
+cyclic7 
+Groebner Basis CPU/Elapsed Times: 6.302855s/0.883550s 
+# SPairs reduced = 2067
+# reduction steps = 470155
+generated (redundant) basis has 647 elements with 143253 monomials
+jason210 
+Groebner Basis CPU/Elapsed Times: 12.970513s/1.616204s 
+# reduction steps = 2479098
+

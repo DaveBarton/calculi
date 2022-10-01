@@ -18,10 +18,9 @@ newtype ZModP32     = ZModP32 { w32 :: Word32 }     -- representatives 0 <= w < 
 zzModP32        :: Integer -> (Field ZModP32, ZModP32 -> Integer)
 zzModP32 p      =
     assert (2 <= p && p < 2 ^ (32 :: Int))   -- p must also be prime
-        (divisionRing ag times (ZModP32 1) (ZModP32 . fromIntegral . (`mod` p)) inv, balRep)
+        (field ag times (ZModP32 1) (ZModP32 . fromIntegral . (`mod` p)) inv, balRep)
   where
-    -- @@@ faster if we avoid `on` here & elsewhere ??:
-    ag          = Group ((==) `on` w32) plus (ZModP32 0) (\ (ZModP32 x32) -> x32 == 0) neg'
+    ag          = Group agFlags (==) plus (ZModP32 0) (\ (ZModP32 x32) -> x32 == 0) neg'
     w64 x       = fromIntegral (w32 x) :: Word64
     from64 x64  = ZModP32 (fromIntegral (x64 :: Word64))
     p32         = fromIntegral p :: Word32
@@ -30,7 +29,7 @@ zzModP32 p      =
     times x y   = from64 (w64 x * w64 y `rem` p64)
     neg' (ZModP32 x32)  = ZModP32 (if x32 == 0 then 0 else p32 - x32)
     maxBalRep32 = p32 `quot` 2
-    balRep (ZModP32 x32)    = fromIntegral 
+    balRep (ZModP32 x32)    = fromIntegral
         (fromIntegral (if x32 > maxBalRep32 then x32 - p32 else x32) :: Int32)
     inv (ZModP32 x32)   = assert (x32 /= 0) (go 0 p32 1 x32)
       where     -- see https://en.wikipedia.org/wiki/Extended_Euclidean_algorithm

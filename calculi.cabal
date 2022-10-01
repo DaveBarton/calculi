@@ -20,8 +20,9 @@ extra-source-files: CHANGELOG.md Math/dirs.txt timings/timings.txt
 
 common deps
     default-language:   Haskell2010
-    default-extensions: FlexibleContexts FlexibleInstances MonoLocalBinds NamedFieldPuns
-                        NumericUnderscores ScopedTypeVariables TypeApplications
+    default-extensions: FlexibleContexts FlexibleInstances GeneralizedNewtypeDeriving
+                        MonoLocalBinds NamedFieldPuns NumericUnderscores ScopedTypeVariables
+                        TypeApplications
     ghc-options:        -Wall -Wcompat -Wno-incomplete-uni-patterns -feager-blackholing
     build-depends:      base >= 4.9 && < 5
 
@@ -32,6 +33,7 @@ library
         Math.Algebra.General.Algebra
         Math.Algebra.Category.Category
         Math.Algebra.Commutative.Field.ZModP32
+        Math.Algebra.Linear.SparseVector
         Math.Algebra.General.SparseSum
         Math.Algebra.Commutative.UPoly
         Math.Algebra.Commutative.EPoly
@@ -42,14 +44,17 @@ library
     -- Modules included in this library but not exported.
     -- other-modules:
 
-    other-extensions:   ConstraintKinds CPP PolyKinds RankNTypes Strict TupleSections
-                        UndecidableInstances
+    other-extensions:   AllowAmbiguousTypes ConstraintKinds CPP PolyKinds RankNTypes Strict
+                        TupleSections UndecidableInstances
     
-    build-depends:      
+    build-depends:
         array == 0.5.*,
+        -- constraints >= 0.11 && < 0.14,
+            -- note 'implied' added in 0.13
         containers == 0.6.*,
         extra >= 1.6 && < 1.8,
         random >= 1.2.1 && < 1.3,
+        -- reflection >= 2.1.6 && < 2.2,
         stm >= 2.4 && < 2.6,
         time >= 1.9.3 && < 2
 

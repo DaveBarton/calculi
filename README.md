@@ -25,6 +25,7 @@ and run these calculations on your machine, the quickest way is probably:
 
 3. `cd` into your `calculi` directory, and run <!-- `cabal bench` or -->
 `cabal run time-gb -- +RTS -N6` with "6" replaced by the number of cores you want to use (we
-suggest the number of physical cores on your machine minus 1 or 2, not counting hyperthreading).
+suggest the number of physical performance cores on your machine minus 1 or 2, not counting
+hyperthreading).
 
 Especially if your machine has more than 8 cores, please let us know your results!

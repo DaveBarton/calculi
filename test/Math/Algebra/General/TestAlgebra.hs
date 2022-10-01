@@ -6,7 +6,7 @@ module Math.Algebra.General.TestAlgebra (
     symmetricProp, commutativeProp, antiSymmetricProp, associativeProp, identityProp,
     homomPT, endomPT,
     equalityProps, cmpProps, totalOrderProps,
-    groupProps,  abelianGroupProps, ringProps, ringHomomProps, fieldProps,
+    monoidProps,  abelianGroupProps, ringProps, ringHomomProps, fieldProps,
     moduleProps, rModProps, modRProps, rAlgProps,
     zzExpGen, zzGen, zzShowGen, zzTestOps,
     pairTestOps, listShowWith, listShowGen, listTestEq, listTestOps,
@@ -156,14 +156,19 @@ totalOrderProps sg equal cmp    = cmpProps sg cmp ++ [("fine", fine)]
   where
     fine            = property $ sameFunAABPT sg (===) (cmpEq cmp) equal
 
-groupProps              :: forall g. IGroup g => ShowGen g -> TestRel g ->
+monoidProps             :: forall g. IGroup g => ShowGen g -> TestRel g -> MonoidFlags ->
                             [(PropertyName, Property)]
-groupProps sg@(gShow, _) testEq     =
-    equalityProps sg (==:) ++
+monoidProps sg@(gShow, _) testEq requiredFlags  =
+    [("required MonoidFlags", flagsOk)] ++
+        equalityProps sg (==:) ++
         [associativeProp sg testEq (*:), identityProp sg testEq (*:) gId,
-            ("isIdentity", isIdentity),  ("identityIsIdentity", identityIsIdentity),
-            ("inverse", inverse)]
+            ("isIdentity", isIdentity),  ("identityIsIdentity", identityIsIdentity)] ++
+        (if hasEIBit (gFlags @g) IsGroup then [("inverse", inverse)] else []) ++
+        if hasEIBit (gFlags @g) Abelian then [commutativeProp sg testEq (*:)] else []
   where
+    flagsOk         = propertyOnce $ do
+        annotateShow [(gFlags @g), requiredFlags]
+        assert (hasEIBits (gFlags @g) requiredFlags)
     isIdentity      = property $ do
         a       <- genVis sg
         gIsId a === (a ==: gId)
@@ -180,29 +185,51 @@ groupProps sg@(gShow, _) testEq     =
 abelianGroupProps       :: forall g. IAbelianGroup g => ShowGen g -> TestRel g ->
                                 [(PropertyName, Property)]
 abelianGroupProps sg testEq     =
-    withGroup @g iAG groupProps sg testEq ++ [commutativeProp sg testEq (+.)]
+    withGroup @g iAG monoidProps sg testEq agFlags
 
-ringProps               :: ShowGen r -> TestRel r -> Ring r -> [(PropertyName, Property)]
-ringProps sg testEq aR@(Ring ag (*~) one' fromZ' bDiv2')    =
-    withAG ag abelianGroupProps sg testEq ++
-        [("left distributive", leftDistrib), ("right distributive", rightDistrib),
-         associativeProp sg testEq (*~), identityProp sg testEq (*~) one'] ++
-        ringHomomProps zzShowGen zzRing testEq aR fromZ' ++
-        [("bDiv2 True", div2PT (bDiv2' True)), ("bDiv2 False", div2PT (bDiv2' False))]
+ringProps               :: forall r. IRing r => ShowGen r -> TestRel r -> RingFlags ->
+                            [(PropertyName, Property)]
+ringProps sg@(rShow, _) testEq reqRingFlags     =
+    abelianGroupProps sg testEq ++
+        [("required RingFlags", ringFlagsOk),
+         ("left distributive", leftDistrib), ("right distributive", rightDistrib),
+         associativeProp sg testEq (*.), identityProp sg testEq (*.) one] ++
+        ringHomomProps zzShowGen zzRing testEq iRing fromZ ++
+        [("bDiv2 True", div2PT (bDiv2 True)), ("bDiv2 False", div2PT (bDiv2 False))] ++
+        (if hasEIBit rRFlags NotZeroRing then [("nonzero", nonzero)] else []) ++
+        (if hasEIBit rRFlags IsCommutativeRing then [commutativeProp sg testEq (*.)] else []) ++
+        (if hasEIBit rRFlags NoZeroDivisors then [("no zero divisors", noZeroDivs)] else []) ++
+        if hasEIBit rRFlags IsInversesRing then [("inverses", inverses)] else []
   where
+    rRFlags         = iRFlags @r
+    ringFlagsOk     = propertyOnce $ do
+        annotateShow [rRFlags, reqRingFlags]
+        assert (hasEIBits rRFlags reqRingFlags)
     rand            = genVis sg
-    (+:)            = agPlus ag
     leftDistrib     = property $ do
         a       <- rand
-        endomPT sg testEq (+:) (a *~)
+        endomPT sg testEq (+.) (a *.)
     rightDistrib    = property $ do
         a       <- rand
-        endomPT sg testEq (+:) (*~ a)
+        endomPT sg testEq (+.) (*. a)
     div2PT quoRemF  = property $ do
-        x       <- rand
         y       <- rand
-        let (q, r)  = quoRemF x y
-        testEq x ((q *~ y) +: r)
+        m       <- rand
+        let (q, r)  = quoRemF y m
+        annotateShow $ map rShow [y, m, q, r]
+        testEq y (m *. q +. r)
+    nonzero         = propertyOnce $ do
+        annotate $ rShow one
+        assert (not (isZero @r one))
+    noZeroDivs      = property $ do
+        a       <- rand
+        b       <- rand
+        assert (isZero a || isZero b || not (isZero (a *. b)))
+    inverses        = property $ do
+        m       <- rand
+        when (isZero m) discard
+        y       <- rand
+        assert (divides m y)
 
 ringHomomProps          :: ShowGen a -> Ring a -> TestRel b -> Ring b ->
                                 (a -> b) -> [(PropertyName, Property)]
@@ -211,22 +238,8 @@ ringHomomProps sga aR bTestEq bR f  =
      ("multiplicative homomorphism", property $ homomPT sga (rTimes aR) bTestEq (rTimes bR) f),
      ("one ↦ one", propertyOnce $ bTestEq (f (rOne aR)) (rOne bR))]
 
--- @@ add flags to Ring for commutative, no zero divisors, division ring, etc.?, and test them
-
-fieldProps              :: ShowGen r -> TestRel r -> Field r -> [(PropertyName, Property)]
-fieldProps sg@(aShow, _) testEq aR@(Ring ag (*~) one' _fromZ _div2)     =
-    ringProps sg testEq aR ++
-        [commutativeProp sg testEq (*~), ("nonzero", nonzero), ("inverses", inverses)]
-  where
-    rand            = genVis sg
-    nonzero         = propertyOnce $ do
-        annotate $ aShow one'
-        assert (not ((agIsZero ag) one'))
-    inverses        = property $ do
-        y       <- rand
-        when ((agIsZero ag) y) discard
-        x       <- rand
-        assert (divides aR y x)
+fieldProps              :: IRing r => ShowGen r -> TestRel r -> [(PropertyName, Property)]
+fieldProps sg testEq    = ringProps sg testEq fieldFlags
 
 moduleProps             :: Bool -> ShowGen r -> Ring r -> ShowGen m -> TestRel m ->
                             Module r m -> [(PropertyName, Property)]
@@ -256,10 +269,10 @@ modRProps               :: ShowGen r -> Ring r -> ShowGen m -> TestRel m ->
                             ModR r m -> [(PropertyName, Property)]
 modRProps               = moduleProps False
 
-rAlgProps               :: ShowGen r -> Ring r -> ShowGen a -> TestRel a ->
+rAlgProps               :: ShowGen r -> Ring r -> ShowGen a -> TestRel a -> RingFlags ->
                             RAlg r a -> [(PropertyName, Property)]
-rAlgProps sgr rR sga aTestEq (RAlg aR scale fromR)      =
-    ringProps sga aTestEq aR ++ ringHomomProps sgr rR aTestEq aR fromR ++
+rAlgProps sgr rR sga aTestEq reqAFlags (RAlg aR scale fromR)    =
+    withRing aR ringProps sga aTestEq reqAFlags ++ ringHomomProps sgr rR aTestEq aR fromR ++
         [("centerA", centerA), ("scaleA", scaleA)]
   where
     (*~)            = rTimes aR
@@ -345,7 +358,7 @@ checkAll checks         = liftM and (mapM id checks)
 testAlgebra             :: IO Bool
 testAlgebra             =
     checkAll [
-        checkGroup "zzRing" $ ringProps zzShowGen (===) zzRing,
+        checkGroup "zzRing" $ ringProps zzShowGen (===) integralDomainFlags,
         checkGroup "Integer order, show/read" $
             totalOrderProps zzShowGen (==) compare ++
                 [readsProp zzShowGen (===) reads]

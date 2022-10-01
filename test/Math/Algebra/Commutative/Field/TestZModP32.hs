@@ -31,7 +31,7 @@ test1 p                 = checkGroup ("ZModP32 " ++ show p) props
     (sg, testEq)    = zpTestOps p
     fromZ'          = rFromZ zpField
     lim             = p `quot` 2
-    props           = fieldProps sg testEq zpField
+    props           = withRing zpField fieldProps sg testEq
                         ++ [("p0", p0),
                             ("balRepIsRep", balRepIsRep), ("balRepIsSmall", balRepIsSmall)]
         -- fieldProps checks zzRing -> zpField is a homomorphism, 0 /= 1

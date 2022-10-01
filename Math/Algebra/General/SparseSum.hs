@@ -10,9 +10,11 @@ module Math.Algebra.General.SparseSum (
     SparseSum(..), SparseSumUniv,
     ssIsZero, ssDegNZ, ssHeadCoef, ssTail, ssLeadTerm,
     ssLexCmp, ssDegCmp,
-    ssLead, ssMapC, ssShift, ssShiftMapC, ssFoldr,
+    ssLead, ssMapC, ssMapNZFC, ssShift, ssShiftMapC, ssShiftMapNZFC, ssFoldr,
     ssRTails, ssForceTails, ssNumTerms,
-    ssAGUniv, ssDotWith, ssTimes, ssMonicize,
+    ssAGUniv, ssDotWith,
+    ssNZCTimes, ssCTimes, ssMonicize, ssTimesNZC, ssTimesC, ssTimesNZMonom, ssTimesMonom,
+        ssTimes,
     ssShowPrec
 ) where
 
@@ -21,12 +23,13 @@ import Math.Algebra.Category.Category
 
 
 data SparseSum c d  = SSZero | SSNZ c d ~(SparseSum c d)
+    deriving (Eq, Show)     -- e.g. for testing & debugging
 -- ^ a sorted list of non-\"zero\" terms, with \"degrees\" decreasing according to a total order
 
 type SparseSumUniv d c  = UnivL AbelianGroup (TgtArrsF (->) c d) (->) (SparseSum c d)
--- ^ an @AbelianGroup (SparseSum c d)@, @dcToSS@ function, and a function for mapping to other
--- 'AbelianGroup's that have a @d -> Hom_AG(c, t)@; \(⊕↙d C_d\) where each \(C_d\) is a copy of
--- \(C\).
+{- ^ an @AbelianGroup (SparseSum c d)@, @dcToSS@ function, and a function for mapping to other
+    'AbelianGroup's @t@ that have a @d -> Hom_AG(c, t)@; \(⊕↙d C_d\) where each \(C_d\) is a
+    copy of \(C\). -}
 
 
 ssIsZero                :: SparseSum c d -> Bool
@@ -83,6 +86,11 @@ ssMapC is0 f (SSNZ c d ~t)  =
         ~t'     = ssMapC is0 f t
     in  if is0 c' then t' else SSNZ c' d t'
 
+ssMapNZFC       :: (c -> c') -> SparseSum c d -> SparseSum c' d
+-- ^ assumes the @(c -> c')@ takes nonzero values to nonzero values
+ssMapNZFC _ SSZero          = SSZero
+ssMapNZFC f (SSNZ c d ~t)   = SSNZ (f c) d (ssMapNZFC f t)
+
 ssShift         :: (d -> d') -> SparseSum c d -> SparseSum c d'
 -- ^ assumes the @(d -> d')@ is order-preserving
 ssShift _ SSZero        = SSZero
@@ -97,6 +105,12 @@ ssShiftMapC is0 df cf     = go
         let c'  = cf c
             ~t' = go t
         in  if is0 c' then t' else SSNZ c' (df d) t'
+
+ssShiftMapNZFC  :: (d -> d') -> (c -> c') -> SparseSum c d -> SparseSum c' d'
+{- ^ assumes the @(d -> d')@ is order-preserving, and the @(c -> c')@ takes nonzero values to
+    nonzero values -}
+ssShiftMapNZFC _  _  SSZero         = SSZero
+ssShiftMapNZFC df cf (SSNZ c d ~t)  = SSNZ (cf c) (df d) (ssShiftMapNZFC df cf t)
 
 ssFoldr         :: (c -> d -> t -> t) -> t -> SparseSum c d -> t
 ssFoldr f t     = go
@@ -135,9 +149,9 @@ ssAGUniv dCmp   = UnivL ssAG (TgtArrsF dcToSS) univF
     ssEq SSZero _       = False
     ssEq _      SSZero  = False
     ssEq (SSNZ c d ~r) (SSNZ c' d' ~r')     = dCmp d d' == EQ && c ==. c' && ssEq r r'
-    ssAG        = Group ssEq ssPlus SSZero ssIsZero ssNeg
+    ssAG        = Group agFlags ssEq ssPlus SSZero ssIsZero ssNeg
     dcToSS d c  = ssLead' c d SSZero
-    univF (Group _ vPlus vZero _ _) (TgtArrsF dcToV)    = go
+    univF (Group _ _ vPlus vZero _ _) (TgtArrsF dcToV)  = go
       where
         go SSZero       = vZero
         go (SSNZ c d t) = vPlus !$ dcToV d c !$ go t
@@ -153,15 +167,43 @@ ssDotWith dCmp f    = dot where
             LT -> dot s (ssTail t)
             EQ -> (+.) !$ (f !$ ssHeadCoef s !$ ssHeadCoef t) !$ dot (ssTail s) (ssTail t)
 
-ssTimes         :: IRing c => SparseSumUniv d c -> Op2 d -> Op2 (SparseSum c d)
--- ^ assumes the @Op2 d@ is order-preserving in each argument
-ssTimes (UnivL ssAG _ univF) dOp2 s t   = univF ssAG (TgtArrsF dcTimesT) s
-  where
-    dcTimesT d c    = ssShiftMapC isZero (dOp2 d) (c *.) t
+ssNZCTimes      :: forall c d. IRing c => c -> Op1 (SparseSum c d)
+-- ^ the @c@ is nonzero
+ssNZCTimes
+    | hasEIBit (iRFlags @c) NoZeroDivisors  = \c -> ssMapNZFC (c *.)
+    | otherwise                             = \c -> ssMapC isZero (c *.)
+
+ssCTimes        :: IRing c => c -> Op1 (SparseSum c d)
+ssCTimes c s    = if isZero c then SSZero else ssNZCTimes c s
 
 ssMonicize      :: IRing c => Op1 (SparseSum c d)
 -- ^ @(ssMonicize s)@ requires that @s@ is nonzero, and its leading coefficient is a unit
-ssMonicize s    = ssMapC (const False) ((rInv (ssHeadCoef s)) *.) s
+ssMonicize s    = ssMapNZFC ((rInv (ssHeadCoef s)) *.) s
+
+ssTimesNZC      :: forall c d. IRing c => c -> Op1 (SparseSum c d)
+-- ^ the @c@ is nonzero
+ssTimesNZC
+    | hasEIBit (iRFlags @c) NoZeroDivisors  = \c -> ssMapNZFC (*. c)
+    | otherwise                             = \c -> ssMapC isZero (*. c)
+
+ssTimesC        :: IRing c => c -> Op1 (SparseSum c d)
+ssTimesC c s    = if isZero c then SSZero else ssTimesNZC c s
+
+ssTimesNZMonom  :: forall c d. IRing c => Op2 d -> SparseSum c d -> d -> c -> SparseSum c d
+-- ^ assumes the @Op2 d@ is order-preserving in each argument, and the @c@ is nonzero
+ssTimesNZMonom dOp2
+    | hasEIBit (iRFlags @c) NoZeroDivisors  = \s d c -> ssShiftMapNZFC (`dOp2` d) (*. c) s
+    | otherwise                             = \s d c -> ssShiftMapC isZero (`dOp2` d) (*. c) s
+
+ssTimesMonom    :: IRing c => Op2 d -> SparseSum c d -> d -> c -> SparseSum c d
+-- ^ assumes the @Op2 d@ is order-preserving in each argument
+ssTimesMonom dOp2 s d c     = if isZero c then SSZero else ssTimesNZMonom dOp2 s d c
+
+ssTimes         :: IRing c => SparseSumUniv d c -> Op2 d -> Op2 (SparseSum c d)
+-- ^ assumes the @Op2 d@ is order-preserving in each argument
+ssTimes (UnivL ssAG _ univF) dOp2   = \s t -> univF ssAG (TgtArrsF (sToTimesDC s)) t
+  where
+    sToTimesDC      = ssTimesNZMonom dOp2
 
 
 ssShowPrec      :: ShowPrec d -> ShowPrec c -> ShowPrec (SparseSum c d)

@@ -9,7 +9,7 @@
 module Math.Algebra.Commutative.EPoly (
     ExponVec, totDeg, evMake, exponsL, evPlus, evMinusMay, evDivides, evLCM, gRevLex,
     EPoly, RingTgtXs(..), EPolyUniv,
-    headTotDeg, epHomogDeg0, epMonomTimes, epRingUniv,
+    headTotDeg, epHomogDeg0, epTimesNZMonom, epTimesMonom, epRingUniv,
     epShowPrec,
 ) where
 
@@ -20,13 +20,9 @@ import Math.Algebra.General.SparseSum
 import Data.Array.Base (numElements, unsafeAt)
 import Data.Array.IArray (bounds, elems, listArray)
 import Data.Array.Unboxed (UArray)
-import Data.Bits ((.&.), xor, unsafeShiftL, unsafeShiftR)
+import Data.Bits (xor, unsafeShiftL, unsafeShiftR)
 import Data.Word (Word64)
-import Numeric (showHex)
 
-
-show0x          :: (Integral a, Show a) => a -> String
-show0x n        = "0x" ++ showHex n ""
 
 zipWithExact    :: (a -> b -> c) -> [a] -> [b] -> [c]
 -- ^ or use library @safe@
@@ -36,6 +32,7 @@ zipWithExact f xs ys    = assert (length xs == length ys) (zipWith f xs ys)
 data Expons     = Expons1 Word64
                 | Expons2 Word64 Word64
                 | ExponsN (UArray Int Word)
+    deriving Eq     -- e.g. for testing
 
 instance Show Expons where  -- for debugging
     show (Expons1 w)        = show0x w
@@ -43,7 +40,7 @@ instance Show Expons where  -- for debugging
     show (ExponsN a)        = show (elems a)
 
 data ExponVec   = ExponVec { totDeg :: Word, expons :: Expons }
-        deriving Show   -- for debugging
+    deriving (Eq, Show)     -- e.g. for testing & debugging
 -- ^ the number of variables must be fixed;
 -- if totDeg < 2^8 then we use Expons1 for nVars <= 8 or Expons2 for nVars <= 16,
 -- else if totDeg < 2^16 then we use Expons1 for nVars <= 4 or Expons2 for nVars <= 8
@@ -162,10 +159,13 @@ headTotDeg p    = if ssIsZero p then -1 else fromIntegral (totDeg (ssDegNZ p))
 epHomogDeg0     :: EPoly c -> Word      -- returns 0 for SSZero
 epHomogDeg0     = ssFoldr (\ _ ev n -> max (totDeg ev) n) 0
 
-epMonomTimes    :: IRing c => Int -> c -> ExponVec -> EPoly c -> EPoly c
-epMonomTimes nVars c ev     = if isZero c then const SSZero else    -- for efficiency
-    ssShiftMapC isZero (evPlus nVars ev) (c *.)
--- {-# SCC epMonomTimes #-}
+epTimesNZMonom  :: IRing c => Int -> EPoly c -> ExponVec -> c -> EPoly c
+-- ^ the @c@ is nonzero
+epTimesNZMonom nVars    = ssTimesNZMonom (evPlus nVars)
+
+epTimesMonom    :: IRing c => Int -> EPoly c -> ExponVec -> c -> EPoly c
+epTimesMonom nVars      = ssTimesMonom (evPlus nVars)
+-- {-# SCC epTimesMonom #-}
 
 epRingUniv      :: forall c. IRing c => Int -> Cmp ExponVec -> EPolyUniv c
 epRingUniv nVars evCmp  = UnivL epRing (RingTgtXs cToEp xs) epUnivF
@@ -176,7 +176,8 @@ epRingUniv nVars evCmp  = UnivL epRing (RingTgtXs cToEp xs) epUnivF
     inds        = [0 .. nVars - 1]
     xs          = [dcToSS (evMake [if i == j then 1 else 0 | j <- inds]) one | i <- inds]
     cToEp       = dcToSS evZero
-    epRing      = Ring ssAG epTimes (cToEp one) (cToEp . fromZ) epDiv2
+    epFlags     = eiBits [NotZeroRing, IsCommutativeRing, NoZeroDivisors] .&. (iRFlags @c)
+    epRing      = Ring ssAG epFlags epTimes (cToEp one) (cToEp . fromZ) epDiv2
     epTimes p q
         | rIsOne epRing p   = q     -- for efficiency
         | rIsOne epRing q   = p     -- for efficiency
@@ -198,10 +199,10 @@ epRingUniv nVars evCmp  = UnivL epRing (RingTgtXs cToEp xs) epUnivF
                     in (q2, SSNZ c ev r2)
                 Just qd     -> -- {-# SCC "top-etc-epDiv2'" #-}
                     let (qc, rc)    = bDiv2 doFull c c1
-                        -- want p = (qc*x^qd + q2) * (c1*x^ev1 + t1) + (rc*x^ev + r2):
+                        -- want p = (c1*x^ev1 + t1) * (qc*x^qd + q2) + (rc*x^ev + r2):
                         ~p'         = {-# SCC "epDiv2'-+-qM*" #-} agPlus ssAG !$ t
-                                        !$ {-# SCC epMonomTimes #-}
-                                           epMonomTimes nVars (neg qc) qd t1
+                                        !$ {-# SCC epTimesMonom #-}
+                                           epTimesMonom nVars t1 qd (neg qc)
                         ~qr2    = if doFull || isZero rc then epDiv2' p'
                                   else (SSZero, p')
                     in  (ssLead' qc qd (fst qr2), ssLead' rc ev (snd qr2))

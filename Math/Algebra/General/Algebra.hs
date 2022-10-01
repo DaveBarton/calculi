@@ -1,4 +1,5 @@
-{-# LANGUAGE ConstraintKinds, CPP, RankNTypes, Strict, UndecidableInstances #-}
+{-# LANGUAGE AllowAmbiguousTypes, ConstraintKinds, CPP, RankNTypes, Strict,
+    UndecidableInstances #-}
 
 {- |  This module defines the most common types of algebras, and simple functions using them.
     
@@ -35,8 +36,6 @@
 -}
 
 module Math.Algebra.General.Algebra (
-    Gift(..),
-    
     -- * Common function types
     -- ** Pred
     assert,
@@ -63,22 +62,28 @@ module Math.Algebra.General.Algebra (
     lex2Cmp, liftCompare,
     
     -- * Groups
+    -- ** MonoidFlags
+    show0x, IntBits, (.&.), (.|.), zeroBits, eiBit, eiBits, hasEIBit, hasEIBits,
+    MonoidFlag(Abelian, IsGroup), MonoidFlags, agFlags,
     -- ** Group
-    Group(..), IGroup(iGroup), (==:), (*:), gId, gIsId, gInv, withGroup,
-    expt1, (^:), gExpt, pairGp, pairGp2, gpModF, gpProductL', gpProductR,
+    Group(..), IGroup(iGroup), gFlags, (==:), (*:), gId, gIsId, gInv, withGroup,
+    expt1, (^:), gpExpt, pairGp, pairGp2, gpModF, gpProductL', gpProductR,
     -- ** AbelianGroup
     AbelianGroup, agPlus, agZero, agIsZero, agNeg,
     IAbelianGroup(iAG), (==.), (+.), zero, isZero, neg, withAG,
     (-.), sumL', sumR,
     
     -- * Rings and fields
+    -- ** RingFlags
+    RingFlag(NotZeroRing, IsCommutativeRing, NoZeroDivisors, IsInversesRing), RingFlags,
+    integralDomainFlags, divisionRingFlags, fieldFlags,
     -- ** Ring
     Ring(..), rEq, rPlus, rZero, rIsZero, rNeg,
-    IRing(iRing), (*.), one, fromZ, bDiv2, withRing,
+    IRing(iRing), iRFlags, (*.), one, fromZ, bDiv2, withRing,
     rIsOne, (/.), nearQuo, smallRem, rInv, divides,
     (^.), rExpt, rSumL', rSumR, rProductL', rProductR,
     -- ** Field
-    Field, divisionRing, fieldGcd,
+    Field, divisionRing, field, fieldGcd,
     
     -- * Modules and R-algebras
     -- ** Module, RMod, ModR
@@ -103,15 +108,17 @@ module Math.Algebra.General.Algebra (
 ) where
 
 import Control.Exception (assert)
+import Data.Bits (Bits, FiniteBits, (.&.), (.|.), bit, finiteBitSize, testBit, zeroBits)
 import Data.Char (isDigit)
 import Data.Function (on)
 import Data.Functor.Classes (liftCompare, liftEq)
 import Data.List (foldl', stripPrefix)
 import Data.List.Extra (trimStart)
 import Data.Maybe (maybeToList)
-import Numeric (readDec)
+import Numeric (readDec, showHex)
 import Text.ParserCombinators.ReadPrec (Prec)
 
+-- import Data.Constraint {- @@ (...) -} hiding (withDict)
 #if __GLASGOW_HASKELL__ >= 904
 import GHC.Exts (withDict)
 #else
@@ -119,13 +126,13 @@ import Unsafe.Coerce (unsafeCoerce)
 #endif
 
 
--- | for using an algebra as a typeclass dictionary
-newtype Gift cls r  = Gift { unGift :: cls => r }
-
 #if __GLASGOW_HASKELL__ < 904
 withDict        :: forall cls meth r. {- WithDict cls meth => -} meth -> (cls => r) -> r
 -- @cls@ must have no superclasses, and exactly one method of type @meth@.
 withDict alg k  = unsafeCoerce (Gift k :: Gift cls r) alg
+
+-- | for using an algebra as a typeclass dictionary
+newtype Gift cls r  = Gift (cls => r)
 #endif
 
 infixr 8  ^., ^:
@@ -193,7 +200,7 @@ pairEq aEq ~bEq (x, ~y) (u, ~v)     = aEq x u && bEq y v
 
 -- ** Cls
 
-newtype Cls a   = Cls { clsRep :: a }
+newtype Cls a   = Cls { clsRep :: a } deriving (Eq, Show)
 {- ^ A value @(Cls r)@ represents the class of elements \"equivalent\" to @r@ (according to a
     specified equivalence relation). Usually we require @r@ to be \"simple\" or \"normalized\"
     in some way. -}
@@ -239,12 +246,52 @@ lex2Cmp aCmp ~bCmp (x, ~y) (u, ~v)  = let d = aCmp x u in if d /= EQ then d else
 
 -- * Groups
 
+-- ** MonoidFlags
+
+show0x          :: Integral a => a -> String
+-- ^ shows with a "0x" prefix; the argument must be nonnegative
+show0x n        = "0x" ++ showHex n ""
+
+newtype IntBits e   = IntBits Int
+    deriving (Eq, Bits, FiniteBits)
+-- ^ a set of @e@s. @|e| \<= finiteBitSize (0 :: Int)@.
+
+instance Show (IntBits e) where     -- e.g. for testing & debugging
+    show (IntBits n)    = show0x n
+
+eiBit           :: forall e. (Enum e, Bounded e) => e -> IntBits e
+-- ^ a singleton set
+eiBit e         =
+    assert (fromEnum (maxBound :: e) < finiteBitSize (0 :: Int)) (bit (fromEnum e))
+
+eiBits          :: (Enum e, Bounded e) => [e] -> IntBits e
+eiBits es       = foldl' (.|.) zeroBits (map eiBit es)
+
+hasEIBit        :: Enum e => IntBits e -> e -> Bool
+hasEIBit bs e   = testBit bs (fromEnum e)
+
+hasEIBits       :: IntBits e -> IntBits e -> Bool
+-- ^ @hasEIBits bs req@ tests whether all the bits of @req@ are in @bs@
+hasEIBits bs req    = bs .&. req == req
+
+data MonoidFlag =
+          Abelian           -- ^ => @op@ is commutative
+        | IsGroup           -- ^ => all elements have inverses
+    deriving (Enum, Bounded)
+-- ^ a single (1-bit or boolean) property of a 'Group'
+
+type MonoidFlags    = IntBits MonoidFlag
+
+agFlags             :: MonoidFlags
+agFlags             = eiBits [Abelian, IsGroup]
+
 -- ** Group
 
-{- | A @(Group eq op ident isIdent inv)@ must satisfy the axioms below. This generalizes the
-    notion of a set of composable symmetries (such as translation, rotation, reflection,
+{- | A @(Group flags eq op ident isIdent inv)@ must satisfy the axioms below. This generalizes
+    the notion of a set of composable symmetries (such as translation, rotation, reflection,
     scaling, etc.). -}
 data Group g    = Group {
+    gpFlags :: MonoidFlags,
     gpEq    :: EqRel g,     -- ^ @eq x y@ must imply abstract equality @x = y@
     gpOp    :: Op2 g,       -- ^ @op@ is well defined and associative
     gpId    :: g,           -- ^ @(ident \`op\`) = (\`op\` ident) = id@
@@ -260,6 +307,9 @@ data Group g    = Group {
 class IGroup a where
     iGroup      :: Group a
 
+gFlags          :: forall a. IGroup a => MonoidFlags
+-- ^ @gFlags = gpFlags (iGroup @a)@
+gFlags          = gpFlags (iGroup @a)
 (==:)           :: IGroup a => EqRel a
 -- ^ @(==:) = gpEq iGroup@
 (==:)           = gpEq iGroup
@@ -296,33 +346,32 @@ expt1 (*~) x n
     | otherwise = gInv (x ^: (- n))
 {-# SPECIALIZE (^:) :: IGroup a => a -> Int -> a #-}
 
-gExpt           :: Integral b => Group a -> a -> b -> a
+gpExpt          :: Integral b => Group a -> a -> b -> a
 -- ^ exponentiation to an integral power, using a 'Group' passed explicitly
-gExpt gp        = unGift (withGroup gp gExpt2)
-  where
-    gExpt2          :: IGroup a => Gift (Integral b) (a -> b -> a)
-    gExpt2          = Gift (^:)
+gpExpt gp       = withGroup gp (^:)
 
-pairGp          :: (IGroup a, IGroup b) => Group (a, b)
+pairGp          :: forall a b. (IGroup a, IGroup b) => Group (a, b)
 -- ^ direct product of two groups
 pairGp          =
-    Group (pairEq (==:) (==:))
+    Group (gFlags @a .&. gFlags @b)
+          (pairEq (==:) (==:))
           (pairOp2 (*:) (*:))
           (gId, gId)
           (\ (a, ~b) -> gIsId a && gIsId b)
           (pairOp1 gInv gInv)
 
-pairGp2         :: IGroup a => Gift (IGroup b) (Group (a, b))
+pairGp2         :: Group a -> Group b -> (Group (a, b))
 -- ^ for passing explicit 'Group'(s) to 'pairGp'
-pairGp2         = Gift pairGp
+pairGp2 aGp bGp = withGroup aGp (withGroup bGp pairGp)
 
-gpModF          :: Group g -> Op1 g -> Group (Cls g)
+gpModF          :: Group g -> Op1 g -> MonoidFlags -> Group (Cls g)
 -- ^ @gpModF gp reduce@ is @gp@ modulo a normal subgroup, using @reduce@ to produce @Cls@
 -- (coset) representatives.
-gpModF (Group eq op ident isIdent inv) reduce   =
+gpModF (Group flags eq op ident isIdent inv) reduce extraFlags  =
     let modF    = Cls . reduce
         redId   = reduce ident
-    in  Group (eq `on` clsRep) (modF .* (op `on` clsRep)) (Cls redId)
+    in  Group (flags .|. extraFlags)
+            (eq `on` clsRep) (modF .* (op `on` clsRep)) (Cls redId)
             ((if isIdent redId then isIdent else eq redId) . clsRep)
             (modF . inv . clsRep)
 
@@ -391,17 +440,42 @@ sumR            = gpProductR iAG
 
 -- * Rings and fields
 
+-- ** RingFlags
+
+data RingFlag   =
+          NotZeroRing       -- ^ => 0 \/= 1
+        | IsCommutativeRing -- ^ => multiplication is commutative
+        | NoZeroDivisors    -- ^ => (ab == 0 => a == 0 or b == 0)
+        | IsInversesRing    -- ^ => every nonzero element has a multiplicative inverse
+    deriving (Enum, Bounded)
+-- ^ a single (1-bit or boolean) property of a 'Ring'
+
+type RingFlags  = IntBits RingFlag
+
+integralDomainFlags :: RingFlags
+-- ^ a commutative ring with 0 \/= 1 and no zero divisors
+integralDomainFlags = eiBits [NotZeroRing, IsCommutativeRing, NoZeroDivisors]
+
+divisionRingFlags   :: RingFlags
+-- ^ 0 \/= 1 and every nonzero element has a multiplicative inverse
+divisionRingFlags   = eiBits [NotZeroRing, NoZeroDivisors, IsInversesRing]
+
+fieldFlags          :: RingFlags
+-- ^ a commutative division ring
+fieldFlags          = divisionRingFlags .|. eiBit IsCommutativeRing
+
 -- ** Ring
 
 {- | A @(Ring ag (*~) one' fromZ' bDiv2')@ must satisfy the axioms below. Examples include the
     integers ℤ, and other rings of algebraic numbers, polynomials, n x n matrices, etc. -}
 data Ring a     = Ring {
     rAG     :: AbelianGroup a,
+    rFlags  :: RingFlags,
     rTimes  :: Op2 a,       -- ^ @(*.)@ is well defined, distributes over @plus@, and is
         -- normally associative
     rOne    :: a,           -- ^ @(one *.) = (*. one) = id@
     rFromZ  :: Integer -> a,    -- ^ the unique ring homomorphism from Z to this ring
-    rBDiv2  :: Bool -> a -> a -> (a, a)     {- ^ @bDiv2 doFull x y = (q, r) => x = q*y + r@ and
+    rBDiv2  :: Bool -> a -> a -> (a, a)     {- ^ @bDiv2 doFull y m = (q, r) => y = m*q + r@ and
         @r@'s \"size\" is (attempted to be) minimized. If @doFull@, then all of @r@ is
         minimized; else just its \"topmost\" nonzero \"term\" is. (Words such as \"size\" have
         meanings that vary by context. Also in general, the results of @bDiv2@ may not be
@@ -435,6 +509,9 @@ class IRing a where
 instance {-# INCOHERENT #-} IRing a => IAbelianGroup a where
     iAG         = rAG iRing
 
+iRFlags         :: forall a. IRing a => RingFlags
+-- ^ @iRFlags  = rFlags (iRing @a)@
+iRFlags         = rFlags (iRing @a)
 (*.)            :: IRing a => Op2 a
 -- ^ @(*.) = rTimes iRing@
 (*.)            = rTimes iRing
@@ -458,24 +535,24 @@ rIsOne aR       = rEq aR (rOne aR)
 
 (/.)            :: IRing a => Op2 a
 -- ^ exact quotient, i.e. division (@bDiv2 False@) should have zero remainder
-x /. y          =
-    let (q, r)      = bDiv2 False x y
+y /. m          =
+    let (q, r)      = bDiv2 False y m
     in  if (isZero r) then q else (error "division is not exact")
 
 nearQuo                 :: Ring a -> Bool -> Op2 a
--- ^ > nearQuo rR doFull x y = fst (rBDiv2 rR doFull x y)
-nearQuo rR doFull x y   = fst (rBDiv2 rR doFull x y)
+-- ^ > nearQuo rR doFull y m = fst (rBDiv2 rR doFull y m)
+nearQuo rR doFull y m   = fst (rBDiv2 rR doFull y m)
 smallRem                :: Ring a -> Bool -> Op2 a
--- ^ > smallRem rR doFull x y = snd (rBDiv2 rR doFull x y)
-smallRem rR doFull x y  = snd (rBDiv2 rR doFull x y)
+-- ^ > smallRem rR doFull y m = snd (rBDiv2 rR doFull y m)
+smallRem rR doFull y m  = snd (rBDiv2 rR doFull y m)
 
 rInv            :: IRing a => Op1 a
 -- ^ > rInv = (one /.)
 rInv            = (one /.)
 
-divides         :: Ring a -> a -> a -> Bool
+divides         :: IRing a => a -> a -> Bool
 -- ^ whether an element divides another element; note the arguments are reversed from division
-divides (Ring ag _ _ _ bDiv2') d x  = agIsZero ag (snd (bDiv2' False x d))
+divides d y     = isZero (snd (bDiv2 False y d))
 
 (^.)            :: (IRing a, Integral b) => a -> b -> a
 -- ^ exponentiation to an integral power
@@ -487,10 +564,7 @@ divides (Ring ag _ _ _ bDiv2') d x  = agIsZero ag (snd (bDiv2' False x d))
 
 rExpt           :: Integral b => Ring a -> a -> b -> a
 -- ^ exponentiation to an integral power, using a 'Ring' passed explicitly
-rExpt aR        = unGift (withRing aR rExpt2)
-  where
-    rExpt2          :: IRing a => Gift (Integral b) (a -> b -> a)
-    rExpt2          = Gift (^.)
+rExpt aR        = withRing aR (^.)
 
 rSumL'          :: Ring a -> [a] -> a
 -- ^ sum using foldl'
@@ -514,16 +588,21 @@ type Field      = Ring
 {- ^ A /division ring/ is a ring with @zero \/= one@ and in which every non-zero element is a
     unit. A /field/ is a commutative division ring. -}
 
-divisionRing    :: AbelianGroup a -> Op2 a -> a -> (Integer -> a) -> Op1 a -> Ring a
--- ^ @divisionRing ag (*~) one' fromZ' inv@ creates a division ring
-divisionRing ag (*~) one' fromZ' inv    =
+divisionRing    :: AbelianGroup a -> RingFlags -> Op2 a -> a -> (Integer -> a) -> Op1 a ->
+                    Ring a
+-- ^ @divisionRing ag extraFlags (*~) one' fromZ' inv@ creates a division ring
+divisionRing ag extraFlags (*~) one' fromZ' inv     =
     let zero'       = agZero ag
-        bDiv2' _ x y    = if agIsZero ag y then (zero', x) else (x *~ inv y, zero')
-    in  Ring ag (*~) one' fromZ' bDiv2'
+        bDiv2' _ y m    = if agIsZero ag m then (zero', y) else (inv m *~ y, zero')
+    in  Ring ag (divisionRingFlags .|. extraFlags) (*~) one' fromZ' bDiv2'
+
+field           :: AbelianGroup a -> Op2 a -> a -> (Integer -> a) -> Op1 a -> Field a
+-- ^ @field ag (*~) one' fromZ' inv@ creates a 'Field'
+field ag        = divisionRing ag fieldFlags
 
 fieldGcd        :: Field a -> Op2 a
 -- ^ creates a gcd (greatest common divisior) function for a 'Field'
-fieldGcd (Ring ag _ one' _ _) x y   = if agIsZero ag x && agIsZero ag y then agZero ag else one'
+fieldGcd (Ring ag _ _ one' _ _) x y = if agIsZero ag x && agIsZero ag y then agZero ag else one'
 
 
 -- * Modules and R-algebras
@@ -549,15 +628,14 @@ type ModR       = Module
 pairMd          :: Module r a -> Module r b -> Module r (a, b)
 -- ^ direct sum (or product) of two modules
 pairMd aMd bMd  =
-    Module (withGroup (mdAG bMd) (unGift (withGroup (mdAG aMd) pairGp2)))
-        (\r -> pairOp1 (mdScale aMd r) (mdScale bMd r))
+    Module (pairGp2 (mdAG aMd) (mdAG bMd)) (\r -> pairOp1 (mdScale aMd r) (mdScale bMd r))
 
 mdModF          :: Module r a -> Op1 a -> Module r (Cls a)
 {- ^ @mdModF md reduce@ is @md@ modulo a submodule, using @reduce@ to produce @Cls@ (coset)
     representatives. -}
-mdModF (Module ag scale) reduce =
+mdModF (Module ag scale) reduce     =
     let modF    = Cls . reduce
-    in  Module (gpModF ag reduce) (\ r (Cls m) -> modF (scale r m))
+    in  Module (gpModF ag reduce zeroBits) (\ r (Cls m) -> modF (scale r m))
 
 -- ** RAlg
 
@@ -581,7 +659,7 @@ algMd (RAlg aRing scale _)      = Module (rAG aRing) scale
 
 zzAG            :: AbelianGroup Integer
 -- ^ the integers ℤ under addition
-zzAG            = Group (==) (+) 0 (== 0) negate
+zzAG            = Group agFlags (==) (+) 0 (== 0) negate
 
 zzDiv2          :: Bool -> Integer -> Integer -> (Integer, Integer)
 -- ^ integer division, rounding toward 0
@@ -593,7 +671,7 @@ zzDiv2 _ n d
 
 zzRing          :: Ring Integer
 -- ^ the ring of integers ℤ
-zzRing          = Ring zzAG (*) 1 id zzDiv2
+zzRing          = Ring zzAG integralDomainFlags (*) 1 id zzDiv2
 
 instance IRing Integer where
     iRing       = zzRing
@@ -602,11 +680,11 @@ instance IRing Integer where
 
 dblAG           :: AbelianGroup Double
 -- ^ Double precision numbers under addition
-dblAG           = Group (==) (+) 0 (== 0) negate
+dblAG           = Group agFlags (==) (+) 0 (== 0) negate
 
 dblRing         :: Field Double
 -- ^ the approximate field of Doubles
-dblRing         = divisionRing dblAG (*) 1 fromInteger recip
+dblRing         = field dblAG (*) 1 fromInteger recip
 
 
 -- * Converting \<-> String
@@ -625,12 +703,12 @@ plusS s t       = if s == "0" then t else case t of
 
 timesS          :: String -> String -> String
 {- ^ @timesS s t@ shows the product @st@. The caller checks precedences and parenthesizes @s@
-    and/or @t@ if necessary. @timesS@ checks for @s@ or @t@ being 1 or 0, @t@ being empty, or
+    and/or @t@ if necessary. @timesS@ checks for @s@ or @t@ being 1, @t@ being empty, or
     @s@ being -1. -}
 timesS s t
     | null t || t == "1"    = s
     | s == "1"              = t
-    | s == "0" || t == "0"  = "0"
+    -- | s == "0" || t == "0"  = "0"
     | s == "-1"             = '-' : t
     | otherwise             = s ++ t
 

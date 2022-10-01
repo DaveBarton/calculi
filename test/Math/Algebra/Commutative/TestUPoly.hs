@@ -27,6 +27,8 @@ testUPoly               = checkGroup "UPoly" props
     UnivL zxRing (RingTgtX zToZX xZX) zxUnivF   = zxru
     zxToT           = zxUnivF zzRing (RingTgtX id 12345)
     zxShow          = upShowPrec "X" (const show) 0
+    -- zxShow p        = show (ssNumTerms p) ++ "t:" ++ upShowPrec "X" (const show) 0 p
+        -- for catching terms with coef 0
     testEq          = diffWith zxShow (rEq zxRing)
     monom c d       = ssLead (rIsZero zzRing) c d SSZero
     monomGen        = liftM2 monom (zzExpGen 1_000_000) (Gen.integral (Range.linear 0 10))
@@ -34,7 +36,7 @@ testUPoly               = checkGroup "UPoly" props
     zxGen           = fmap (rSumL' zxRing) monomsGen
         -- polys of degree up to 10
     sg              = (zxShow, zxGen)
-    props           = ringProps sg testEq zxRing ++ [commutativeProp sg testEq (rTimes zxRing)]
+    props           = withRing zxRing ringProps sg testEq zeroBits
                         ++ ringHomomProps zzShowGen zzRing testEq zxRing zToZX
                         ++ [("x", propertyOnce $ testEq xZX (monom 1 1))]
                         ++ ringHomomProps sg zxRing (===) zzRing zxToT

@@ -47,7 +47,7 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
     epGen           = fmap (rSumL' epRing) (Gen.list (Range.linear 0 10) monomGen)
     sg              = (epShow, epGen)
     
-    props           = ringProps sg testEq epRing ++ [commutativeProp sg testEq (rTimes epRing)]
+    props           = withRing epRing ringProps sg testEq (eiBit IsCommutativeRing)
                         ++ ringHomomProps cSG cRing testEq epRing cToEp
                         ++ [("xs", propertyOnce $ zipWithM_ (===) (map epShow varEps) varSs)]
                         ++ ringHomomProps sg epRing cTestEq cRing epToT

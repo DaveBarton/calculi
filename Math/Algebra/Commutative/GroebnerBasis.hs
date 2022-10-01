@@ -17,7 +17,6 @@ import Math.Algebra.Commutative.EPoly
 
 import Control.Monad (liftM, replicateM_, when, void)
 import Data.Array.IArray (Array, (!), listArray)
-import Data.Bits ((.&.))
 import Data.Foldable (find, foldl', foldlM, minimumBy, toList)
 import Data.List (deleteBy, elemIndex, findIndices, groupBy, insertBy, partition, sortBy)
 import Data.List.Extra (chunksOf, mergeBy)
@@ -351,7 +350,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
         rgsInsert gh@(EPolyHDeg g gHDeg) i rgs@((h, j) : t)
             | evCmp (ssDegNZ g) (ssDegNZ h) == GT       = pure ((g, i) : rgs)
             | evDivides nVars (ssDegNZ g) (ssDegNZ h)   = do
-                when (gbTrace .&. gbTProgressInfo /= 0) $  
+                when (gbTrace .&. gbTProgressInfo /= 0) $
                     putStrLn $ "remove g" ++ show j ++ " (" ++ _showEV h ++ ") by g" ++ show i
                         ++ " (" ++ _showEV g ++ ")"
                 ghs     <- readIORef genHsRef

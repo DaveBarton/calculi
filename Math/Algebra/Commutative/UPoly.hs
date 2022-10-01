@@ -8,7 +8,7 @@
 
 module Math.Algebra.Commutative.UPoly (
     UPoly, RingTgtX(..), UPolyUniv,
-    upDeg, upMonomTimes, upRingUniv,
+    upDeg, upTimesNZMonom, upTimesMonom, upRingUniv,
     upShowPrec
 ) where
 
@@ -31,9 +31,12 @@ type UPolyUniv c        = UnivL Ring (RingTgtX c) (->) (UPoly c)
 upDeg           :: UPoly c -> Integer
 upDeg p         = if ssIsZero p then -1 else ssDegNZ p
 
-upMonomTimes    :: IRing c => c -> Integer -> UPoly c -> UPoly c
-upMonomTimes c d    = if isZero c then const SSZero else    -- for efficiency
-    ssShiftMapC isZero (+ d) (c *.)
+upTimesNZMonom  :: IRing c => UPoly c -> Integer -> c -> UPoly c
+-- ^ the @c@ is nonzero
+upTimesNZMonom  = ssTimesNZMonom (+)
+
+upTimesMonom    :: IRing c => UPoly c -> Integer -> c -> UPoly c
+upTimesMonom    = ssTimesMonom (+)
 
 upRingUniv      :: forall c. IRing c => UPolyUniv c
 upRingUniv      = UnivL cxRing (RingTgtX cToCx x) cxUnivF
@@ -42,7 +45,8 @@ upRingUniv      = UnivL cxRing (RingTgtX cToCx x) cxUnivF
     ssTimesF    = ssTimes ssUniv (+)
     x           = dcToSS 1 one
     cToCx       = dcToSS 0
-    cxRing      = Ring ssAG cxTimes (cToCx one) (cToCx . fromZ) cxDiv2
+    cxFlags     = eiBits [NotZeroRing, IsCommutativeRing, NoZeroDivisors] .&. (iRFlags @c)
+    cxRing      = Ring ssAG cxFlags cxTimes (cToCx one) (cToCx . fromZ) cxDiv2
     cxTimes p q
         | rIsOne cxRing p   = q     -- for efficiency
         | rIsOne cxRing q   = p     -- for efficiency
@@ -61,8 +65,8 @@ upRingUniv      = UnivL cxRing (RingTgtX cToCx x) cxUnivF
             let d   = ssDegNZ p
                 qd  = d - d1
                 (qc, rc)    = bDiv2 doFull (ssHeadCoef p) c1
-                -- want p = (qc*x^qd + q2) * (c1*x^d1 + t1) + (rc*x^d + r2):
-                ~p' = agPlus ssAG !$ ssTail p !$ upMonomTimes (neg qc) qd t1
+                -- want p = (c1*x^d1 + t1) * (qc*x^qd + q2) + (rc*x^d + r2):
+                ~p' = agPlus ssAG !$ ssTail p !$ upTimesMonom t1 qd (neg qc)
                 ~qr2    = if doFull || isZero rc then cxDiv2' p' else (SSZero, p')
             in  (ssLead' qc qd (fst qr2), ssLead' rc d (snd qr2))
     cxUnivF     :: Ring t -> RingTgtX c t -> UPoly c -> t
