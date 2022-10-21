@@ -248,7 +248,7 @@ lex2Cmp aCmp ~bCmp (x, ~y) (u, ~v)  = let d = aCmp x u in if d /= EQ then d else
 
 -- ** MonoidFlags
 
-show0x          :: Integral a => a -> String
+show0x          :: (Integral a, Show a) => a -> String
 -- ^ shows with a "0x" prefix; the argument must be nonnegative
 show0x n        = "0x" ++ showHex n ""
 
