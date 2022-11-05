@@ -1,7 +1,7 @@
 {- |  This module tests the "ZModP32" module.  -}
 
 module Math.Algebra.Commutative.Field.TestZModP32 (
-    zpTestOps, testZModP32
+    zpwTestOps, testZModP32
 ) where
 
 import Math.Algebra.General.Algebra hiding (assert)
@@ -13,22 +13,27 @@ import Hedgehog (annotateShow, assert)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
+import Data.Mod.Word (Mod)
+import GHC.TypeNats (KnownNat, natVal)
 
-zpTestOps               :: Integer -> TestOps ZModP32
+
+zpwTestOps              :: forall p. KnownNat p => TestOps (Mod p)
 -- ^ caller shows @p@
-zpTestOps p             = ((zpShow, gen), testEq)
+zpwTestOps              = ((zpShow, gen), testEq)
   where
-    (zpField, balRep)   = zzModP32 p
+    (zpField, balRep)   = zzModPW @p
     zpShow          = show . balRep
     testEq          = diffWith zpShow (rEq zpField)
     gen             = fmap (rFromZ zpField) (Gen.integral (Range.constantFrom 0 (- lim) lim))
+    p               = fromIntegral (natVal (Proxy :: Proxy p))
     lim             = p `quot` 2
 
 test1                   :: Integer -> IO Bool
-test1 p                 = checkGroup ("ZModP32 " ++ show p) props
+test1 p                 = case someNatVal (fromInteger p) of
+ SomeNat (Proxy :: Proxy p)     -> checkGroup ("ZModP32 " ++ show p) props
   where
-    (zpField, balRep)   = zzModP32 p
-    (sg, testEq)    = zpTestOps p
+    (zpField, balRep)   = zzModPW @p
+    (sg, testEq)    = zpwTestOps @p
     fromZ'          = rFromZ zpField
     lim             = p `quot` 2
     props           = withRing zpField fieldProps sg testEq

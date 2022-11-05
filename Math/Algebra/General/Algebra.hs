@@ -94,6 +94,7 @@ module Math.Algebra.General.Algebra (
     algMd,
     
     -- * Basic numeric rings
+    numAG,
     -- ** Integer
     zzAG, zzDiv2, zzRing,
     -- ** Double
@@ -655,11 +656,15 @@ algMd (RAlg aRing scale _)      = Module (rAG aRing) scale
 
 -- * Basic numeric rings
 
+numAG           :: (Eq n, Num n) => AbelianGroup n
+-- ^ @n@ under addition
+numAG           = Group agFlags (==) (+) 0 (== 0) negate
+
 -- ** Integer
 
 zzAG            :: AbelianGroup Integer
 -- ^ the integers ℤ under addition
-zzAG            = Group agFlags (==) (+) 0 (== 0) negate
+zzAG            = numAG
 
 zzDiv2          :: Bool -> Integer -> Integer -> (Integer, Integer)
 -- ^ integer division, rounding toward 0
@@ -680,7 +685,7 @@ instance IRing Integer where
 
 dblAG           :: AbelianGroup Double
 -- ^ Double precision numbers under addition
-dblAG           = Group agFlags (==) (+) 0 (== 0) negate
+dblAG           = numAG
 
 dblRing         :: Field Double
 -- ^ the approximate field of Doubles

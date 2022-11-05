@@ -1,3 +1,5 @@
+{-# LANGUAGE DataKinds #-}
+
 {- |  This module tests the "EPoly" module.  -}
 
 module Math.Algebra.Commutative.TestEPoly (
@@ -26,9 +28,8 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
   where
     -- should change to a noncommutative coef ring C with zero divisors, and check indets
     -- commute with it:
-    p               = 2_000_003
-    (cRing, _)      = zzModP32 p
-    (cSG@(cShow, cGen), cTestEq)    = zpTestOps p
+    (cRing, _)      = zzModPW @2_000_003
+    (cSG@(cShow, cGen), cTestEq)    = zpwTestOps @2_000_003
     epru            = withRing cRing epRingUniv nVars gRevLex
     UnivL epRing (RingTgtXs cToEp varEps) epUnivF   = epru
     nT              = rFromZ cRing

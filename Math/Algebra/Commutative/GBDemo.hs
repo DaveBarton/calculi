@@ -19,16 +19,15 @@ import Math.Algebra.Commutative.Field.ZModP32
 -- See http://www.math.usm.edu/perry/Research/f5ex.lib as in
 -- https://arxiv.org/pdf/0906.2967.pdf
 
--- type Zp         = ZModP32
--- type ZpEPoly    = EPoly Zp
-
 gbDemo          :: String -> Integer -> [String] -> [String] -> Int -> IO ()
-gbDemo name p varSs genSs nCores    = do    -- p is a prime < 2^32, varSs have precedence > '^'
+-- @gbDemo name p varSs genSs nCores@: p is a prime < 2^32, and varSs have precedence > '^'
+gbDemo name p varSs genSs nCores    = case someNatVal (fromInteger p) of
+ SomeNat (Proxy :: Proxy p)     -> do
     putStr $ name ++ " "
     _           <- groebnerBasis nVars gRevLex cField epRing gens nCores gbTrace epShow
     putChar '\n'
   where
-    (cField, cBalRep)   = zzModP32 p
+    (cField, cBalRep)   = zzModPW @p
     nVars       = length varSs
     epru        = withRing cField epRingUniv nVars gRevLex
     UnivL epRing (RingTgtXs _cToEp varEps) _epUnivF     = epru
