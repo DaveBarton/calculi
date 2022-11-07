@@ -361,7 +361,7 @@ pairGp          =
           (\ (a, ~b) -> gIsId a && gIsId b)
           (pairOp1 gInv gInv)
 
-pairGp2         :: Group a -> Group b -> (Group (a, b))
+pairGp2         :: Group a -> Group b -> Group (a, b)
 -- ^ for passing explicit 'Group'(s) to 'pairGp'
 pairGp2 aGp bGp = withGroup aGp (withGroup bGp pairGp)
 
@@ -538,7 +538,7 @@ rIsOne aR       = rEq aR (rOne aR)
 -- ^ exact quotient, i.e. division (@bDiv2 False@) should have zero remainder
 y /. m          =
     let (q, r)      = bDiv2 False y m
-    in  if (isZero r) then q else (error "division is not exact")
+    in  if isZero r then q else error "division is not exact"
 
 nearQuo                 :: Ring a -> Bool -> Op2 a
 -- ^ > nearQuo rR doFull y m = fst (rBDiv2 rR doFull y m)

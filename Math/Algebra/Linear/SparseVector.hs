@@ -48,7 +48,7 @@ pICToSV cIsZero i c     = if cIsZero c then svZero else SV (IM.singleton i c)
 svIsZero        :: SparseVector c -> Bool
 svIsZero        = IM.null . unSV
 
-svSize          :: (SparseVector c) -> Int
+svSize          :: SparseVector c -> Int
 -- ^ \(n\), the number of nonzero coefficients; \(O(n)\)
 svSize          = IM.size . unSV
 
@@ -59,7 +59,7 @@ svMapNZFC       :: (c -> c') -> SparseVector c -> SparseVector c'
 -- ^ assumes the @(c -> c')@ takes nonzero values to nonzero values
 svMapNZFC f (SV m)  = SV (IM.map f m)
 
-svFoldr'        :: (Op2 t) -> t -> (Int -> c -> t) -> SparseVector c -> t
+svFoldr'        :: Op2 t -> t -> (Int -> c -> t) -> SparseVector c -> t
 svFoldr' tPlus tZero iCToT (SV m)   = IM.foldrWithKey' (\i c -> tPlus $! iCToT i c) tZero m
 
 svAGUniv        :: forall c. IAbelianGroup c => SparseVectorUniv c
@@ -89,7 +89,7 @@ svCTimes c v    = if isZero c then svZero else svNZCTimes c v
 
 svMonicize      :: IRing c => Int -> Op1 (SparseVector c)
 -- ^ @(svMonicize i v)@ requires that the @i@'th coefficient of @v@ is a unit
-svMonicize i (SV m)     = SV (IM.map ((rInv (m IM.! i)) *.) m)
+svMonicize i (SV m)     = SV (IM.map (rInv (m IM.! i) *.) m)
 
 svTimesNZC      :: forall c. IRing c => c -> Op1 (SparseVector c)
 -- ^ the @c@ is nonzero
@@ -152,6 +152,6 @@ scmRing maxN    = Ring ag matFlags (*~) one' fromZ' bDiv2'
 scmTranspose    :: Op1 (SparseColsMat c)
 scmTranspose (SV cols)  = SV $ case IM.splitRoot cols of
     []      -> IM.empty
-    [_]     -> IM.foldrWithKey' (\j v t -> IM.union (IM.map (SV . (IM.singleton j)) (unSV v)) t)
+    [_]     -> IM.foldrWithKey' (\j v t -> IM.union (IM.map (SV . IM.singleton j) (unSV v)) t)
                     IM.empty cols
     colss   -> IM.unionsWith (SV .* (IM.union `on` unSV)) (map (unSV . scmTranspose . SV) colss)

@@ -20,7 +20,7 @@ import Data.Array.IArray (Array, (!), listArray)
 import Data.Foldable (find, foldl', foldlM, minimumBy, toList)
 import Data.List (deleteBy, elemIndex, findIndices, groupBy, insertBy, partition, sortBy)
 import Data.List.Extra (chunksOf, mergeBy)
-import Data.Maybe (catMaybes, fromJust, isJust, isNothing, listToMaybe, mapMaybe)
+import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
 import qualified Data.Sequence as Seq
 import Data.Tuple.Extra (fst3)
 import Numeric (showFFloat)
@@ -492,10 +492,10 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 let gsL     = map phP ghsL
                     gb      =   -- @@@ or use rgs!?:
                         {- mapM reduce2NZ $ -} sortBy (evCmp `on` ssDegNZ)
-                            (concat (zipWith (\ g mev -> [g | not (isNothing mev)]) gsL gMGis))
+                            (concat (zipWith (\ g mev -> [g | isJust mev]) gsL gMGis))
                 when (gbTrace .&. gbTResults /= 0) $ do
                     putStrLn (show (length gb) ++ " generators:")
-                    mapM_ putStrLn (map epShow gb)
+                    mapM_ (putStrLn . epShow) gb
                 pure gb
     let initGHNs        = sortBy ghnCmp [(EPolyHDeg g (epHomogDeg0 g), 0) | g <- initGens]
     (gMGis, ijcs, rgs)  <- foldlM addGenHN ([], [], []) initGHNs

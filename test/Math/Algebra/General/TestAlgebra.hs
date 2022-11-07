@@ -163,11 +163,11 @@ monoidProps sg@(gShow, _) testEq requiredFlags  =
         equalityProps sg (==:) ++
         [associativeProp sg testEq (*:), identityProp sg testEq (*:) gId,
             ("isIdentity", isIdentity),  ("identityIsIdentity", identityIsIdentity)] ++
-        (if hasEIBit (gFlags @g) IsGroup then [("inverse", inverse)] else []) ++
-        if hasEIBit (gFlags @g) Abelian then [commutativeProp sg testEq (*:)] else []
+        [("inverse", inverse) | hasEIBit (gFlags @g) IsGroup] ++
+        [commutativeProp sg testEq (*:) | hasEIBit (gFlags @g) Abelian]
   where
     flagsOk         = propertyOnce $ do
-        annotateShow [(gFlags @g), requiredFlags]
+        annotateShow [gFlags @g, requiredFlags]
         assert (hasEIBits (gFlags @g) requiredFlags)
     isIdentity      = property $ do
         a       <- genVis sg
@@ -196,10 +196,10 @@ ringProps sg@(rShow, _) testEq reqRingFlags     =
          associativeProp sg testEq (*.), identityProp sg testEq (*.) one] ++
         ringHomomProps zzShowGen zzRing testEq iRing fromZ ++
         [("bDiv2 True", div2PT (bDiv2 True)), ("bDiv2 False", div2PT (bDiv2 False))] ++
-        (if hasEIBit rRFlags NotZeroRing then [("nonzero", nonzero)] else []) ++
-        (if hasEIBit rRFlags IsCommutativeRing then [commutativeProp sg testEq (*.)] else []) ++
-        (if hasEIBit rRFlags NoZeroDivisors then [("no zero divisors", noZeroDivs)] else []) ++
-        if hasEIBit rRFlags IsInversesRing then [("inverses", inverses)] else []
+        [("nonzero", nonzero) | hasEIBit rRFlags NotZeroRing] ++
+        [commutativeProp sg testEq (*.) | hasEIBit rRFlags IsCommutativeRing] ++
+        [("no zero divisors", noZeroDivs) | hasEIBit rRFlags NoZeroDivisors] ++
+        [("inverses", inverses) | hasEIBit rRFlags IsInversesRing]
   where
     rRFlags         = iRFlags @r
     ringFlagsOk     = propertyOnce $ do
@@ -259,7 +259,7 @@ moduleProps isLeftMod sgr rR sgm mTestEq (Module mAg scale)     =
     assocM          = property $ do
         a       <- genVis sgr
         b       <- genVis sgr
-        sameFun1PT sgm mTestEq (scale (a *~ b)) ((scale a) . (scale b))
+        sameFun1PT sgm mTestEq (scale (a *~ b)) (scale a . scale b)
 
 rModProps               :: ShowGen r -> Ring r -> ShowGen m -> TestRel m ->
                             RMod r m -> [(PropertyName, Property)]
@@ -352,7 +352,7 @@ checkGroup name props   = checkParallel $ Hh.Group (fromString name) props
 
 checkAll                :: [IO Bool] -> IO Bool
 -- ^ like 'Control.Monad.Extra.andM', but doesn't short-circuit (it always runs all the tests).
-checkAll checks         = liftM and (mapM id checks)
+checkAll checks         = liftM and (sequence checks)
 
 
 testAlgebra             :: IO Bool

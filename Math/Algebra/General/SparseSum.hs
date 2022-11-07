@@ -125,7 +125,7 @@ ssRTails (SSNZ _c _d t) = ssRTails t `seq` ()   -- @@ rnf c and d also!?
 ssForceTails            :: Op1 (SparseSum c d)
 ssForceTails x          = ssRTails x `seq` x
 
-ssNumTerms      :: (SparseSum c d) -> Int
+ssNumTerms      :: SparseSum c d -> Int
 ssNumTerms      = ssFoldr (\ _ _ t -> t + 1) 0
 
 ssAGUniv        :: forall c d. IAbelianGroup c => Cmp d -> SparseSumUniv d c
@@ -178,7 +178,7 @@ ssCTimes c s    = if isZero c then SSZero else ssNZCTimes c s
 
 ssMonicize      :: IRing c => Op1 (SparseSum c d)
 -- ^ @(ssMonicize s)@ requires that @s@ is nonzero, and its leading coefficient is a unit
-ssMonicize s    = ssMapNZFC ((rInv (ssHeadCoef s)) *.) s
+ssMonicize s    = ssMapNZFC (rInv (ssHeadCoef s) *.) s
 
 ssTimesNZC      :: forall c d. IRing c => c -> Op1 (SparseSum c d)
 -- ^ the @c@ is nonzero
@@ -201,7 +201,7 @@ ssTimesMonom dOp2 s d c     = if isZero c then SSZero else ssTimesNZMonom dOp2 s
 
 ssTimes         :: IRing c => SparseSumUniv d c -> Op2 d -> Op2 (SparseSum c d)
 -- ^ assumes the @Op2 d@ is order-preserving in each argument
-ssTimes (UnivL ssAG _ univF) dOp2   = \s t -> univF ssAG (TgtArrsF (sToTimesDC s)) t
+ssTimes (UnivL ssAG _ univF) dOp2 s     = univF ssAG (TgtArrsF (sToTimesDC s))
   where
     sToTimesDC      = ssTimesNZMonom dOp2
 
