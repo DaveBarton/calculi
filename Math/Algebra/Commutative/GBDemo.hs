@@ -3,6 +3,7 @@
 {- |  Groebner Basis demo examples  -}
 
 module Math.Algebra.Commutative.GBDemo (
+    gbTSummary, gbTProgressChars, gbTProgressInfo, gbTResults, gbTQueues, gbTProgressDetails,
     gbDemo,
     simpleDemo, buchberger87, gerdt93, katsura5, katsura6, katsura7, katsura8, katsura10,
     hCyclic4, cyclic4, hCyclic5, cyclic5, hCyclic6, cyclic6, hCyclic7, cyclic7,
@@ -19,9 +20,10 @@ import Math.Algebra.Commutative.Field.ZModP32
 -- See http://www.math.usm.edu/perry/Research/f5ex.lib as in
 -- https://arxiv.org/pdf/0906.2967.pdf
 
-gbDemo          :: String -> Integer -> [String] -> [String] -> Int -> IO ()
--- @gbDemo name p varSs genSs nCores@: p is a prime < 2^32, and varSs have precedence > '^'
-gbDemo name p varSs genSs nCores    = case someNatVal (fromInteger p) of
+gbDemo          :: String -> Integer -> [String] -> [String] -> Int -> Int -> IO ()
+{- ^ @gbDemo name p varSs genSs nCores gbTrace@: @p@ is a prime that fits in a word, and @varSs@
+    have precedence > '^' -}
+gbDemo name p varSs genSs nCores gbTrace    = case someNatVal (fromInteger p) of
  SomeNat (Proxy :: Proxy p)     -> do
     putStr $ name ++ " "
     _           <- groebnerBasis nVars gRevLex cField epRing gens nCores gbTrace epShow
@@ -34,12 +36,11 @@ gbDemo name p varSs genSs nCores    = case someNatVal (fromInteger p) of
     epShow      = epShowPrec varSs (\_prec c -> show (cBalRep c)) 0
     gens        = map ((\ [(x,"")] -> x) . withRing epRing polynomReads (zip varSs varEps))
                     genSs
-    gbTrace     = gbTSummary    -- gbTResults will show result generators
 
 simpleDemo, buchberger87, gerdt93, katsura5, katsura6, katsura7, katsura8, katsura10,
     hCyclic4, cyclic4, hCyclic5, cyclic5, hCyclic6, cyclic6, hCyclic7, cyclic7,
     hCyclic8, schransTroost, jason210, cyclic8big
-                :: Int -> IO ()
+                :: Int -> Int -> IO ()
 
 simpleDemo      =
     gbDemo "simpleDemo" 7583 ["x", "y", "z", "t"]

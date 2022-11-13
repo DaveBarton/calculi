@@ -15,7 +15,7 @@ import Math.Algebra.General.Algebra
 import Math.Algebra.General.SparseSum
 import Math.Algebra.Commutative.EPoly
 
-import Control.Monad (liftM, replicateM_, when, void)
+import Control.Monad (liftM, replicateM, replicateM_, when, void)
 import Data.Array.IArray (Array, (!), listArray)
 import Data.Foldable (find, foldl', foldlM, minimumBy, toList)
 import Data.List (deleteBy, elemIndex, findIndices, groupBy, insertBy, partition, sortBy)
@@ -25,7 +25,7 @@ import qualified Data.Sequence as Seq
 import Data.Tuple.Extra (fst3)
 import Numeric (showFFloat)
 
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, myThreadId, threadCapability)
 import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.STM.TVar (TVar, newTVarIO, readTVar, writeTVar)
 import Control.Monad.STM (atomically, retry)
@@ -296,14 +296,14 @@ foldReduce1 nVars div2 ghs ph@(EPolyHDeg p _)   =       -- all gs /= 0
     in  fmap (sugarReduce div2 ph) mgh
 
 
--- | gbTrace bits. Bits 0x0F are useful to end users.
+-- | gbTrace bits for 'groebnerBasis' tracing. Bits 0x0F are useful to end users.
 gbTSummary, gbTProgressChars, gbTProgressInfo, gbTResults, gbTQueues, gbTProgressDetails  :: Int
-gbTSummary          = 0x01
-gbTProgressChars    = 0x02
-gbTProgressInfo     = 0x04
-gbTResults          = 0x08
-gbTQueues           = 0x10
-gbTProgressDetails  = 0x20
+gbTSummary          = 0x01  -- ^ a short summary at the end of a run
+gbTProgressChars    = 0x02  -- ^ 'o' character or total degree for each s-poly reduction result
+gbTProgressInfo     = 0x04  -- ^ info when adding or removing a generator
+gbTResults          = 0x08  -- ^ output final generators
+gbTQueues           = 0x10  -- ^ info about threads and their queues
+gbTProgressDetails  = 0x20  -- ^ details relating to selection strategy
 
 groebnerBasis       :: forall c. Int -> Cmp ExponVec -> Field c -> Ring (EPoly c) -> [EPoly c]
                         -> Int -> Int -> (EPoly c -> String) -> IO [EPoly c]
@@ -386,14 +386,16 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 atomicModifyIORef' gkgsRef (\(gkgs, n) -> ((gkgsInsert gh1 gkgs, n + 1), ()))
                 k           <- atomicModifyIORef' genHsRef
                                 (\ghs -> (ghs Seq.|> gh1, Seq.length ghs))
+                rgs'        <- rgsInsert gh1 k rgs
+                let (gMGis', ijcs')     = updatePairs nVars evCmp gMGis ijcs (giNew gh1)
                 when (gbTrace .&. gbTProgressChars /= 0) $ do
                     let s       = show (headTotDeg g1)
                     hPutStr stderr (if length s > 1 then ' ':s++"," else s)
                 when (gbTrace .&. gbTProgressInfo /= 0) $
-                    putStrLn $ 'g' : show k ++ ": " ++ _showEV g1
-                rgs'        <- rgsInsert gh1 k rgs
-                let (gMGis', ijcs')     = updatePairs nVars evCmp gMGis ijcs (giNew gh1)
+                    putStrLn $ " (" ++ show (length ijcs') ++ " unqueued pairs) + g" ++ show k
+                        ++ ": " ++ _showEV g1
                 pure (gMGis', ijcs', rgs')
+    -- nextGenHNs holds the output of S-pair reduction threads for the main thread:
     nextGenHNs      <- newIORef [] :: IO (IORef [(EPolyHDeg c, Int)])
     checkNextGens   <- newEmptyMVar
     let newG (SPair i j h c)      = {-# SCC newG #-} do
@@ -425,6 +427,12 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                             pure (Just sp)
                     maybe (pure Nothing) doSps nextSPs
                 maybe (pure ()) (\sp -> newG sp >> loop) mSp
+    auxThreadIds        <- replicateM (nCores - 1) forkMakeGs
+    let showCapabilities    = do
+            mainThreadId        <- myThreadId
+            capInfos            <- mapM threadCapability (mainThreadId : auxThreadIds)
+            putStr "\nThreads are on capabilities: "
+            mapM_ (putStrLn . unwords) (chunksOf 32 (map (show . fst) capInfos))
         go arg@(gMGis, ijcs, rgs) nextGHNs numForThreads
             | let n = 2 * nCores - 1 - numForThreads - (length nextGHNs + 1) `quot` 2,  -- @@ tune
               n > 0 && not (null ijcs)      = do
@@ -468,16 +476,17 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     arg1        <- addGenHN arg (head nextGHNs)
                     go arg1 (tail nextGHNs) numForThreads
             | otherwise         = {-# SCC gbDone #-} do
+                when (gbTrace .&. gbTSummary /= 0) showCapabilities
                 atomically (writeTVar nextSPairs Nothing)
                 ghs         <- readIORef genHsRef
                 let ghsL    = toList ghs
                 when (gbTrace .&. gbTSummary /= 0) $ do
-                    putStr "\nGroebner Basis CPU/Elapsed Times: "
+                    putStr "Groebner Basis CPU/Elapsed Times: "
                     putCPUElapsed cpuTime0 sysTime0
                     nSPairsRed  <- readIORef nSPairsRedRef
                     putStrLn $ "\n# SPairs reduced = " ++ show nSPairsRed
                     nRedSteps   <- readIORef nRedStepsRef
-                    putStrLn $ "# reduction steps = " ++ show nRedSteps
+                    putStrLn $ "# reduction steps (quotient terms) = " ++ show nRedSteps
                         -- Macaulay just counts top-reduced
                     let ndhs    = [(ssNumTerms g, headTotDeg g, h) | EPolyHDeg g h <- ghsL]
                     putStrLn $ "generated (redundant) basis has " ++ show (Seq.length ghs) ++
@@ -499,7 +508,6 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 pure gb
     let initGHNs        = sortBy ghnCmp [(EPolyHDeg g (epHomogDeg0 g), 0) | g <- initGens]
     (gMGis, ijcs, rgs)  <- foldlM addGenHN ([], [], []) initGHNs
-    replicateM_ (nCores - 1) forkMakeGs
     go (gMGis, ijcs, rgs) [] 0
   where
     _showEV SSZero  = "0"
