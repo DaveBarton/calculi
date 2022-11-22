@@ -1,4 +1,4 @@
-{-# LANGUAGE Strict, TupleSections #-}
+{-# LANGUAGE Strict #-}
 
 {- |  This module defines functions for computing and using a Groebner Basis.
     
@@ -15,20 +15,20 @@ import Math.Algebra.General.Algebra
 import Math.Algebra.General.SparseSum
 import Math.Algebra.Commutative.EPoly
 
-import Control.Monad (liftM, replicateM, replicateM_, when, void)
+import Control.Monad (replicateM, when, void)
 import Data.Array.IArray (Array, (!), listArray)
 import Data.Foldable (find, foldl', foldlM, minimumBy, toList)
-import Data.List (deleteBy, elemIndex, findIndices, groupBy, insertBy, partition, sortBy)
+import Data.List (deleteBy, elemIndex, findIndices, groupBy, insertBy, sortBy)
 import Data.List.Extra (chunksOf, mergeBy)
 import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
 import qualified Data.Sequence as Seq
 import Data.Tuple.Extra (fst3)
 import Numeric (showFFloat)
 
-import Control.Concurrent (forkIO, myThreadId, threadCapability)
-import Control.Concurrent.MVar (newEmptyMVar, takeMVar, tryPutMVar)
+import Control.Concurrent (ThreadId, forkIO, killThread, myThreadId, threadCapability)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.STM.TVar (TVar, newTVarIO, readTVar, writeTVar)
-import Control.Monad.STM (atomically, retry)
+import Control.Monad.STM (STM, atomically, retry)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 
 import Data.Time.Clock.System (SystemTime(..), getSystemTime)
@@ -37,8 +37,24 @@ import System.CPUTime (getCPUTime)
 import System.IO (hPutChar, hPutStr, stderr)
 
 
+minIndexBy                      :: Cmp a -> Seq.Seq a -> Int
+-- ^ The index of the first least element of a nonempty sequence.
+minIndexBy cmp (h Seq.:<| t)    = fst (Seq.foldlWithIndex f (0, h) t)
+  where
+    f im@(_, m) j e     = if cmp m e == GT then (j, e) else im
+minIndexBy _   Seq.Empty        = undefined
+
 inc             :: IORef Int -> Int -> IO ()
-inc ref n       = when (n /= 0) $ atomicModifyIORef' ref  (\tot -> (tot + n, ()))
+inc ref n       = when (n /= 0) $ atomicModifyIORef' ref (\tot -> (tot + n, ()))
+
+enqueueRefSeq           :: IORef (Seq.Seq a) -> a -> IO ()
+enqueueRefSeq ref e     = atomicModifyIORef' ref (\s -> (s Seq.|> e, ()))
+
+maybeDequeueRefSeq          :: IORef (Seq.Seq a) -> Pred a -> IO (Maybe a)
+maybeDequeueRefSeq ref p    = atomicModifyIORef' ref f
+  where
+    f (h Seq.:<| t) | p h       = (t, Just h)
+    f s                         = (s, Nothing)
 
 elapsedMicroSecs    :: SystemTime -> IO Integer
 elapsedMicroSecs (MkSystemTime s0 ns0)      = do
@@ -305,6 +321,13 @@ gbTResults          = 0x08  -- ^ output final generators
 gbTQueues           = 0x10  -- ^ info about threads and their queues
 gbTProgressDetails  = 0x20  -- ^ details relating to selection strategy
 
+showThreadCapabilities      :: String -> [ThreadId] -> IO ()
+showThreadCapabilities prefix otherThreadIds    = do
+    firstThreadId       <- myThreadId
+    capInfos            <- mapM threadCapability (firstThreadId : otherThreadIds)
+    putStr $ prefix ++ "Threads are on capabilities: "
+    mapM_ (putStrLn . unwords) (chunksOf 32 (map (show . fst) capInfos))
+
 groebnerBasis       :: forall c. Int -> Cmp ExponVec -> Field c -> Ring (EPoly c) -> [EPoly c]
                         -> Int -> Int -> (EPoly c -> String) -> IO [EPoly c]
 groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
@@ -325,23 +348,23 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
             (EPolyHDeg g1 h1, n)    <- topReduce gh
             g2                      <- reduce2 (ssForceTails g1)
             pure (EPolyHDeg g2 h1, n)
-        reduce gh   = liftM fst (reduce_n gh)
-    genHsRef        <- newIORef Seq.empty :: IO (IORef (Seq.Seq (EPolyHDeg c)))
+    genHsRef        <- newIORef Seq.empty       :: IO (IORef (Seq.Seq (EPolyHDeg c)))
     let gap0NZ (EPolyHDeg g h)  = if h /= totDeg (ssDegNZ g) then Nothing else Just g
-        endReduce kN gh         = do
+        endReduce_n kN gh       = do
             ghs         <- readIORef genHsRef
-            if kN == length ghs || ssIsZero (phP gh) then pure gh else
+            let kN'     = Seq.length ghs
+            if kN == kN' || ssIsZero (phP gh) then pure (gh, kN') else
                 let endGHs      = Seq.drop kN ghs
                     mghn        = foldReduce1 nVars topDiv2 endGHs gh
                     endRed1 (ph, nSteps)    = do
                         inc nRedStepsRef nSteps
-                        reduce ph
+                        reduce_n ph
                     endRed2 (EPolyHDeg (SSNZ c d t) h)  = do
                         let g0s                 = mapMaybe gap0NZ (toList endGHs)
                             (todo, t', nSteps)  = foldReduce nVars topDiv2 g0s t
                         inc nRedStepsRef nSteps
                         p       <- (if todo then reduce2 else pure) (SSNZ c d t')
-                        pure (EPolyHDeg p h)
+                        pure (EPolyHDeg p h, kN')
                     endRed2 (EPolyHDeg SSZero _)        = undefined
                 in  maybe (endRed2 gh) endRed1 mghn
     -- rgs is a [(g, i)] of nonzero g with descending (ssDegNZ g)
@@ -376,7 +399,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         atomicModifyIORef' genHsRef (\ghs -> (Seq.update j rh' ghs, ()))
                         assert (not (ssIsZero r')) (pure ((r', j) : t'))
         addGenHN arg@(gMGis, ijcs, rgs) (gh, kN)    = {-# SCC addGenHN #-} do
-            EPolyHDeg g0 h         <- (if kN == 0 then reduce else endReduce kN) gh
+            (EPolyHDeg g0 h, _)     <- (if kN == 0 then reduce_n else endReduce_n kN) gh
             if ssIsZero g0 then do
                 when (gbTrace .&. gbTProgressChars /= 0) (hPutChar stderr 'o')
                 pure arg
@@ -395,89 +418,93 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     putStrLn $ " (" ++ show (length ijcs') ++ " unqueued pairs) + g" ++ show k
                         ++ ": " ++ _showEV g1
                 pure (gMGis', ijcs', rgs')
-    -- nextGenHNs holds the output of S-pair reduction threads for the main thread:
-    nextGenHNs      <- newIORef [] :: IO (IORef [(EPolyHDeg c, Int)])
-    checkNextGens   <- newEmptyMVar
-    let newG (SPair i j h c)      = {-# SCC newG #-} do
+    -- nextGenHNs holds the nonzero output of S-pair reduction threads for the main thread:
+    nextGenHNs      <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (EPolyHDeg c, Int)))
+    checkNextGens   <- newEmptyMVar         :: IO (MVar ())
+    numForThreadsRef    <- newIORef 0       :: IO (IORef Int)
+    let newNextGenHN (EPolyHDeg g h, kN)    = do
+            if ssIsZero g then do
+                inc numForThreadsRef (-1)
+                when (gbTrace .&. gbTProgressChars /= 0) (hPutChar stderr 'o')
+            else enqueueRefSeq nextGenHNs (EPolyHDeg (ssForceTails g) h, kN)
+            _   <- tryPutMVar checkNextGens ()
+            pure ()
+        newG (SPair i j h c)      = {-# SCC newG #-} do
             let ~s  = "start spair(g" ++ show i ++ ",g" ++ show j ++ "): sugar degree " ++
                         show h ++ ", lcm of heads " ++ epShow (SSNZ (rOne cField) c SSZero)
             when (gbTrace .&. gbTProgressDetails /= 0) $ putStrLn s
+            inc nSPairsRedRef 1
             ghs     <- readIORef genHsRef
-            (EPolyHDeg g h', kN) <- reduce_n
+            ghn     <- reduce_n
                         (EPolyHDeg (sPoly (phP (Seq.index ghs i)) (phP (Seq.index ghs j)) c) h)
-            let g'  = ssForceTails g
-            atomicModifyIORef' nextGenHNs (\ngs -> ((EPolyHDeg g' h', kN) : ngs, ()))
-            _   <- tryPutMVar checkNextGens ()
-            pure ()
-    nextSPairs      <- newTVarIO (Just []) :: IO (TVar (Maybe [SPair]))     -- sorted
+            newNextGenHN ghn
+        chooseGenHN     :: IO (Maybe (EPolyHDeg c, Int))
+        chooseGenHN     = atomicModifyIORef' nextGenHNs f   -- caller modifies numForThreadsRef
+          where
+            f ghns  = if Seq.null ghns then (ghns, Nothing) else
+                let j   = minIndexBy ghnCmp ghns
+                in  (Seq.deleteAt j ghns, Just (Seq.index ghns j))
+    nextSPairs      <- newTVarIO []         :: IO (TVar [SPair])     -- sorted
     let commitSPairs nMax ijcs  = do
             let (as, bs)    = splitAt nMax ijcs
             atomically $ do
                 nextSPs     <- readTVar nextSPairs
-                writeTVar nextSPairs (Just (mergeBy hEvCmp (fromJust nextSPs) as))
-            pure (length as, bs)
-        forkMakeGs              = forkIO loop
-          where
-            loop        = do
-                mSp         <- atomically $ do
-                    nextSPs     <- readTVar nextSPairs
-                    let doSps []        = retry
-                        doSps (sp : ~t) = do
-                            writeTVar nextSPairs (Just t)
-                            pure (Just sp)
-                    maybe (pure Nothing) doSps nextSPs
-                maybe (pure ()) (\sp -> newG sp >> loop) mSp
-    auxThreadIds        <- replicateM (nCores - 1) forkMakeGs
-    let showCapabilities    = do
-            mainThreadId        <- myThreadId
-            capInfos            <- mapM threadCapability (mainThreadId : auxThreadIds)
-            putStr "\nThreads are on capabilities: "
-            mapM_ (putStrLn . unwords) (chunksOf 32 (map (show . fst) capInfos))
-        go arg@(gMGis, ijcs, rgs) nextGHNs numForThreads
-            | let n = 2 * nCores - 1 - numForThreads - (length nextGHNs + 1) `quot` 2,  -- @@ tune
-              n > 0 && not (null ijcs)      = do
-                (m, ijcs')      <- commitSPairs n ijcs
-                go (gMGis, ijcs', rgs) nextGHNs (numForThreads + m)
-            | not (null nextGHNs) || numForThreads > 0          = do
-                nextGHNs'   <- atomicModifyIORef' nextGenHNs ([], )
-                inc nSPairsRedRef (length nextGHNs')
-                when (gbTrace .&. gbTQueues /= 0 && length nextGHNs' > 1) $
-                    putStr ("n" ++ show (length nextGHNs') ++ " ")
-                if not (null nextGHNs') then do
-                    let (zs, nzs)   = partition (ssIsZero . phP . fst) nextGHNs'
-                    when (gbTrace .&. gbTProgressChars /= 0) $
-                        replicateM_ (length zs) (hPutChar stderr 'o')
-                    let nextGHNs''  = mergeBy ghnCmp nextGHNs (sortBy ghnCmp nzs)
-                    go arg nextGHNs'' (numForThreads - length nextGHNs')
-                else if null nextGHNs then do
-                    (m, ijcs')      <- commitSPairs 1 ijcs
-                    when (gbTrace .&. gbTQueues /= 0) $ do
-                        putChar 'w'
-                        putCPUElapsed cpuTime0 sysTime0
-                    mSp         <- atomically $ do
-                        nextSPs     <- readTVar nextSPairs
-                        let sPs     = fromJust nextSPs
-                        if null sPs then pure Nothing else do
-                            writeTVar nextSPairs (Just (tail sPs))
-                            pure (Just (head sPs))
-                    case mSp of
-                        Nothing     -> void $ takeMVar checkNextGens
-                        Just sp     -> do
-                            -- @@ tune? add some nextSPs, or wait, or see if nextGHNs were 0s ??
-                            when (gbTrace .&. gbTQueues /= 0) $ putStr "newG "
-                            newG sp
-                    when (gbTrace .&. gbTQueues /= 0) $ putCPUElapsed cpuTime0 sysTime0
-                    go (gMGis, ijcs', rgs) nextGHNs (numForThreads + m)
-                else do
-                    when (gbTrace .&. gbTQueues /= 0) $ do
-                        putStr $ "TGOP" ++  -- # terms, gens, output queue, pairs
-                            show (snd (head nextGHNs), length rgs, length nextGHNs, length ijcs)
-                        when (length rgs `mod` 10 == 0) $ putChar '\n'
-                    arg1        <- addGenHN arg (head nextGHNs)
-                    go arg1 (tail nextGHNs) numForThreads
-            | otherwise         = {-# SCC gbDone #-} do
-                when (gbTrace .&. gbTSummary /= 0) showCapabilities
-                atomically (writeTVar nextSPairs Nothing)
+                writeTVar nextSPairs (mergeBy hEvCmp nextSPs as)
+            inc numForThreadsRef (length as)
+            pure bs
+        takeSPair           :: Bool -> STM (Maybe SPair)
+        takeSPair doRetry   = do
+            nextSPs     <- readTVar nextSPairs
+            case nextSPs of
+                sp : ~t     -> do
+                    writeTVar nextSPairs t
+                    pure (Just sp)
+                []          -> if doRetry then retry else pure Nothing
+        checkQueues doEndReduces    = do
+            mSp         <- atomically $ takeSPair (not doEndReduces)
+            case mSp of
+                Just sp     -> do newG sp; checkQueues True
+                Nothing     -> do
+                    ghs         <- readIORef genHsRef
+                    let kN'     = Seq.length ghs
+                    mghn        <- maybeDequeueRefSeq nextGenHNs (\(_, kN) -> kN < kN')
+                    case mghn of
+                        Just (gh, kN)   -> do
+                            ghn'        <- endReduce_n kN gh
+                            newNextGenHN ghn'
+                            checkQueues True
+                        Nothing         -> checkQueues False
+    auxThreadIds        <- replicateM (nCores - 1) (forkIO (checkQueues False))
+    let go arg@(gMGis, ijcs, rgs)   = do
+            numForThreads   <- readIORef numForThreadsRef
+            let nMore   = 2 * nCores - 1 - numForThreads    -- @@ tune
+            if nMore > 0 && not (null ijcs) then do
+                ijcs'       <- commitSPairs nMore ijcs
+                go (gMGis, ijcs', rgs)
+            else if numForThreads > 0 then do
+                mghn        <- chooseGenHN
+                case mghn of
+                    Just ghn    -> do
+                        inc numForThreadsRef (-1)
+                        arg1        <- addGenHN arg ghn
+                        go arg1
+                    Nothing     -> do
+                        ijcs'       <- commitSPairs 1 ijcs
+                        when (gbTrace .&. gbTQueues /= 0) $ do
+                            putChar 'w'
+                            putCPUElapsed cpuTime0 sysTime0
+                        mSp         <- atomically $ takeSPair False
+                        case mSp of
+                            Nothing     -> void $ takeMVar checkNextGens
+                            Just sp     -> do
+                                -- @@ tune? add some nextSPs, or wait ??
+                                when (gbTrace .&. gbTQueues /= 0) $ putStr "newG "
+                                newG sp
+                        when (gbTrace .&. gbTQueues /= 0) $ putCPUElapsed cpuTime0 sysTime0
+                        go (gMGis, ijcs', rgs)
+            else {-# SCC gbDone #-} do
+                when (gbTrace .&. gbTSummary /= 0) (showThreadCapabilities "\n" auxThreadIds)
+                mapM_ killThread auxThreadIds
                 ghs         <- readIORef genHsRef
                 let ghsL    = toList ghs
                 when (gbTrace .&. gbTSummary /= 0) $ do
@@ -508,7 +535,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 pure gb
     let initGHNs        = sortBy ghnCmp [(EPolyHDeg g (epHomogDeg0 g), 0) | g <- initGens]
     (gMGis, ijcs, rgs)  <- foldlM addGenHN ([], [], []) initGHNs
-    go (gMGis, ijcs, rgs) [] 0
+    go (gMGis, ijcs, rgs)
   where
     _showEV SSZero  = "0"
     _showEV p       = if ssNumTerms p < 10 then epShow (withRing cField ssMonicize p)
