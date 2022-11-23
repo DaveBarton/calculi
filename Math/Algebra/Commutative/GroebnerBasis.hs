@@ -16,6 +16,7 @@ import Math.Algebra.General.SparseSum
 import Math.Algebra.Commutative.EPoly
 
 import Control.Monad (replicateM, when, void)
+import Control.Monad.Extra (ifM, whileM)
 import Data.Array.IArray (Array, (!), listArray)
 import Data.Foldable (find, foldl', foldlM, minimumBy, toList)
 import Data.List (deleteBy, elemIndex, findIndices, groupBy, insertBy, sortBy)
@@ -26,7 +27,8 @@ import Data.Tuple.Extra (fst3)
 import Numeric (showFFloat)
 
 import Control.Concurrent (ThreadId, forkIO, killThread, myThreadId, threadCapability)
-import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, tryPutMVar)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, putMVar, takeMVar, tryPutMVar,
+    tryTakeMVar)
 import Control.Concurrent.STM.TVar (TVar, newTVarIO, readTVar, writeTVar)
 import Control.Monad.STM (STM, atomically, retry)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
@@ -398,7 +400,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                             (\(gkgs, n) -> ((gkgsReplace hh rh' gkgs, n), ()))
                         atomicModifyIORef' genHsRef (\ghs -> (Seq.update j rh' ghs, ()))
                         assert (not (ssIsZero r')) (pure ((r', j) : t'))
-        addGenHN arg@(gMGis, ijcs, rgs) (gh, kN)    = {-# SCC addGenHN #-} do
+    let addGenHN arg@(gMGis, ijcs) (gh, kN)     = {-# SCC addGenHN #-} do
             (EPolyHDeg g0 h, _)     <- (if kN == 0 then reduce_n else endReduce_n kN) gh
             if ssIsZero g0 then do
                 when (gbTrace .&. gbTProgressChars /= 0) (hPutChar stderr 'o')
@@ -409,7 +411,6 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 atomicModifyIORef' gkgsRef (\(gkgs, n) -> ((gkgsInsert gh1 gkgs, n + 1), ()))
                 k           <- atomicModifyIORef' genHsRef
                                 (\ghs -> (ghs Seq.|> gh1, Seq.length ghs))
-                rgs'        <- rgsInsert gh1 k rgs
                 let (gMGis', ijcs')     = updatePairs nVars evCmp gMGis ijcs (giNew gh1)
                 when (gbTrace .&. gbTProgressChars /= 0) $ do
                     let s       = show (headTotDeg g1)
@@ -417,7 +418,21 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 when (gbTrace .&. gbTProgressInfo /= 0) $
                     putStrLn $ " (" ++ show (length ijcs') ++ " unqueued pairs) + g" ++ show k
                         ++ ": " ++ _showEV g1
-                pure (gMGis', ijcs', rgs')
+                pure (gMGis', ijcs')
+    rgsNMVar        <- newMVar ([], 0)  :: IO (MVar ([(EPoly c, Int)], Int))    -- (rgs, # gens)
+    let checkRgs1   = do    -- may add 1 gh to rgs
+            mRgsK       <- tryTakeMVar rgsNMVar
+            case mRgsK of
+                Just rgsK@(rgs, k)  -> do
+                    ghs     <- readIORef genHsRef
+                    if k < Seq.length ghs then do
+                        rgs'    <- rgsInsert (Seq.index ghs k) k rgs
+                        putMVar rgsNMVar (rgs', k + 1)
+                        pure True
+                    else do
+                        putMVar rgsNMVar rgsK
+                        pure False
+                Nothing             -> pure False
     -- nextGenHNs holds the nonzero output of S-pair reduction threads for the main thread:
     nextGenHNs      <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (EPolyHDeg c, Int)))
     checkNextGens   <- newEmptyMVar         :: IO (MVar ())
@@ -461,6 +476,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     pure (Just sp)
                 []          -> if doRetry then retry else pure Nothing
         checkQueues doEndReduces    = do
+            whileM checkRgs1
             mSp         <- atomically $ takeSPair (not doEndReduces)
             case mSp of
                 Just sp     -> do newG sp; checkQueues True
@@ -475,12 +491,12 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                             checkQueues True
                         Nothing         -> checkQueues False
     auxThreadIds        <- replicateM (nCores - 1) (forkIO (checkQueues False))
-    let go arg@(gMGis, ijcs, rgs)   = do
+    let go arg@(gMGis, ijcs)    = do
             numForThreads   <- readIORef numForThreadsRef
             let nMore   = 2 * nCores - 1 - numForThreads    -- @@ tune
             if nMore > 0 && not (null ijcs) then do
                 ijcs'       <- commitSPairs nMore ijcs
-                go (gMGis, ijcs', rgs)
+                go (gMGis, ijcs')
             else if numForThreads > 0 then do
                 mghn        <- chooseGenHN
                 case mghn of
@@ -493,7 +509,8 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         when (gbTrace .&. gbTQueues /= 0) $ do
                             putChar 'w'
                             putCPUElapsed cpuTime0 sysTime0
-                        mSp         <- atomically $ takeSPair False
+                        mSp         <- ifM checkRgs1 (pure Nothing)
+                                        (atomically $ takeSPair False)
                         case mSp of
                             Nothing     -> void $ takeMVar checkNextGens
                             Just sp     -> do
@@ -501,11 +518,14 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                                 when (gbTrace .&. gbTQueues /= 0) $ putStr "newG "
                                 newG sp
                         when (gbTrace .&. gbTQueues /= 0) $ putCPUElapsed cpuTime0 sysTime0
-                        go (gMGis, ijcs', rgs)
+                        go (gMGis, ijcs')
             else {-# SCC gbDone #-} do
+                ghs         <- readIORef genHsRef
+                whileM $ do
+                    (_, k)      <- takeMVar rgsNMVar
+                    pure (k < Seq.length ghs)
                 when (gbTrace .&. gbTSummary /= 0) (showThreadCapabilities "\n" auxThreadIds)
                 mapM_ killThread auxThreadIds
-                ghs         <- readIORef genHsRef
                 let ghsL    = toList ghs
                 when (gbTrace .&. gbTSummary /= 0) $ do
                     putStr "Groebner Basis CPU/Elapsed Times: "
@@ -533,9 +553,9 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     putStrLn (show (length gb) ++ " generators:")
                     mapM_ (putStrLn . epShow) gb
                 pure gb
-    let initGHNs        = sortBy ghnCmp [(EPolyHDeg g (epHomogDeg0 g), 0) | g <- initGens]
-    (gMGis, ijcs, rgs)  <- foldlM addGenHN ([], [], []) initGHNs
-    go (gMGis, ijcs, rgs)
+    let initGHNs    = sortBy ghnCmp [(EPolyHDeg g (epHomogDeg0 g), 0) | g <- initGens]
+    initArg         <- foldlM addGenHN ([], []) initGHNs
+    go initArg
   where
     _showEV SSZero  = "0"
     _showEV p       = if ssNumTerms p < 10 then epShow (withRing cField ssMonicize p)
