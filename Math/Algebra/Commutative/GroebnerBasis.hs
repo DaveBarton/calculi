@@ -27,8 +27,8 @@ import Data.Tuple.Extra (fst3)
 import Numeric (showFFloat)
 
 import Control.Concurrent (ThreadId, forkIO, killThread, myThreadId, threadCapability)
-import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, putMVar, takeMVar, tryPutMVar,
-    tryTakeMVar)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, putMVar, readMVar, takeMVar,
+    tryPutMVar, tryTakeMVar)
 import Control.Concurrent.STM.TVar (TVar, newTVarIO, readTVar, writeTVar)
 import Control.Monad.STM (STM, atomically, retry)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
@@ -520,12 +520,16 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         when (gbTrace .&. gbTQueues /= 0) $ putCPUElapsed cpuTime0 sysTime0
                         go (gMGis, ijcs')
             else {-# SCC gbDone #-} do
-                ghs         <- readIORef genHsRef
+                when (gbTrace .&. gbTSummary /= 0) $ showThreadCapabilities "\n" auxThreadIds
+                when (gbTrace .&. gbTQueues /= 0) $ putCPUElapsed cpuTime0 sysTime0
                 whileM $ do
-                    (_, k)      <- takeMVar rgsNMVar
-                    pure (k < Seq.length ghs)
-                when (gbTrace .&. gbTSummary /= 0) (showThreadCapabilities "\n" auxThreadIds)
+                    (_, k)     <- readMVar rgsNMVar
+                    n          <- fmap Seq.length (readIORef genHsRef)
+                    let todo   = k < n
+                    when todo (void checkRgs1)
+                    pure todo
                 mapM_ killThread auxThreadIds
+                ghs         <- readIORef genHsRef
                 let ghsL    = toList ghs
                 when (gbTrace .&. gbTSummary /= 0) $ do
                     putStr "Groebner Basis CPU/Elapsed Times: "

@@ -4,10 +4,11 @@
 
 module Math.Algebra.Commutative.GBDemo (
     gbTSummary, gbTProgressChars, gbTProgressInfo, gbTResults, gbTQueues, gbTProgressDetails,
+    (.|.),
     gbDemo,
     simpleDemo, buchberger87, gerdt93, katsura5, katsura6, katsura7, katsura8, katsura10,
     hCyclic4, cyclic4, hCyclic5, cyclic5, hCyclic6, cyclic6, hCyclic7, cyclic7,
-    hCyclic8, schransTroost, jason210, cyclic8big
+    hCyclic8, cyclic8, schransTroost, jason210, cyclic8big
 ) where
 
 import Math.Algebra.General.Algebra
@@ -39,7 +40,7 @@ gbDemo name p varSs genSs nCores gbTrace    = case someNatVal (fromInteger p) of
 
 simpleDemo, buchberger87, gerdt93, katsura5, katsura6, katsura7, katsura8, katsura10,
     hCyclic4, cyclic4, hCyclic5, cyclic5, hCyclic6, cyclic6, hCyclic7, cyclic7,
-    hCyclic8, schransTroost, jason210, cyclic8big
+    hCyclic8, cyclic8, schransTroost, jason210, cyclic8big
                 :: Int -> Int -> IO ()
 
 simpleDemo      =
@@ -225,6 +226,19 @@ hCyclic8        =
             "abcdef+bcdefg+cdefgh+defgha+efghab+fghabc+ghabcd+habcde",
             "abcdefg+bcdefgh+cdefgha+defghab+efghabc+fghabcd+ghabcde+habcdef",
             "abcdefgh-i^8"
+        ]
+
+cyclic8         =
+    gbDemo "cyclic8" 7583 ["a", "b", "c", "d", "e", "f", "g", "h"]
+        [
+            "a+b+c+d+e+f+g+h",
+            "ab+bc+cd+de+ef+fg+gh+ha",
+            "abc+bcd+cde+def+efg+fgh+gha+hab",
+            "abcd+bcde+cdef+defg+efgh+fgha+ghab+habc",
+            "abcde+bcdef+cdefg+defgh+efgha+fghab+ghabc+habcd",
+            "abcdef+bcdefg+cdefgh+defgha+efghab+fghabc+ghabcd+habcde",
+            "abcdefg+bcdefgh+cdefgha+defghab+efghabc+fghabcd+ghabcde+habcdef",
+            "abcdefgh-1"
         ]
 
 {- cyclic_n(int n)    // try 7, then later 8

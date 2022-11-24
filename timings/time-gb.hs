@@ -51,7 +51,7 @@ main    = do
         ++ ", using " ++ show nCores ++ " of " ++ show maxNCores ++ " cores\n"
     
     -- for gbTrace bits, see Math/Algebra/Commutative/GroebnerBasis.hs:
-    let gbTrace     = gbTSummary
+    let gbTrace     = gbTSummary .|. gbTQueues
     mapM_ (\ex -> runInUnboundThread $ ex nCores gbTrace) [katsura8, cyclic7, jason210]
     
     when isLinux $ tryCommand "echo; numastat $PPID"
