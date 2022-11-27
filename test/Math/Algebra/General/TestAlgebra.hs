@@ -119,7 +119,7 @@ equalityProps sg eq = [("reflexive", reflexive), ("symmetric", symmetric)]
     symmetric       = property $ do
         a       <- rand
         b       <- rand
-        cover 30 "distinct" (not (eq a b))      -- to catch eq always returning True
+        cover 20 "distinct" (not (eq a b))      -- to catch eq always returning True
         eq a b === eq b a   -- skip this for e.g. testEq of functions?
     {- Usually equal elements are stored in a unique normal form, or else equality checking is
         either slow or impossible. Thus testing transitivity seems either pointless, slow,
