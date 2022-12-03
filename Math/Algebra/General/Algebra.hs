@@ -136,7 +136,7 @@ withDict alg k  = unsafeCoerce (Gift k :: Gift cls r) alg
 newtype Gift cls r  = Gift (cls => r)
 #endif
 
-infixr 8  ^., ^:
+infixr 8    ^., ^:
 infixl 7    *., *:, /.
 infixl 6    +., -.
 infix  4    ==., ==:    -- @@ /=, <, <=, >=, >
