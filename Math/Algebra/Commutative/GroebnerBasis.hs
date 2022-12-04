@@ -71,6 +71,12 @@ inc ref n       = when (n /= 0) $ atomicModifyIORef'_ ref (+ n)
 inc1TVar        :: TVar Int -> IO ()
 inc1TVar var    = atomically $ modifyTVar' var (+ 1)
 
+pop             :: IORef [a] -> IO (Maybe a)
+pop esRef       = atomicModifyIORef' esRef f
+  where
+    f (h : t)       = (t, Just h)
+    f []            = ([], Nothing)
+
 maybeAtomicModifyIORef'             :: IORef a -> Pred a -> (a -> (a, b)) -> IO (Maybe b)
 -- for speed, trying to avoid atomicModifyIORef'
 maybeAtomicModifyIORef' ref p f     = do
@@ -462,13 +468,14 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         skipIF s i  = Seq.update i Nothing s
                     unless (null skipIs) $      -- 'unless' for speed
                         atomicModifyIORef'_ gMGisRef (\ms -> foldl' skipIF ms skipIs)
-                    let ijcsF ijcs  = (ijcs', ijcs')
+                    let ijcsF ijcs  = (ijcs', (ijcs, ijcs'))
                           where
-                            ijcs'       = evList $
+                            ijcs'       =
                                 mergeBy hEvCmp (minusSorted hEvCmp ijcs skipIJCs) addITCs
-                    ijcs1           <- atomicModifyIORef' ijcsRef ijcsF
+                    (ijcs, ijcs')   <- atomicModifyIORef' ijcsRef ijcsF
+                    pure (evElts ijcs')     -- @@ test (time) w/o this (& w/o gbTQueues) on many cores
                     when (gbTrace .&. gbTQueues /= 0) $
-                        putStr $ ' ' : show (length ijcs1) ++ "q"
+                        putStr $ ' ' : show (length ijcs) ++ "-" ++ show (length ijcs') ++ "q"
                     when (gbTrace .&. gbTProgressInfo /= 0) $
                         putStrLn $ " g" ++ show t ++ ": " ++ _showEV (phP gh)
                     inc1TVar wakeMainThread
@@ -531,23 +538,21 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 as              <- atomicModifyIORef' ijcsRef (swap . splitAt nWant)
                 if null as then pure False else do
                     atomicModifyIORef'_ nextSPairs (flip (mergeBy hEvCmp) as)
+                    -- @@@ do evList on the result of atomicModifyIORef' !?
                     inc numForThreadsRef (length as)
                     inc1TVar wakeAllThreads
                     pure True
-        takeSPair   :: IO (Maybe SPair)
-        takeSPair   = atomicModifyIORef' nextSPairs f
-          where
-            f (h : t)   = (t, Just h)
-            f []        = ([], Nothing)
         doSP        = do
-            mSp         <- takeSPair
+            mSp         <- pop nextSPairs
             maybe (pure False) newG mSp
     numSleepingRef      <- newIORef 0       :: IO (IORef Int)   -- not counting main thread
     let checkQueues = do
             wake0       <- readTVarIO wakeAllThreads
-            q           <- orM [checkRgs1, newIJCs, doSP, doEndReduce]
+            q           <- orM [checkRgs1, newIJCs, doSP, commitSPairs, doEndReduce]
             unless q $ do
+                when (gbTrace .&. gbTQueues /= 0) $ putChar 's'
                 inc numSleepingRef 1
+                inc1TVar wakeMainThread     -- in case everyone's sleeping
                 atomically $ do
                     wake1       <- readTVar wakeAllThreads
                     when (wake1 == wake0) retry
@@ -569,11 +574,14 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     whileM $ do
         wakes0      <- mapM readTVarIO [wakeAllThreads, wakeMainThread]
         let doSleep = do
-                res         <- (< nCores - 1) <$> readIORef numSleepingRef
-                when res $
+                numSleeping <- readIORef numSleepingRef
+                wakes1      <- mapM readTVarIO [wakeAllThreads, wakeMainThread]
+                let res     = wakes1 /= wakes0 || numSleeping < nCores - 1
+                when res $ do
+                    when (gbTrace .&. gbTQueues /= 0) $ putChar 'S'
                     atomically $ do
-                        wakes1      <- mapM readTVar [wakeAllThreads, wakeMainThread]
-                        when (wakes1 == wakes0) retry
+                        wakes2      <- mapM readTVar [wakeAllThreads, wakeMainThread]
+                        when (wakes2 == wakes0) retry
                 pure res
         orM [commitSPairs, chooseGenHN, newIJCs, checkRgs1, doSP, doSleep]
     when (gbTrace .&. gbTSummary /= 0) $ showThreadCapabilities "\n" auxThreadIds
