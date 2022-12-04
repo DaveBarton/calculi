@@ -15,7 +15,7 @@ import Math.Algebra.General.Algebra
 import Math.Algebra.General.SparseSum
 import Math.Algebra.Commutative.EPoly
 
-import Control.Monad (replicateM, unless, when)
+import Control.Monad (unless, when)
 import Control.Monad.Extra (orM, whileM)
 import Data.Array.IArray (Array, (!), listArray)
 import Data.Foldable (find, foldl', minimumBy, toList)
@@ -478,7 +478,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         putStr $ ' ' : show (length ijcs) ++ "-" ++ show (length ijcs') ++ "q"
                     when (gbTrace .&. gbTProgressInfo /= 0) $
                         putStrLn $ " g" ++ show t ++ ": " ++ _showEV (phP gh)
-                    inc1TVar wakeMainThread
+                    inc1TVar wakeAllThreads
                     pure True
     rgsRef          <- newIORef []          :: IO (IORef [(EPoly c, Int)])
     rgsMNGensRef    <- newIORef (Just 0)    :: IO (IORef (Maybe Int))   -- Nothing if locked
@@ -516,7 +516,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
             ghn     <- reduce_n
                         (EPolyHDeg (sPoly (phP (Seq.index ghs i)) (phP (Seq.index ghs j)) c) h)
             newNextGenHN ghn
-            inc1TVar wakeMainThread
+            inc1TVar wakeAllThreads
             pure True
         chooseGenHN     = do
             mghn    <- atomicModifyIORef' nextGenHNs f
@@ -546,18 +546,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
             mSp         <- pop nextSPairs
             maybe (pure False) newG mSp
     numSleepingRef      <- newIORef 0       :: IO (IORef Int)   -- not counting main thread
-    let checkQueues = do
-            wake0       <- readTVarIO wakeAllThreads
-            q           <- orM [checkRgs1, newIJCs, doSP, commitSPairs, doEndReduce]
-            unless q $ do
-                when (gbTrace .&. gbTQueues /= 0) $ putChar 's'
-                inc numSleepingRef 1
-                inc1TVar wakeMainThread     -- in case everyone's sleeping
-                atomically $ do
-                    wake1       <- readTVar wakeAllThreads
-                    when (wake1 == wake0) retry
-                inc numSleepingRef (-1)
-            checkQueues
+    let checkQueues t   = loop
           where
             doEndReduce = do
                 ghs         <- readIORef genHsRef
@@ -569,7 +558,22 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         newNextGenHN ghn'
                         pure True
                     Nothing         -> pure False
-    auxThreadIds        <- replicateM (nCores - 1) (forkIO checkQueues)
+            tasks       = [checkRgs1, newIJCs] ++
+                if 5 * t < nCores then [doEndReduce, doSP, commitSPairs]    -- @@ tune
+                else [doSP, commitSPairs, doEndReduce]
+            loop        = do
+                wake0       <- readTVarIO wakeAllThreads
+                q           <- orM tasks
+                unless q $ do
+                    when (gbTrace .&. gbTQueues /= 0) $ putChar 's'
+                    inc numSleepingRef 1
+                    inc1TVar wakeMainThread     -- in case everyone's sleeping
+                    atomically $ do
+                        wake1       <- readTVar wakeAllThreads
+                        when (wake1 == wake0) retry
+                    inc numSleepingRef (-1)
+                loop
+    auxThreadIds        <- mapM (forkIO . checkQueues) [1 .. nCores - 1]
     mapM_ addGenHN (sortBy ghnCmp [(EPolyHDeg g (epHomogDeg0 g), 0) | g <- initGens])
     whileM $ do
         wakes0      <- mapM readTVarIO [wakeAllThreads, wakeMainThread]
