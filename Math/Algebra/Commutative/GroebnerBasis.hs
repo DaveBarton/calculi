@@ -23,7 +23,6 @@ import Data.List (deleteBy, elemIndex, findIndices, groupBy, insertBy, sortBy)
 import Data.List.Extra (chunksOf, mergeBy)
 import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
 import qualified Data.Sequence as Seq
-import Data.Tuple (swap)
 import Data.Tuple.Extra (first, fst3, second)
 import Numeric (showFFloat)
 
@@ -495,18 +494,16 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                             rgs'        <- rgsInsert (Seq.index ghs k) k rgs
                             atomicWriteIORef' rgsRef rgs'
                             atomicWriteIORef' rgsMNGensRef (Just (k + 1))
-                            inc1TVar wakeAllThreads     -- in case main thread called this
                         pure res
                     else pure False
                 Nothing     -> pure False
     -- nextGenHNs holds the nonzero output of S-pair reduction threads for the main thread:
     nextGenHNs      <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (EPolyHDeg c, Int)))
-    numForThreadsRef    <- newIORef 0       :: IO (IORef Int)
     let newNextGenHN (EPolyHDeg g h, kN)    = do
-            if ssIsZero g then do
-                inc numForThreadsRef (-1)
-                when (gbTrace .&. gbTProgressChars /= 0) (hPutChar stderr 'o')
-            else enqueueRefSeq nextGenHNs (EPolyHDeg (ssForceTails g) h, kN)
+            if ssIsZero g then when (gbTrace .&. gbTProgressChars /= 0) (hPutChar stderr 'o')
+            else do
+                enqueueRefSeq nextGenHNs (EPolyHDeg (ssForceTails g) h, kN)
+                inc1TVar wakeAllThreads
         newG (SPair i j h c)      = {-# SCC newG #-} do
             let ~s  = " start spair(g" ++ show i ++ ",g" ++ show j ++ "): sugar degree " ++
                         show h ++ ", lcm of heads " ++ epShow (SSNZ (rOne cField) c SSZero)
@@ -516,34 +513,20 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
             ghn     <- reduce_n
                         (EPolyHDeg (sPoly (phP (Seq.index ghs i)) (phP (Seq.index ghs j)) c) h)
             newNextGenHN ghn
-            inc1TVar wakeAllThreads
             pure True
         chooseGenHN     = do
             mghn    <- atomicModifyIORef' nextGenHNs f
             case mghn of
                 Nothing     -> pure False
                 Just ghn    -> do
-                    inc numForThreadsRef (-1)
                     addGenHN ghn
                     pure True
           where
             f ghns  = if Seq.null ghns then (ghns, Nothing) else
                 let j   = minIndexBy ghnCmp ghns
                 in  (Seq.deleteAt j ghns, Just (Seq.index ghns j))
-    nextSPairs      <- newIORef []          :: IO (IORef [SPair])   -- sorted
-    let commitSPairs    = do
-            numForThreads   <- readIORef numForThreadsRef
-            let nWant       = 2 * nCores - 1 - numForThreads    -- @@ tune
-            if nWant <= 0 then pure False else do
-                as              <- atomicModifyIORef' ijcsRef (swap . splitAt nWant)
-                if null as then pure False else do
-                    atomicModifyIORef'_ nextSPairs (flip (mergeBy hEvCmp) as)
-                    -- @@@ do evList on the result of atomicModifyIORef' !?
-                    inc numForThreadsRef (length as)
-                    inc1TVar wakeAllThreads
-                    pure True
         doSP        = do
-            mSp         <- pop nextSPairs
+            mSp         <- pop ijcsRef
             maybe (pure False) newG mSp
     numSleepingRef      <- newIORef 0       :: IO (IORef Int)   -- not counting main thread
     let checkQueues t   = loop
@@ -559,8 +542,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         pure True
                     Nothing         -> pure False
             tasks       = [checkRgs1, newIJCs] ++
-                if 5 * t < nCores then [doEndReduce, doSP, commitSPairs]    -- @@ tune
-                else [doSP, commitSPairs, doEndReduce]
+                if 5 * t < nCores then [doEndReduce, doSP] else [doSP, doEndReduce] -- @@ tune
             loop        = do
                 wake0       <- readTVarIO wakeAllThreads
                 q           <- orM tasks
@@ -587,7 +569,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         wakes2      <- mapM readTVar [wakeAllThreads, wakeMainThread]
                         when (wakes2 == wakes0) retry
                 pure res
-        orM [commitSPairs, chooseGenHN, newIJCs, checkRgs1, doSP, doSleep]
+        orM [chooseGenHN, newIJCs, checkRgs1, doSP, doSleep]
     when (gbTrace .&. gbTSummary /= 0) $ showThreadCapabilities "\n" auxThreadIds
     mapM_ killThread auxThreadIds
     ghs         <- readIORef genHsRef
