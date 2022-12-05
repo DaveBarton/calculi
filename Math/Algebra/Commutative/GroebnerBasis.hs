@@ -35,7 +35,7 @@ import Data.IORef.Extra (atomicModifyIORef'_, atomicWriteIORef')
 import Data.Time.Clock.System (SystemTime(..), getSystemTime)
 -- import Debug.Trace
 import System.CPUTime (getCPUTime)
-import System.IO (hPutChar, hPutStr, stderr)
+import System.IO (hPutStr, stderr)
 
 
 evElts          :: [a] -> ()
@@ -99,11 +99,11 @@ elapsedMicroSecs (MkSystemTime s0 ns0)      = do
     pure $ 1_000_000 * fromIntegral (s - s0)
         + fromIntegral ns `quot` 1000 - fromIntegral ns0 `quot` 1000
 
-putCPUElapsed                       :: Integer -> SystemTime -> IO ()
-putCPUElapsed cpuTime0 sysTime0     = do
+cpuElapsedStr                       :: Integer -> SystemTime -> IO String
+cpuElapsedStr cpuTime0 sysTime0     = do
     t       <- getCPUTime
     t1      <- elapsedMicroSecs sysTime0
-    putStr (' ' : showMicroSecs (quot (t - cpuTime0) 1_000_000) ++ "/" ++ showMicroSecs t1)
+    pure (showMicroSecs (quot (t - cpuTime0) 1_000_000) ++ "/" ++ showMicroSecs t1)
   where
     showMicroSecs n     = showFFloat (Just 6) (1e-6 * fromIntegral n :: Double) "s"
 
@@ -350,14 +350,14 @@ foldReduce1 nVars div2 ghs ph@(EPolyHDeg p _)   =       -- all gs /= 0
 -- | gbTrace bits for 'groebnerBasis' tracing. Bits 0x0F are useful to end users.
 gbTSummary, gbTProgressChars, gbTProgressInfo, gbTResults, gbTQueues, gbTProgressDetails  :: Int
 gbTSummary          = 0x01  -- ^ a short summary at the end of a run
-gbTProgressChars    = 0x02  -- ^ 'o' character or total degree for each s-poly reduction result
+gbTProgressChars    = 0x02  -- ^ total degree for each s-poly reduction result
 gbTProgressInfo     = 0x04  -- ^ info when adding or removing a generator
 gbTResults          = 0x08  -- ^ output final generators
-gbTQueues           = 0x10  -- ^ info about threads and their queues
+gbTQueues           = 0x10  -- ^ info about threads and their queues ("cdprRsS")
 gbTProgressDetails  = 0x20  -- ^ details relating to selection strategy
 
-showThreadCapabilities      :: String -> [ThreadId] -> IO ()
-showThreadCapabilities prefix otherThreadIds    = do
+printThreadCapabilities     :: String -> [ThreadId] -> IO ()
+printThreadCapabilities prefix otherThreadIds   = do
     firstThreadId       <- myThreadId
     capInfos            <- mapM threadCapability (firstThreadId : otherThreadIds)
     putStr $ prefix ++ "Threads are on capabilities: "
@@ -371,7 +371,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     gkgsRef         <- newIORef (gkgsNew nVars, 0)  -- (gkgs, # gens)
     nRedStepsRef    <- newIORef 0
     nSPairsRedRef   <- newIORef 0
-    let -- gbTQueues1  = gbTrace .&. gbTQueues /= 0 && nCores > 1
+    let gbTQueues1  = gbTrace .&. gbTQueues /= 0 && nCores > 1
         topDiv2     = rBDiv2 epRing False
         topReduce   = gkgsTopReduce topDiv2 (readIORef gkgsRef) nRedStepsRef
         reduce2 SSZero          = pure SSZero
@@ -423,9 +423,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     if ssIsZero q then pure ((h, j) : t') else do
                         inc nRedStepsRef (ssNumTerms q)
                         when (gbTrace .&. gbTQueues /= 0) $
-                            if totDeg (ssDegNZ q) == 0 then putStr " a" else
-                                putStrLn $ " reduce g" ++ show j ++ " (" ++ _showEV h ++
-                                    ") by g" ++ show i ++ " (" ++ _showEV g ++ ")"
+                            putChar $ if totDeg (ssDegNZ q) == 0 then 'r' else 'R'
                         r'          <- if totDeg (ssDegNZ q) == 0 then pure r else reduce2 r
                         ghs0        <- readIORef genHsRef
                         let hh      = Seq.index ghs0 j
@@ -437,17 +435,15 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     wakeMainThread  <- newTVarIO 0          :: IO (TVar Int)
     let addGenHN (gh, kN)   = {-# SCC addGenHN #-} do
             (EPolyHDeg g0 h, _)     <- (if kN == 0 then reduce_n else endReduce_n kN) gh
-            if ssIsZero g0 then
-                when (gbTrace .&. gbTProgressChars /= 0) (hPutChar stderr 'o')
-            else do
+            unless (ssIsZero g0) $ do
                 let g1      = withRing cField ssMonicize g0
                     gh1     = EPolyHDeg g1 h
                 atomicModifyIORef'_ gkgsRef (\(gkgs, n) -> (gkgsInsert gh1 gkgs, n + 1))
                 atomicModifyIORef'_ genHsRef (Seq.|> gh1)
                 inc1TVar wakeAllThreads
-                when (gbTrace .&. gbTProgressChars /= 0) $ do
-                    let s       = show (headTotDeg g1)
-                    hPutStr stderr (if length s > 1 then ' ':s++"," else s)
+                let ~s      = 'd' : show (headTotDeg g1) ++ " "
+                if gbTrace .&. gbTQueues /= 0 then putStr s
+                else when (gbTrace .&. gbTProgressChars /= 0) $ hPutStr stderr s
     gMGisRef        <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (Maybe GBGenInfo)))
     ijcsRef         <- newIORef []          :: IO (IORef [SPair])   -- ascending by hEvCmp
     let newIJCs     = do
@@ -474,7 +470,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     (ijcs, ijcs')   <- atomicModifyIORef' ijcsRef ijcsF
                     pure (evElts ijcs')     -- @@ test (time) w/o this (& w/o gbTQueues) on many cores
                     when (gbTrace .&. gbTQueues /= 0) $
-                        putStr $ ' ' : show (length ijcs) ++ "-" ++ show (length ijcs') ++ "q"
+                        putStr $ 'p' : show (length ijcs) ++ "-" ++ show (length ijcs') ++ " "
                     when (gbTrace .&. gbTProgressInfo /= 0) $
                         putStrLn $ " g" ++ show t ++ ": " ++ _showEV (phP gh)
                     inc1TVar wakeAllThreads
@@ -499,9 +495,8 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 Nothing     -> pure False
     -- nextGenHNs holds the nonzero output of S-pair reduction threads for the main thread:
     nextGenHNs      <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (EPolyHDeg c, Int)))
-    let newNextGenHN (EPolyHDeg g h, kN)    = do
-            if ssIsZero g then when (gbTrace .&. gbTProgressChars /= 0) (hPutChar stderr 'o')
-            else do
+    let newNextGenHN (EPolyHDeg g h, kN)    =
+            unless (ssIsZero g) $ do
                 enqueueRefSeq nextGenHNs (EPolyHDeg (ssForceTails g) h, kN)
                 inc1TVar wakeAllThreads
         newG (SPair i j h c)      = {-# SCC newG #-} do
@@ -515,6 +510,9 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
             newNextGenHN ghn
             pure True
         chooseGenHN     = do
+            when gbTQueues1 $ do
+                n       <- Seq.length <$> readIORef nextGenHNs
+                when (n + nCores > 10) $ putStr $ 'c' : show n ++ " "   -- # "candidates"
             mghn    <- atomicModifyIORef' nextGenHNs f
             case mghn of
                 Nothing     -> pure False
@@ -542,7 +540,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         pure True
                     Nothing         -> pure False
             tasks       = [checkRgs1, newIJCs] ++
-                if 5 * t < nCores then [doEndReduce, doSP] else [doSP, doEndReduce] -- @@ tune
+                if 3 * t < nCores then [doEndReduce, doSP] else [doSP, doEndReduce] -- @@ tune
             loop        = do
                 wake0       <- readTVarIO wakeAllThreads
                 q           <- orM tasks
@@ -564,22 +562,24 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 wakes1      <- mapM readTVarIO [wakeAllThreads, wakeMainThread]
                 let res     = wakes1 /= wakes0 || numSleeping < nCores - 1
                 when res $ do
-                    when (gbTrace .&. gbTQueues /= 0) $ putChar 'S'
+                    when (gbTrace .&. gbTQueues /= 0) $ do
+                        t           <- cpuElapsedStr cpuTime0 sysTime0
+                        putStr $ 'S' : t ++ " "
                     atomically $ do
                         wakes2      <- mapM readTVar [wakeAllThreads, wakeMainThread]
                         when (wakes2 == wakes0) retry
                 pure res
         orM [chooseGenHN, newIJCs, checkRgs1, doSP, doSleep]
-    when (gbTrace .&. gbTSummary /= 0) $ showThreadCapabilities "\n" auxThreadIds
+    when (gbTrace .&. gbTSummary /= 0) $ printThreadCapabilities "\n" auxThreadIds
     mapM_ killThread auxThreadIds
     ghs         <- readIORef genHsRef
     let ghsL    = toList ghs
     gMGisL      <- toList <$> readIORef gMGisRef
     when (gbTrace .&. gbTSummary /= 0) $ do
-        putStr "Groebner Basis CPU/Elapsed Times:"
-        putCPUElapsed cpuTime0 sysTime0
+        t           <- cpuElapsedStr cpuTime0 sysTime0
+        putStr $ "Groebner Basis CPU/Elapsed Times: " ++ t ++ "\n"
         nSPairsRed  <- readIORef nSPairsRedRef
-        putStrLn $ "\n# SPairs reduced = " ++ show nSPairsRed
+        putStrLn $ "# SPairs reduced = " ++ show nSPairsRed
         nRedSteps   <- readIORef nRedStepsRef
         putStrLn $ "# reduction steps (quotient terms) = " ++ show nRedSteps
             -- Macaulay just counts top-reduced
