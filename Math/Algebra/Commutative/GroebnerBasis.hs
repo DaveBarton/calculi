@@ -29,7 +29,7 @@ import Numeric (showFFloat)
 import Control.Concurrent (ThreadId, forkIO, killThread, myThreadId, threadCapability)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO)
 import Control.Monad.STM (atomically, retry)
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.IORef.Extra (atomicModifyIORef'_, atomicWriteIORef')
 
 import Data.Time.Clock.System (SystemTime(..), getSystemTime)
@@ -39,8 +39,7 @@ import System.IO (hPutStr, stderr)
 
 
 evElts          :: [a] -> ()
-evElts []       = ()
-evElts (x:xs)   = x `seq` evElts xs
+evElts          = foldr seq ()
 
 evList          :: [a] -> [a]
 evList xs       = evElts xs `seq` xs
@@ -53,9 +52,9 @@ minusSorted cmp = go
     go xs          []           = xs
     go xs@(x : ~t) ys@(y : ~u)  =
         case cmp x y of
-           LT   -> x : (go t ys)
-           EQ   ->      go t u
-           GT   ->      go xs u
+           LT   -> x : go t ys
+           EQ   ->     go t u
+           GT   ->     go xs u
 
 minIndexBy                      :: Cmp a -> Seq.Seq a -> Int
 -- The index of the first least element of a nonempty sequence.
@@ -82,16 +81,18 @@ maybeAtomicModifyIORef' ref p f     = do
     a0      <- readIORef ref
     if not (p a0) then pure Nothing else atomicModifyIORef' ref f'
   where
-    f' a    = if not (p a) then (a, Nothing) else (second Just (f a))
+    f' a    = if not (p a) then (a, Nothing) else second Just (f a)
 
 enqueueRefSeq           :: IORef (Seq.Seq a) -> a -> IO ()
 enqueueRefSeq ref e     = atomicModifyIORef'_ ref (Seq.|> e)
 
 maybeDequeueRefSeq          :: IORef (Seq.Seq a) -> Pred a -> IO (Maybe a)
-maybeDequeueRefSeq ref p    = atomicModifyIORef' ref f
+maybeDequeueRefSeq ref p    = maybeAtomicModifyIORef' ref p' f
   where
-    f (h Seq.:<| t) | p h       = (t, Just h)
-    f s                         = (s, Nothing)
+    p' (h Seq.:<| _t)   = p h
+    p' _                = False
+    f (h Seq.:<| t)     = (t, h)
+    f _                 = undefined
 
 elapsedMicroSecs    :: SystemTime -> IO Integer
 elapsedMicroSecs (MkSystemTime s0 ns0)      = do
@@ -353,7 +354,7 @@ gbTSummary          = 0x01  -- ^ a short summary at the end of a run
 gbTProgressChars    = 0x02  -- ^ total degree for each s-poly reduction result
 gbTProgressInfo     = 0x04  -- ^ info when adding or removing a generator
 gbTResults          = 0x08  -- ^ output final generators
-gbTQueues           = 0x10  -- ^ info about threads and their queues ("cdprRsS")
+gbTQueues           = 0x10  -- ^ info about threads and their queues ("cdprRsS", "rg")
 gbTProgressDetails  = 0x20  -- ^ details relating to selection strategy
 
 printThreadCapabilities     :: String -> [ThreadId] -> IO ()
@@ -368,6 +369,14 @@ groebnerBasis       :: forall c. Int -> Cmp ExponVec -> Field c -> Ring (EPoly c
 groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     cpuTime0        <- getCPUTime
     sysTime0        <- getSystemTime
+    cpuTime1Ref     <- newIORef cpuTime0
+    let traceTime   = do
+            cpuTime2        <- getCPUTime
+            cpuTime1        <- readIORef cpuTime1Ref
+            when (cpuTime2 - cpuTime1 > 1_000_000_000_000) $ do
+                s               <- cpuElapsedStr cpuTime0 sysTime0
+                putStrLn $ ' ' : s
+                writeIORef cpuTime1Ref cpuTime2
     gkgsRef         <- newIORef (gkgsNew nVars, 0)  -- (gkgs, # gens)
     nRedStepsRef    <- newIORef 0
     nSPairsRedRef   <- newIORef 0
@@ -469,8 +478,13 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                                 mergeBy hEvCmp (minusSorted hEvCmp ijcs skipIJCs) addITCs
                     (ijcs, ijcs')   <- atomicModifyIORef' ijcsRef ijcsF
                     pure (evElts ijcs')     -- @@ test (time) w/o this (& w/o gbTQueues) on many cores
-                    when (gbTrace .&. gbTQueues /= 0) $
-                        putStr $ 'p' : show (length ijcs) ++ "-" ++ show (length ijcs') ++ " "
+                    when (gbTrace .&. gbTQueues /= 0) $ do
+                        let n       = length ijcs
+                            n'      = length ijcs'
+                        when (n' < n || n' > n + 10) $
+                            putStr $ 'p' : show n ++ "-" ++ show n' ++ " "
+                        when ((t + 1) `rem` 50 == 0) $
+                            putStr $ 'p' : show (t + 1) ++ ":" ++ show n' ++ " "
                     when (gbTrace .&. gbTProgressInfo /= 0) $
                         putStrLn $ " g" ++ show t ++ ": " ++ _showEV (phP gh)
                     inc1TVar wakeAllThreads
@@ -490,6 +504,8 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                             rgs'        <- rgsInsert (Seq.index ghs k) k rgs
                             atomicWriteIORef' rgsRef rgs'
                             atomicWriteIORef' rgsMNGensRef (Just (k + 1))
+                            when (gbTrace .&. gbTQueues /= 0 && (k + 1) `rem` 50 == 0) $
+                                putStr $ "rg" ++ show (k + 1) ++ " "
                         pure res
                     else pure False
                 Nothing     -> pure False
@@ -512,7 +528,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
         chooseGenHN     = do
             when gbTQueues1 $ do
                 n       <- Seq.length <$> readIORef nextGenHNs
-                when (n + nCores > 10) $ putStr $ 'c' : show n ++ " "   -- # "candidates"
+                when (n > nCores + 10) $ putStr $ 'c' : show n ++ " "   -- # "candidates"
             mghn    <- atomicModifyIORef' nextGenHNs f
             case mghn of
                 Nothing     -> pure False
@@ -539,8 +555,9 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         newNextGenHN ghn'
                         pure True
                     Nothing         -> pure False
-            tasks       = [checkRgs1, newIJCs] ++
-                if 3 * t < nCores then [doEndReduce, doSP] else [doSP, doEndReduce] -- @@ tune
+            tasks       = [checkRgs1 | t == 1] ++ newIJCs :
+                if 3 * t < 2 * nCores   -- @@ tune
+                    then [doEndReduce, doSP] else [doSP, doEndReduce]
             loop        = do
                 wake0       <- readTVarIO wakeAllThreads
                 q           <- orM tasks
@@ -556,15 +573,14 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     auxThreadIds        <- mapM (forkIO . checkQueues) [1 .. nCores - 1]
     mapM_ addGenHN (sortBy ghnCmp [(EPolyHDeg g (epHomogDeg0 g), 0) | g <- initGens])
     whileM $ do
+        when (gbTrace /= 0) traceTime
         wakes0      <- mapM readTVarIO [wakeAllThreads, wakeMainThread]
         let doSleep = do
                 numSleeping <- readIORef numSleepingRef
                 wakes1      <- mapM readTVarIO [wakeAllThreads, wakeMainThread]
                 let res     = wakes1 /= wakes0 || numSleeping < nCores - 1
                 when res $ do
-                    when (gbTrace .&. gbTQueues /= 0) $ do
-                        t           <- cpuElapsedStr cpuTime0 sysTime0
-                        putStr $ 'S' : t ++ " "
+                    when (gbTrace .&. gbTQueues /= 0) $ putChar 'S'
                     atomically $ do
                         wakes2      <- mapM readTVar [wakeAllThreads, wakeMainThread]
                         when (wakes2 == wakes0) retry
@@ -577,7 +593,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     gMGisL      <- toList <$> readIORef gMGisRef
     when (gbTrace .&. gbTSummary /= 0) $ do
         t           <- cpuElapsedStr cpuTime0 sysTime0
-        putStr $ "Groebner Basis CPU/Elapsed Times: " ++ t ++ "\n"
+        putStrLn $ "Groebner Basis CPU/Elapsed Times: " ++ t
         nSPairsRed  <- readIORef nSPairsRedRef
         putStrLn $ "# SPairs reduced = " ++ show nSPairsRed
         nRedSteps   <- readIORef nRedStepsRef
