@@ -442,6 +442,8 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         assert (not (ssIsZero r')) (pure ((r', j) : t'))
     wakeAllThreads  <- newTVarIO 0          :: IO (TVar Int)
     wakeMainThread  <- newTVarIO 0          :: IO (TVar Int)
+    gDShownRef      <- newIORef 0           :: IO (IORef Integer)
+    let putS        = if gbTrace .&. gbTProgressChars /= 0 then hPutStr stderr else putStr
     let addGenHN (gh, kN)   = {-# SCC addGenHN #-} do
             (EPolyHDeg g0 h, _)     <- (if kN == 0 then reduce_n else endReduce_n kN) gh
             unless (ssIsZero g0) $ do
@@ -450,9 +452,13 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 atomicModifyIORef'_ gkgsRef (\(gkgs, n) -> (gkgsInsert gh1 gkgs, n + 1))
                 atomicModifyIORef'_ genHsRef (Seq.|> gh1)
                 inc1TVar wakeAllThreads
-                let ~s      = 'd' : show (headTotDeg g1) ++ " "
-                if gbTrace .&. gbTQueues /= 0 then putStr s
-                else when (gbTrace .&. gbTProgressChars /= 0) $ hPutStr stderr s
+                when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ do
+                    putS "d"
+                    let d       = headTotDeg g1
+                    gDShown     <- readIORef gDShownRef
+                    when (d /= gDShown) $ do
+                        putS $ show d ++ " "
+                        writeIORef gDShownRef d
     gMGisRef        <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (Maybe GBGenInfo)))
     ijcsRef         <- newIORef []          :: IO (IORef [SPair])   -- ascending by hEvCmp
     let newIJCs     = do
@@ -556,8 +562,8 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         pure True
                     Nothing         -> pure False
             tasks       = [checkRgs1 | t == 1] ++ newIJCs :
-                if 3 * t < 2 * nCores   -- @@ tune
-                    then [doEndReduce, doSP] else [doSP, doEndReduce]
+                {- if 10 * t < nCores   -- @@ tune
+                    then [doSP, doEndReduce] else -} [doEndReduce, doSP]
             loop        = do
                 wake0       <- readTVarIO wakeAllThreads
                 q           <- orM tasks
