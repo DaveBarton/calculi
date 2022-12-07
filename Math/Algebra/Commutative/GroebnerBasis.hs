@@ -413,6 +413,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     endRed2 (EPolyHDeg SSZero _)        = undefined
                 in  maybe (endRed2 gh) endRed1 mghn
     -- rgs is a [(g, i)] of nonzero g with descending (ssDegNZ g)
+    rNTraceRef      <- newIORef 0
     let rgsInsert   :: EPolyHDeg c -> Int -> [(EPoly c, Int)] -> IO [(EPoly c, Int)]
         rgsInsert (EPolyHDeg g _) i []                  = pure [(g, i)]
         rgsInsert gh@(EPolyHDeg g gHDeg) i rgs@((h, j) : t)
@@ -432,7 +433,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     if ssIsZero q then pure ((h, j) : t') else do
                         inc nRedStepsRef (ssNumTerms q)
                         when (gbTrace .&. gbTQueues /= 0) $
-                            putChar $ if totDeg (ssDegNZ q) == 0 then 'r' else 'R'
+                            if totDeg (ssDegNZ q) == 0 then inc rNTraceRef 1 else putChar 'R'
                         r'          <- if totDeg (ssDegNZ q) == 0 then pure r else reduce2 r
                         ghs0        <- readIORef genHsRef
                         let hh      = Seq.index ghs0 j
@@ -510,8 +511,14 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                             rgs'        <- rgsInsert (Seq.index ghs k) k rgs
                             atomicWriteIORef' rgsRef rgs'
                             atomicWriteIORef' rgsMNGensRef (Just (k + 1))
-                            when (gbTrace .&. gbTQueues /= 0 && (k + 1) `rem` 50 == 0) $
-                                putStr $ "rg" ++ show (k + 1) ++ " "
+                            when (gbTrace .&. gbTQueues /= 0) $ do
+                                rNTrace     <- readIORef rNTraceRef
+                                when (rNTrace > 0) $ do
+                                    putChar 'r'
+                                    when (rNTrace > 1) $ putStr $ show rNTrace ++ " "
+                                    writeIORef rNTraceRef 0
+                                when ((k + 1) `rem` 50 == 0) $
+                                    putStr $ "rg" ++ show (k + 1) ++ " "
                         pure res
                     else pure False
                 Nothing     -> pure False
@@ -532,19 +539,17 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
             newNextGenHN ghn
             pure True
         chooseGenHN     = do
+            ghns    <- atomicModifyIORef' nextGenHNs (\ghns -> (Seq.empty, ghns))
             when gbTQueues1 $ do
-                n       <- Seq.length <$> readIORef nextGenHNs
+                let n   = Seq.length ghns
                 when (n > nCores + 10) $ putStr $ 'c' : show n ++ " "   -- # "candidates"
-            mghn    <- atomicModifyIORef' nextGenHNs f
-            case mghn of
-                Nothing     -> pure False
-                Just ghn    -> do
-                    addGenHN ghn
-                    pure True
-          where
-            f ghns  = if Seq.null ghns then (ghns, Nothing) else
-                let j   = minIndexBy ghnCmp ghns
-                in  (Seq.deleteAt j ghns, Just (Seq.index ghns j))
+            if Seq.null ghns then pure False else do
+                let j       = minIndexBy ghnCmp ghns
+                    ghn     = Seq.index ghns j
+                    ghns1   = Seq.deleteAt j ghns
+                atomicModifyIORef'_ nextGenHNs (ghns1 Seq.><)
+                addGenHN ghn
+                pure True
         doSP        = do
             mSp         <- pop ijcsRef
             maybe (pure False) newG mSp
