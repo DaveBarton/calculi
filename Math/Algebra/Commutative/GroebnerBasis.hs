@@ -23,7 +23,7 @@ import Data.List (deleteBy, elemIndex, findIndices, groupBy, insertBy, sortBy)
 import Data.List.Extra (chunksOf, mergeBy)
 import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
 import qualified Data.Sequence as Seq
-import Data.Tuple.Extra (first, fst3, second)
+import Data.Tuple.Extra (dupe, first, fst3, second)
 import Numeric (showFFloat)
 
 import Control.Concurrent (ThreadId, forkIO, killThread, myThreadId, threadCapability)
@@ -39,9 +39,11 @@ import System.IO (hPutStr, stderr)
 
 
 evElts          :: [a] -> ()
+-- force all elements of a list
 evElts          = foldr seq ()
 
 evList          :: [a] -> [a]
+-- force all elements of a list, and return it
 evList xs       = evElts xs `seq` xs
 
 minusSorted     :: Cmp a -> [a] -> [a] -> [a]
@@ -82,9 +84,6 @@ maybeAtomicModifyIORef' ref p f     = do
     if not (p a0) then pure Nothing else atomicModifyIORef' ref f'
   where
     f' a    = if not (p a) then (a, Nothing) else second Just (f a)
-
-enqueueRefSeq           :: IORef (Seq.Seq a) -> a -> IO ()
-enqueueRefSeq ref e     = atomicModifyIORef'_ ref (Seq.|> e)
 
 maybeDequeueRefSeq          :: IORef (Seq.Seq a) -> Pred a -> IO (Maybe a)
 maybeDequeueRefSeq ref p    = maybeAtomicModifyIORef' ref p' f
@@ -262,6 +261,7 @@ gkgsReplace ph ph' gkgs = gkgsInsert ph' (gkgsDelete ph gkgs)
 
 {-# SCC kgsFindReducer #-}
 kgsFindReducer          :: forall c. EPoly c -> KerGens c -> Maybe (EPoly c)
+-- returns the best (shortest) top-reducer, if any
 kgsFindReducer p kgs    =
     if ssIsZero p then Nothing else
     let nVars   = Seq.length kgs
@@ -280,6 +280,7 @@ kgsFindReducer p kgs    =
     in  if sepN resSep < (maxBound :: Int) then Just (sepP resSep) else Nothing
 
 gkgsFindReducer         :: forall c. EPoly c -> GapsKerGens c -> Maybe (EPolyHDeg c)
+-- returns the best (least sugar gap, then shortest) top-reducer, if any
 gkgsFindReducer p gkgs  = listToMaybe (mapMaybe find1 gkgs)
   where
     find1 (gap, kgs)    =
@@ -295,6 +296,7 @@ sugarReduce div2 (EPolyHDeg p pHDeg) (EPolyHDeg g gHDeg)    = (EPolyHDeg r rHDeg
 
 gkgsTopReduce           :: (EPoly c -> EPoly c -> (EPoly c, EPoly c)) -> IO (GapsKerGens c, Int)
                             -> IORef Int -> EPolyHDeg c -> IO (EPolyHDeg c, Int)
+-- top-reduce a (gh, kN)
 gkgsTopReduce div2 kerVar nRedStepsRef      = go
   where
     go ph@(EPolyHDeg p _)    = do
@@ -307,6 +309,7 @@ gkgsTopReduce div2 kerVar nRedStepsRef      = go
 
 kgsReduce               :: (EPoly c -> EPoly c -> (EPoly c, EPoly c)) -> KerGens c -> EPoly c ->
                             (EPoly c, Int)
+-- fully reduce a polynomial, counting steps
 kgsReduce div2 kgs      = go 0
   where
     go nRedSteps p  = if ssIsZero p then (SSZero, nRedSteps) else
@@ -323,11 +326,13 @@ kgsReduce div2 kgs      = go 0
 foldReduce                  :: forall c f. Foldable f => Int ->
                                 (EPoly c -> EPoly c -> (EPoly c, EPoly c)) -> f (EPoly c) ->
                                 EPoly c -> (Bool, EPoly c, Int)
+-- fully reduce by folding (not kgs), except stop and return True if/when a deg > 0 quotient
 foldReduce nVars div2 g0s   = go 0      -- all g0s /= 0, with gap 0
   where
     go nRedSteps p      = if ssIsZero p then (False, SSZero, nRedSteps) else
         let pEv     = ssDegNZ p
             mg      = find (\g -> evDivides nVars (ssDegNZ g) pEv) g0s
+                -- @@@ improve to find best reducer!?
             useG g  =
                 let (q, r)      = div2 p g
                 in  if totDeg (ssDegNZ q) > 0 then (True, r, nRedSteps + ssNumTerms q)
@@ -338,13 +343,15 @@ foldReduce nVars div2 g0s   = go 0      -- all g0s /= 0, with gap 0
                 in  (todo, SSNZ c d t', nRedSteps')
         in  maybe go2 useG mg
 
-foldReduce1                 :: forall c f. Foldable f => Int ->
+foldTopReduce1              :: forall c f. Foldable f => Int ->
                                 (EPoly c -> EPoly c -> (EPoly c, EPoly c)) -> f (EPolyHDeg c) ->
                                 EPolyHDeg c -> Maybe (EPolyHDeg c, Int)
-foldReduce1 nVars div2 ghs ph@(EPolyHDeg p _)   =       -- all gs /= 0
+-- do 1 folding step if there's a top-reducer
+foldTopReduce1 nVars div2 ghs ph@(EPolyHDeg p _)    =       -- all gs /= 0
     if ssIsZero p then Nothing else
     let pEv     = ssDegNZ p
         mgh     = find (\gh -> evDivides nVars (ssDegNZ (phP gh)) pEv) ghs
+            -- @@@ improve to find best reducer!?
     in  fmap (sugarReduce div2 ph) mgh
 
 
@@ -370,13 +377,6 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     cpuTime0        <- getCPUTime
     sysTime0        <- getSystemTime
     cpuTime1Ref     <- newIORef cpuTime0
-    let traceTime   = do
-            cpuTime2        <- getCPUTime
-            cpuTime1        <- readIORef cpuTime1Ref
-            when (cpuTime2 - cpuTime1 > 1_000_000_000_000) $ do
-                s               <- cpuElapsedStr cpuTime0 sysTime0
-                putStrLn $ ' ' : s
-                writeIORef cpuTime1Ref cpuTime2
     gkgsRef         <- newIORef (gkgsNew nVars, 0)  -- (gkgs, # gens)
     nRedStepsRef    <- newIORef 0
     nSPairsRedRef   <- newIORef 0
@@ -398,9 +398,11 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
         endReduce_n kN gh       = do
             ghs         <- readIORef genHsRef
             let kN'     = Seq.length ghs
-            if kN == kN' || ssIsZero (phP gh) then pure (gh, kN') else
+            if kN == kN' || ssIsZero (phP gh) then pure (gh, kN')
+            else if 3 * nVars * (kN' - kN) > kN' {- @@ tune -} then reduce_n gh
+            else
                 let endGHs      = Seq.drop kN ghs
-                    mghn        = foldReduce1 nVars topDiv2 endGHs gh
+                    mghn        = foldTopReduce1 nVars topDiv2 endGHs gh
                     endRed1 (ph, nSteps)    = do
                         inc nRedStepsRef nSteps
                         reduce_n ph
@@ -446,7 +448,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     gDShownRef      <- newIORef 0           :: IO (IORef Integer)
     let putS        = if gbTrace .&. gbTProgressChars /= 0 then hPutStr stderr else putStr
     let addGenHN (gh, kN)   = {-# SCC addGenHN #-} do
-            (EPolyHDeg g0 h, _)     <- (if kN == 0 then reduce_n else endReduce_n kN) gh
+            (EPolyHDeg g0 h, _)     <- endReduce_n kN gh
             unless (ssIsZero g0) $ do
                 let g1      = withRing cField ssMonicize g0
                     gh1     = EPolyHDeg g1 h
@@ -485,6 +487,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                                 mergeBy hEvCmp (minusSorted hEvCmp ijcs skipIJCs) addITCs
                     (ijcs, ijcs')   <- atomicModifyIORef' ijcsRef ijcsF
                     pure (evElts ijcs')     -- @@ test (time) w/o this (& w/o gbTQueues) on many cores
+                    unless (null addITCs) $ inc1TVar wakeAllThreads
                     when (gbTrace .&. gbTQueues /= 0) $ do
                         let n       = length ijcs
                             n'      = length ijcs'
@@ -494,7 +497,6 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                             putStr $ 'p' : show (t + 1) ++ ":" ++ show n' ++ " "
                     when (gbTrace .&. gbTProgressInfo /= 0) $
                         putStrLn $ " g" ++ show t ++ ": " ++ _showEV (phP gh)
-                    inc1TVar wakeAllThreads
                     pure True
     rgsRef          <- newIORef []          :: IO (IORef [(EPoly c, Int)])
     rgsMNGensRef    <- newIORef (Just 0)    :: IO (IORef (Maybe Int))   -- Nothing if locked
@@ -524,10 +526,11 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 Nothing     -> pure False
     -- nextGenHNs holds the nonzero output of S-pair reduction threads for the main thread:
     nextGenHNs      <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (EPolyHDeg c, Int)))
-    let newNextGenHN (EPolyHDeg g h, kN)    =
+    let newNextGenHN ghn@(EPolyHDeg g _h, _kN)  =
             unless (ssIsZero g) $ do
-                enqueueRefSeq nextGenHNs (EPolyHDeg (ssForceTails g) h, kN)
-                inc1TVar wakeAllThreads
+                -- let ghn     = (EPolyHDeg (ssForceTails g) h, kN)    -- @@@ don't force
+                ghns0       <- atomicModifyIORef' nextGenHNs (\ghns -> (ghns Seq.|> ghn, ghns))
+                when (null ghns0) $ inc1TVar wakeMainThread
         newG (SPair i j h c)      = {-# SCC newG #-} do
             let ~s  = " start spair(g" ++ show i ++ ",g" ++ show j ++ "): sugar degree " ++
                         show h ++ ", lcm of heads " ++ epShow (SSNZ (rOne cField) c SSZero)
@@ -574,8 +577,8 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 q           <- orM tasks
                 unless q $ do
                     when (gbTrace .&. gbTQueues /= 0) $ putChar 's'
-                    inc numSleepingRef 1
-                    inc1TVar wakeMainThread     -- in case everyone's sleeping
+                    n1          <- atomicModifyIORef' numSleepingRef (dupe . (+ 1))
+                    when (n1 == nCores - 1) $ inc1TVar wakeMainThread
                     atomically $ do
                         wake1       <- readTVar wakeAllThreads
                         when (wake1 == wake0) retry
@@ -583,6 +586,15 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 loop
     auxThreadIds        <- mapM (forkIO . checkQueues) [1 .. nCores - 1]
     mapM_ addGenHN (sortBy ghnCmp [(EPolyHDeg g (epHomogDeg0 g), 0) | g <- initGens])
+    let traceTime   = do
+            cpuTime2        <- getCPUTime
+            cpuTime1        <- readIORef cpuTime1Ref
+            when (cpuTime2 - cpuTime1 > 1_000_000_000_000) $ do
+                s               <- cpuElapsedStr cpuTime0 sysTime0
+                putStrLn $ ' ' : s
+                writeIORef cpuTime1Ref cpuTime2
+                numSleeping <- readIORef numSleepingRef
+                when (numSleeping > 0) $ putStr $ show numSleeping ++ " sleeping "
     whileM $ do
         when (gbTrace /= 0) traceTime
         wakes0      <- mapM readTVarIO [wakeAllThreads, wakeMainThread]
