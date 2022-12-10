@@ -15,7 +15,7 @@ import Math.Algebra.General.Algebra
 import Math.Algebra.General.SparseSum
 import Math.Algebra.Commutative.EPoly
 
-import Control.Monad (unless, when)
+import Control.Monad (forM, unless, when)
 import Control.Monad.Extra (orM, whileM)
 import Data.Array.IArray (Array, (!), listArray)
 import Data.Foldable (find, foldl', minimumBy, toList)
@@ -26,7 +26,7 @@ import qualified Data.Sequence as Seq
 import Data.Tuple.Extra (dupe, first, fst3, second)
 import Numeric (showFFloat)
 
-import Control.Concurrent (ThreadId, forkIO, killThread, myThreadId, threadCapability)
+import Control.Concurrent (ThreadId, forkOn, killThread, myThreadId, threadCapability)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO)
 import Control.Monad.STM (atomically, retry)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
@@ -35,7 +35,8 @@ import Data.IORef.Extra (atomicModifyIORef'_, atomicWriteIORef')
 import Data.Time.Clock.System (SystemTime(..), getSystemTime)
 -- import Debug.Trace
 import System.CPUTime (getCPUTime)
-import System.IO (hPutStr, stderr)
+import System.IO (hFlush, hPutStr, stderr, stdout)
+import System.Process (callCommand)
 
 
 evElts          :: [a] -> ()
@@ -332,7 +333,6 @@ foldReduce nVars div2 g0s   = go 0      -- all g0s /= 0, with gap 0
     go nRedSteps p      = if ssIsZero p then (False, SSZero, nRedSteps) else
         let pEv     = ssDegNZ p
             mg      = find (\g -> evDivides nVars (ssDegNZ g) pEv) g0s
-                -- @@@ improve to find best reducer!?
             useG g  =
                 let (q, r)      = div2 p g
                 in  if totDeg (ssDegNZ q) > 0 then (True, r, nRedSteps + ssNumTerms q)
@@ -526,10 +526,18 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 Nothing     -> pure False
     -- nextGenHNs holds the nonzero output of S-pair reduction threads for the main thread:
     nextGenHNs      <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (EPolyHDeg c, Int)))
-    let newNextGenHN ghn@(EPolyHDeg g _h, _kN)  =
-            unless (ssIsZero g) $ do
+    numNGHNsRef     <- newIORef 0           :: IO (IORef Int)   -- includes temporary removals
+    let limNumNGHNs     = nCores    -- e.g. for preserving cache space; @@ tune
+        incNumNGHNs n fromChooseGHN     = do
+            if n >= 0 then inc numNGHNsRef n else do
+                n0          <- atomicModifyIORef' numNGHNsRef (\m -> (m + n, m))
+                when ((n0 > limNumNGHNs || fromChooseGHN) && n0 + n <= limNumNGHNs) $
+                    inc1TVar wakeAllThreads
+        newNextGenHN ghn@(EPolyHDeg g _h, _kN) dn   =
+            if ssIsZero g then incNumNGHNs dn False else do
                 -- let ghn     = (EPolyHDeg (ssForceTails g) h, kN)    -- @@@ don't force
                 ghns0       <- atomicModifyIORef' nextGenHNs (\ghns -> (ghns Seq.|> ghn, ghns))
+                incNumNGHNs (dn + 1) False  -- trying to limit/avoid atomicModifyIORef' calls
                 when (null ghns0) $ inc1TVar wakeMainThread
         newG (SPair i j h c)      = {-# SCC newG #-} do
             let ~s  = " start spair(g" ++ show i ++ ",g" ++ show j ++ "): sugar degree " ++
@@ -539,7 +547,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
             ghs     <- readIORef genHsRef
             ghn     <- reduce_n
                         (EPolyHDeg (sPoly (phP (Seq.index ghs i)) (phP (Seq.index ghs j)) c) h)
-            newNextGenHN ghn
+            newNextGenHN ghn 0
             pure True
         chooseGenHN     = do
             ghns    <- atomicModifyIORef' nextGenHNs (\ghns -> (Seq.empty, ghns))
@@ -551,13 +559,22 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     ghn     = Seq.index ghns j
                     ghns1   = Seq.deleteAt j ghns
                 atomicModifyIORef'_ nextGenHNs (ghns1 Seq.><)
+                incNumNGHNs (-1) True
                 addGenHN ghn
                 pure True
         doSP        = do
-            mSp         <- pop ijcsRef
-            maybe (pure False) newG mSp
+            nNGHNs      <- readIORef numNGHNsRef
+            if nNGHNs > limNumNGHNs then pure False else do
+                mSp         <- pop ijcsRef
+                maybe (pure False) newG mSp
     numSleepingRef      <- newIORef 0       :: IO (IORef Int)   -- not counting main thread
-    let checkQueues t   = loop
+    -- testRef             <- newIORef 0   -- @@@
+    let checkQueues t   = do
+            {- whileM $ do inc testRef 1; (< 1_000_000_000_000) <$> getCPUTime
+            do
+                n           <- readIORef testRef
+                putStrLn $ "\n#" ++ show n -}
+            loop
           where
             doEndReduce = do
                 ghs         <- readIORef genHsRef
@@ -566,7 +583,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 case mghn of
                     Just (gh, kN)   -> do
                         ghn'        <- endReduce_n kN gh
-                        newNextGenHN ghn'
+                        newNextGenHN ghn' (-1)
                         pure True
                     Nothing         -> pure False
             tasks       = [checkRgs1 | t == 1] ++ newIJCs :
@@ -584,7 +601,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         when (wake1 == wake0) retry
                     inc numSleepingRef (-1)
                 loop
-    auxThreadIds        <- mapM (forkIO . checkQueues) [1 .. nCores - 1]
+    auxThreadIds        <- forM [1 .. nCores - 1] (\t -> forkOn t (checkQueues t))
     mapM_ addGenHN (sortBy ghnCmp [(EPolyHDeg g (epHomogDeg0 g), 0) | g <- initGens])
     let traceTime   = do
             cpuTime2        <- getCPUTime
@@ -641,6 +658,9 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
         putStrLn (s ++ ":")
         mapM_ (putStrLn . epShow) gb
     else when (gbTrace .&. gbTSummary /= 0) $ putStrLn s
+    when (gbTrace .&. gbTQueues /= 0) $ do
+        hFlush stdout
+        callCommand "echo; ps -v"
     pure gb
   where
     _showEV SSZero  = "0"

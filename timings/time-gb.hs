@@ -4,7 +4,8 @@ import Math.Algebra.Commutative.GBDemo
 
 import Data.List (isInfixOf)
 
-import Control.Concurrent (getNumCapabilities, runInUnboundThread)
+import Control.Concurrent (forkOn, getNumCapabilities)
+import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 import GHC.Conc (getNumProcessors)
 
 import Data.Time.Clock (getCurrentTime)
@@ -20,6 +21,7 @@ import System.Info (compilerVersion)
 
 import Control.Exception (SomeException, try)
 import Control.Monad (void, when)
+import System.IO (hFlush, stdout)
 import System.Process (callCommand)
 
 
@@ -50,8 +52,13 @@ main    = do
 #endif
         ++ ", using " ++ show nCores ++ " of " ++ show maxNCores ++ " cores\n"
     
-    -- for gbTrace bits, see Math/Algebra/Commutative/GroebnerBasis.hs:
-    let gbTrace     = gbTSummary .|. gbTQueues
-    mapM_ (\ex -> runInUnboundThread $ ex nCores gbTrace) [katsura8, cyclic7, jason210]
+    doneMVar    <- newEmptyMVar
+    _           <- forkOn 0 $ do
+        -- for gbTrace bits, see Math/Algebra/Commutative/GroebnerBasis.hs:
+        let gbTrace     = gbTSummary .|. gbTQueues
+        mapM_ (\ex -> ex nCores gbTrace) [katsura8, cyclic7, jason210]
+        hFlush stdout
+        putMVar doneMVar ()
+    takeMVar doneMVar
     
     when isLinux $ tryCommand "echo; numastat $PPID"
