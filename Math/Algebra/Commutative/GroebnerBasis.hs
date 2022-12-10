@@ -35,8 +35,9 @@ import Data.IORef.Extra (atomicModifyIORef'_, atomicWriteIORef')
 import Data.Time.Clock.System (SystemTime(..), getSystemTime)
 -- import Debug.Trace
 import System.CPUTime (getCPUTime)
-import System.IO (hFlush, hPutStr, stderr, stdout)
-import System.Process (callCommand)
+import System.IO (hPutStr, stderr)
+-- import System.IO (hFlush, stdout)
+-- import System.Process (callCommand)
 
 
 evElts          :: [a] -> ()
@@ -658,9 +659,9 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
         putStrLn (s ++ ":")
         mapM_ (putStrLn . epShow) gb
     else when (gbTrace .&. gbTSummary /= 0) $ putStrLn s
-    when (gbTrace .&. gbTQueues /= 0) $ do
+    {- when (gbTrace .&. gbTQueues /= 0) $ do
         hFlush stdout
-        callCommand "echo; ps -v"
+        callCommand "echo; ps -v" -}
     pure gb
   where
     _showEV SSZero  = "0"
