@@ -20,8 +20,8 @@ import System.Info (compilerVersion)
 #endif
 
 import Control.Exception (SomeException, try)
-import Control.Monad (void, when)
-import System.IO (hFlush, stdout)
+import Control.Monad (void)
+import System.IO (hFlush, stderr, stdout)
 import System.Process (callCommand)
 
 
@@ -58,7 +58,8 @@ main    = do
         let gbTrace     = gbTSummary .|. gbTQueues
         mapM_ (\ex -> ex nCores gbTrace) [katsura8, cyclic7, jason210]
         hFlush stdout
+        hFlush stderr
         putMVar doneMVar ()
     takeMVar doneMVar
     
-    when isLinux $ tryCommand "echo; numastat $PPID"
+    -- when isLinux $ tryCommand "echo; numastat $PPID"

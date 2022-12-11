@@ -56,7 +56,6 @@ library
         containers == 0.6.*,
         extra >= 1.6 && < 1.8,
         mod,
-        process >= 1.2 && < 2,
         random >= 1.2.1 && < 1.3,
         -- reflection >= 2.1.6 && < 2.2,
         stm >= 2.4 && < 2.6,
@@ -115,4 +114,4 @@ benchmark time-gb
     build-depends:      calculi, process >= 1.2 && < 2, time >= 1.9.3 && < 2
 
     hs-source-dirs:     timings
-    ghc-options:        -threaded -rtsopts "-with-rtsopts=-N -qm -A64m -s"
+    ghc-options:        -threaded -rtsopts "-with-rtsopts=-N -qm -A32m -s"

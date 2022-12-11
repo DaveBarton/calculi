@@ -588,8 +588,8 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         pure True
                     Nothing         -> pure False
             tasks       = [checkRgs1 | t == 1] ++ newIJCs :
-                {- if 10 * t < nCores   -- @@ tune
-                    then [doSP, doEndReduce] else -} [doEndReduce, doSP]
+                if 2 * t < nCores   -- @@ tune
+                    then [doSP, doEndReduce] else [doEndReduce, doSP]
             loop        = do
                 wake0       <- readTVarIO wakeAllThreads
                 q           <- orM tasks
