@@ -33,7 +33,7 @@ main    = do
     let tryCommand s    = void $ try @SomeException $ callCommand s
     tryCommand "uptime"
     if isLinux then
-        tryCommand "lscpu; numactl --hardware; echo; numactl --show"
+        tryCommand "lscpu; echo; numactl --hardware; echo; numactl --show"
     else
         tryCommand "sysctl hw.physicalcpu"
     

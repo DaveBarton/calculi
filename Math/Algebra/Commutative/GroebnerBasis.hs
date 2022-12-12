@@ -511,7 +511,9 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         res         <- atomicModifyIORef' rgsMNGensRef f
                         when res $ do
                             rgs         <- readIORef rgsRef
-                            rgs'        <- rgsInsert (Seq.index ghs k) k rgs
+                            let gh      = Seq.index ghs k
+                            pure (ssRTails (phP gh))    -- @@@ check ok (search for "rg"s)
+                            rgs'        <- rgsInsert gh k rgs
                             atomicWriteIORef' rgsRef rgs'
                             atomicWriteIORef' rgsMNGensRef (Just (k + 1))
                             when (gbTrace .&. gbTQueues /= 0) $ do
