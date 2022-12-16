@@ -51,6 +51,7 @@ library
     
     build-depends:
         array == 0.5.*,
+        -- @@@ atomic-primops,
         -- constraints >= 0.11 && < 0.14,
             -- note 'implied' added in 0.13
         containers == 0.6.*,
@@ -59,6 +60,7 @@ library
         random >= 1.2.1 && < 1.3,
         -- reflection >= 2.1.6 && < 2.2,
         stm >= 2.4 && < 2.6,
+        strict-list,
         time >= 1.9.3 && < 2
 
     hs-source-dirs:     .

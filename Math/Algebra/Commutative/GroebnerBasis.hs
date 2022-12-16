@@ -19,26 +19,46 @@ import Control.Monad (forM, unless, when)
 import Control.Monad.Extra (orM, whileM)
 import Data.Array.IArray (Array, (!), listArray)
 import Data.Foldable (find, foldl', minimumBy, toList)
-import Data.List (deleteBy, elemIndex, findIndices, groupBy, insertBy, sortBy)
+import Data.List (elemIndex, findIndices, groupBy, sortBy)
 import Data.List.Extra (chunksOf, mergeBy)
-import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
+import Data.Maybe (catMaybes, fromJust, isJust, isNothing, listToMaybe, mapMaybe)
 import qualified Data.Sequence as Seq
 import Data.Tuple.Extra (dupe, first, fst3, second)
 import Numeric (showFFloat)
+import qualified StrictList as SL
 
 import Control.Concurrent (ThreadId, forkOn, killThread, myThreadId, threadCapability)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO)
 import Control.Monad.STM (atomically, retry)
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
+-- @@@ import Data.Atomics (atomicModifyIORefCAS, atomicModifyIORefCAS_)
+-- @@@ import Data.Atomics.Counter (incrCounter_, newCounter, readCounter)
+import Data.IORef (IORef, atomicModifyIORef {- @@@ -}, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.IORef.Extra (atomicModifyIORef'_, atomicWriteIORef')
 
 import Data.Time.Clock.System (SystemTime(..), getSystemTime)
--- import Debug.Trace
+import Debug.Trace  -- @@@
 import System.CPUTime (getCPUTime)
 import System.IO (hPutStr, stderr)
 -- import System.IO (hFlush, stdout)
 -- import System.Process (callCommand)
 
+
+single          :: a -> SL.List a
+single e        = SL.Cons e SL.Nil
+
+slInsertBy          :: Cmp a -> a -> Op1 (SL.List a)
+slInsertBy cmp x    = go
+  where
+    go ys@(SL.Cons h ~t)    = case cmp x h of
+        GT  -> SL.Cons h (go t)
+        _   -> SL.Cons x ys
+    go SL.Nil               = single x
+
+slDeleteBy          :: EqRel a -> a -> Op1 (SL.List a)
+slDeleteBy eq x     = go
+  where
+    go ys@(SL.Cons h ~t)    = if x `eq` h then ys else SL.Cons h (go t)
+    go SL.Nil               = SL.Nil
 
 evElts          :: [a] -> ()
 -- force all elements of a list
@@ -52,13 +72,13 @@ minusSorted     :: Cmp a -> [a] -> [a] -> [a]
 -- difference of two sorted lists, like 'minusBy' from data-ordlist
 minusSorted cmp = go
   where
-    go []          _ys          = []
-    go xs          []           = xs
     go xs@(x : ~t) ys@(y : ~u)  =
         case cmp x y of
            LT   -> x : go t ys
            EQ   ->     go t u
            GT   ->     go xs u
+    go xs          []           = xs
+    go []          _ys          = []
 
 minIndexBy                      :: Cmp a -> Seq.Seq a -> Int
 -- The index of the first least element of a nonempty sequence.
@@ -84,6 +104,14 @@ maybeAtomicModifyIORef'             :: IORef a -> Pred a -> (a -> (a, b)) -> IO 
 maybeAtomicModifyIORef' ref p f     = do
     a0      <- readIORef ref
     if not (p a0) then pure Nothing else atomicModifyIORef' ref f'
+  where
+    f' a    = if not (p a) then (a, Nothing) else second Just (f a)
+
+maybeAtomicModifyIORef              :: IORef a -> Pred a -> (a -> (a, b)) -> IO (Maybe b)
+-- for speed, trying to avoid atomicModifyIORef
+maybeAtomicModifyIORef ref p f      = do
+    a0      <- readIORef ref
+    if not (p a0) then pure Nothing else atomicModifyIORef {- @@@ didn't have ' -} ref f'
   where
     f' a    = if not (p a) then (a, Nothing) else second Just (f a)
 
@@ -186,16 +214,21 @@ data SizedEPoly c   = SizedEPoly { sepN :: Int, sepP :: EPoly c }
 sizeEP              :: EPoly c -> SizedEPoly c
 sizeEP p            = SizedEPoly (ssNumTerms p) p
 
--- nVars > 0, each enpss has increasing es, all p /= 0, (ssDegNZ p) unique:
-type KerGens c      = Seq.Seq [(Word, [SizedEPoly c])]
+data ENPs c         = ENPs { _enpsE :: Word, _enpsL :: SL.List (SizedEPoly c) }
+-- exponent and list of ps
 
-type GapsKerGens c  = [(Word, KerGens c)]   -- gaps increasing, 0 gap always present
+-- nVars > 0, each enpss has increasing es, all p /= 0, (ssDegNZ p) unique:
+type KerGens c      = Seq.Seq (SL.List (ENPs c))
+
+data GapKerGens c   = G1KGs { g1kgsGap :: Word, _g1kgsKgs :: KerGens c }
+
+type GapsKerGens c  = SL.List (GapKerGens c)    -- gaps increasing, 0 gap always present
 
 kgsNew              :: Int -> KerGens c
-kgsNew nVars        = Seq.replicate nVars []
+kgsNew nVars        = Seq.replicate nVars SL.Nil
 
 gkgsNew             :: Int -> GapsKerGens c
-gkgsNew nVars       = [(0, kgsNew nVars)]
+gkgsNew nVars       = single (G1KGs 0 (kgsNew nVars))
 
 kgsSepCmp           :: Cmp (SizedEPoly c)
 kgsSepCmp (SizedEPoly n1 p1) (SizedEPoly n2 p2)   =
@@ -209,24 +242,24 @@ kgsInsert p kgs     =       -- p /= 0, nVars > 0
         m       = maximum es
         v       = fromJust (elemIndex m es)
         np      = sizeEP p
-        ins             :: Op1 [(Word, [SizedEPoly c])]
-        ins []          = [(m, [np])]
-        ins enpss@(enps@(e, ~nps) : ~t)
-            | m < e     = (m, [np]) : enpss
-            | m == e    = (m, insertBy kgsSepCmp np nps) : t
-            | otherwise = enps : ins t
+        ins             :: Op1 (SL.List (ENPs c))
+        ins SL.Nil      = single (ENPs m (single np))
+        ins enpss@(SL.Cons enps@(ENPs e ~nps) ~t)
+            | m < e     = SL.Cons (ENPs m (single np)) enpss
+            | m == e    = SL.Cons (ENPs m (slInsertBy kgsSepCmp np nps)) t
+            | otherwise = SL.Cons enps (ins t)
     in  Seq.adjust' ins v kgs
 
 gkgsInsert          :: forall c. EPolyHDeg c -> Op1 (GapsKerGens c)
 gkgsInsert (EPolyHDeg p hDeg)     = go    -- p /= 0, nVars > 0
   where
     gap                     = hDeg - totDeg (ssDegNZ p)
-    go (h@(gap0, kgs0) : t) = assert (gap >= gap0) $
-        if gap == gap0 then (gap, kgsInsert p kgs0) : t
-        else if null t || gap < fst (head t) then
-            h : (gap, kgsInsert p (kgsNew (Seq.length kgs0))) : t
-        else h : go t
-    go []                   = undefined
+    go (SL.Cons h@(G1KGs gap0 kgs0) t)  = assert (gap >= gap0) $
+        if gap == gap0 then SL.Cons (G1KGs gap (kgsInsert p kgs0)) t
+        else if maybe True ((gap <) . g1kgsGap) (SL.head t) then
+            SL.Cons h (SL.Cons (G1KGs gap (kgsInsert p (kgsNew (Seq.length kgs0)))) t)
+        else SL.Cons h (go t)
+    go SL.Nil                           = undefined
 
 kgsDelete           :: forall c. EPoly c -> Op1 (KerGens c)
 kgsDelete p kgs     =       -- p in kgs (so p /= 0, nVars > 0), (ssDegNZ p) unique in kgs
@@ -237,12 +270,13 @@ kgsDelete p kgs     =       -- p in kgs (so p /= 0, nVars > 0), (ssDegNZ p) uniq
         v       = fromJust (elemIndex m es)
         np      = sizeEP p
         eq np1 np2      = kgsSepCmp np1 np2 == EQ
-        del             :: Op1 [(Word, [SizedEPoly c])]
-        del []          = undefined
-        del (enps@(e, ~nps) : t)
-            | m > e     = enps : del t
-            | m == e    = assert (isJust (find (eq np) nps)) (m, deleteBy eq np nps) : t
+        del             :: Op1 (SL.List (ENPs c))
+        del (SL.Cons enps@(ENPs e ~nps) t)
+            | m > e     = SL.Cons enps (del t)
+            | m == e    = assert (isJust (find (eq np) nps)) $
+                            SL.Cons (ENPs m (slDeleteBy eq np nps)) t
             | otherwise = undefined
+        del SL.Nil      = undefined
     in  Seq.adjust' del v kgs
 
 gkgsDelete          :: forall c. EPolyHDeg c -> Op1 (GapsKerGens c)
@@ -250,10 +284,10 @@ gkgsDelete (EPolyHDeg p hDeg)     = go      -- p in gkgs (so p /= 0, nVars > 0),
                                             -- (ssDegNZ p) unique in gkgs
   where
     gap                     = hDeg - totDeg (ssDegNZ p)
-    go (h@(gap0, kgs0) : t) = assert (gap >= gap0) $
-        if gap == gap0 then (gap, kgsDelete p kgs0) : t
-        else h : go t
-    go []                   = undefined
+    go (SL.Cons h@(G1KGs gap0 kgs0) t)  = assert (gap >= gap0) $
+        if gap == gap0 then SL.Cons (G1KGs gap (kgsDelete p kgs0)) t
+        else SL.Cons h (go t)
+    go SL.Nil               = undefined
 
 -- kgsReplace              :: EPoly c -> EPoly c -> Op1 (KerGens c)
 -- kgsReplace p p' kgs     = kgsInsert p' (kgsDelete p kgs)
@@ -268,12 +302,12 @@ kgsFindReducer p kgs    =
     if ssIsZero p then Nothing else
     let nVars   = Seq.length kgs
         pEv     = ssDegNZ p
-        npsF bnp                   []                           = bnp
-        npsF bnp@(SizedEPoly bn _) (ng@(SizedEPoly n ~g) : ~t)
+        npsF bnp                   SL.Nil                               = bnp
+        npsF bnp@(SizedEPoly bn _) (SL.Cons ng@(SizedEPoly n ~g) ~t)
             | bn <= n   = bnp
             | otherwise = npsF (if evDivides nVars (ssDegNZ g) pEv then ng else bnp) t
-        esF bnp _  []   = bnp
-        esF bnp pe ((e, ~nps) : ~t)
+        esF bnp _  SL.Nil   = bnp
+        esF bnp pe (SL.Cons (ENPs e ~nps) ~t)
             | pe < e    = bnp
             | otherwise = esF (npsF bnp nps) pe t
         vF bnp (pe, enpss)      = esF bnp pe enpss
@@ -283,9 +317,9 @@ kgsFindReducer p kgs    =
 
 gkgsFindReducer         :: forall c. EPoly c -> GapsKerGens c -> Maybe (EPolyHDeg c)
 -- returns the best (least sugar gap, then shortest) top-reducer, if any
-gkgsFindReducer p gkgs  = listToMaybe (mapMaybe find1 gkgs)
+gkgsFindReducer p gkgs  = listToMaybe (mapMaybe find1 (toList gkgs))
   where
-    find1 (gap, kgs)    =
+    find1 (G1KGs gap kgs)   =
         fmap (\g -> EPolyHDeg g (totDeg (ssDegNZ g) + gap)) (kgsFindReducer p kgs)
 
 sugarReduce             :: (EPoly c -> EPoly c -> (EPoly c, EPoly c)) ->
@@ -305,7 +339,7 @@ gkgsTopReduce div2 kerVar nRedStepsRef      = go
         (ker, nGens)    <- kerVar
         let go1 gh      = do
                 let (rh, nSteps)    = sugarReduce div2 ph gh
-                inc nRedStepsRef nSteps
+                -- @@@ inc nRedStepsRef nSteps
                 go rh
         maybe (pure (ph, nGens)) go1 (gkgsFindReducer p ker)
 
@@ -379,16 +413,16 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     sysTime0        <- getSystemTime
     cpuTime1Ref     <- newIORef cpuTime0
     gkgsRef         <- newIORef (gkgsNew nVars, 0)  -- (gkgs, # gens)
-    nRedStepsRef    <- newIORef 0
-    nSPairsRedRef   <- newIORef 0
+    nRedStepsRef    <- newIORef 0           :: IO (IORef Int)
+    nSPairsRedRef   <- newIORef 0           :: IO (IORef Int)
     let gbTQueues1  = gbTrace .&. gbTQueues /= 0 && nCores > 1
         topDiv2     = rBDiv2 epRing False
         topReduce   = gkgsTopReduce topDiv2 (readIORef gkgsRef) nRedStepsRef
         reduce2 SSZero          = pure SSZero
         reduce2 (SSNZ c d t)    = do
-            ((0, kgs) : _, _)       <- readIORef gkgsRef
+            (SL.Cons (G1KGs 0 kgs) _, _)    <- readIORef gkgsRef
             let (t', nSteps)        = kgsReduce topDiv2 kgs t
-            inc nRedStepsRef nSteps
+            -- @@@ inc nRedStepsRef nSteps
             pure (SSNZ c d t')
         reduce_n gh = do
             (EPolyHDeg g1 h1, n)    <- topReduce gh
@@ -405,12 +439,12 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 let endGHs      = Seq.drop kN ghs
                     mghn        = foldTopReduce1 nVars topDiv2 endGHs gh
                     endRed1 (ph, nSteps)    = do
-                        inc nRedStepsRef nSteps
+                        -- @@@ inc nRedStepsRef nSteps
                         reduce_n ph
                     endRed2 (EPolyHDeg (SSNZ c d t) h)  = do
                         let g0s                 = mapMaybe gap0NZ (toList endGHs)
                             (todo, t', nSteps)  = foldReduce nVars topDiv2 g0s t
-                        inc nRedStepsRef nSteps
+                        -- @@@ inc nRedStepsRef nSteps
                         p       <- (if todo then reduce2 else pure) (SSNZ c d t')
                         pure (EPolyHDeg p h, kN')
                     endRed2 (EPolyHDeg SSZero _)        = undefined
@@ -434,7 +468,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 if gHDeg /= totDeg (ssDegNZ g) then pure ((h, j) : t') else do
                     let (q, r)  = rBDiv2 epRing True h g
                     if ssIsZero q then pure ((h, j) : t') else do
-                        inc nRedStepsRef (ssNumTerms q)
+                        -- @@@ inc nRedStepsRef (ssNumTerms q)
                         when (gbTrace .&. gbTQueues /= 0) $
                             if totDeg (ssDegNZ q) == 0 then inc rNTraceRef 1 else putChar 'R'
                         r'          <- if totDeg (ssDegNZ q) == 0 then pure r else reduce2 r
@@ -451,9 +485,12 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     let addGenHN (gh, kN)   = {-# SCC addGenHN #-} do
             (EPolyHDeg g0 h, _)     <- endReduce_n kN gh
             unless (ssIsZero g0) $ do
-                let g1      = withRing cField ssMonicize g0
+                let g1      = traceEvent "  addGenHN start" $ withRing cField ssMonicize g0
                     gh1     = EPolyHDeg g1 h
-                atomicModifyIORef'_ gkgsRef (\(gkgs, n) -> (gkgsInsert gh1 gkgs, n + 1))
+                    f (gkgs, n)     = ((gkgsInsert gh1 gkgs, n + 1), n)
+                traceEvent ("  atomicModifyIORef' gkgsRef") $ pure ()
+                n0          <- atomicModifyIORef' gkgsRef f
+                traceEvent "  atomicModifyIORef'_ genHsRef" $ pure ()
                 atomicModifyIORef'_ genHsRef (Seq.|> gh1)
                 inc1TVar wakeAllThreads
                 when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ do
@@ -463,6 +500,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     when (d /= gDShown) $ do
                         putS $ show d ++ " "
                         writeIORef gDShownRef d
+                traceEvent ("  addGenHN end " ++ show n0) $ pure ()
     gMGisRef        <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (Maybe GBGenInfo)))
     ijcsRef         <- newIORef []          :: IO (IORef [SPair])   -- ascending by hEvCmp
     let newIJCs     = do
@@ -471,9 +509,9 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
             let f gMGis = (gMGis Seq.|> Just tGi, (gMGis, t, gh, tGi))
                   where
                     t       = Seq.length gMGis
-                    gh      = Seq.index ghs0 t
-                    tGi     = giNew gh
-            mx          <- maybeAtomicModifyIORef' gMGisRef ((< Seq.length ghs0) . Seq.length) f
+                    ~gh     = traceEvent ("  newIJCs start " ++ show t) $ Seq.index ghs0 t
+                    ~tGi    = giNew gh
+            mx          <- maybeAtomicModifyIORef gMGisRef ((< Seq.length ghs0) . Seq.length) f
             case mx of
                 Nothing                     -> pure False
                 Just (gMGis0, t, gh, tGi)   -> do
@@ -488,7 +526,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                                 mergeBy hEvCmp (minusSorted hEvCmp ijcs skipIJCs) addITCs
                     (ijcs, ijcs')   <- atomicModifyIORef' ijcsRef ijcsF
                     pure (evElts ijcs')     -- @@ test (time) w/o this (& w/o gbTQueues) on many cores
-                    unless (null addITCs) $ inc1TVar wakeAllThreads
+                    when (null ijcs && not (null ijcs')) $ inc1TVar wakeAllThreads
                     when (gbTrace .&. gbTQueues /= 0) $ do
                         let n       = length ijcs
                             n'      = length ijcs'
@@ -498,7 +536,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                             putStr $ 'p' : show (t + 1) ++ ":" ++ show n' ++ " "
                     when (gbTrace .&. gbTProgressInfo /= 0) $
                         putStrLn $ " g" ++ show t ++ ": " ++ _showEV (phP gh)
-                    pure True
+                    traceEvent ("  newIJCs done " ++ show t) $ pure True
     rgsRef          <- newIORef []          :: IO (IORef [(EPoly c, Int)])
     rgsMNGensRef    <- newIORef (Just 0)    :: IO (IORef (Maybe Int))   -- Nothing if locked
     let checkRgs1   = do    -- may add 1 gh to rgs
@@ -512,7 +550,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         when res $ do
                             rgs         <- readIORef rgsRef
                             let gh      = Seq.index ghs k
-                            pure (ssRTails (phP gh))    -- @@@ check ok (search for "rg"s)
+                            -- @@@ pure (ssRTails (phP gh))    -- @@@ check ok (search for "rg"s)
                             rgs'        <- rgsInsert gh k rgs
                             atomicWriteIORef' rgsRef rgs'
                             atomicWriteIORef' rgsMNGensRef (Just (k + 1))
@@ -529,30 +567,45 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 Nothing     -> pure False
     -- nextGenHNs holds the nonzero output of S-pair reduction threads for the main thread:
     nextGenHNs      <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (EPolyHDeg c, Int)))
-    numNGHNsRef     <- newIORef 0           :: IO (IORef Int)   -- includes temporary removals
-    let limNumNGHNs     = nCores    -- e.g. for preserving cache space; @@ tune
-        incNumNGHNs n fromChooseGHN     = do
-            if n >= 0 then inc numNGHNsRef n else do
-                n0          <- atomicModifyIORef' numNGHNsRef (\m -> (m + n, m))
-                when ((n0 > limNumNGHNs || fromChooseGHN) && n0 + n <= limNumNGHNs) $
+    numForGHNsRef   <- newIORef 0           :: IO (IORef Int)
+        -- includes temporary nextGenHNs removals
+    let limForGHNs  = 3 * nCores `quot` 2    -- e.g. for preserving cache space(?); @@ tune
+        incFGHNs n fromChooseGHN    = do
+            if n >= 0 then inc numForGHNsRef n else do
+                n0          <- atomicModifyIORef' numForGHNsRef (\m -> (m + n, m))
+                when ((n0 > limForGHNs || fromChooseGHN {- nextGenHNs restored -})
+                        && n0 + n <= limForGHNs) $
                     inc1TVar wakeAllThreads
         newNextGenHN ghn@(EPolyHDeg g _h, _kN) dn   =
-            if ssIsZero g then incNumNGHNs dn False else do
+            if ssIsZero g then incFGHNs dn False else do
+                traceEvent "  newNextGenHN" $ pure ()
                 -- let ghn     = (EPolyHDeg (ssForceTails g) h, kN)    -- @@@ don't force
                 ghns0       <- atomicModifyIORef' nextGenHNs (\ghns -> (ghns Seq.|> ghn, ghns))
-                incNumNGHNs (dn + 1) False  -- trying to limit/avoid atomicModifyIORef' calls
+                incFGHNs (dn + 1) False  -- trying to limit/avoid atomicModifyIORef' calls
                 when (null ghns0) $ inc1TVar wakeMainThread
         newG (SPair i j h c)      = {-# SCC newG #-} do
             let ~s  = " start spair(g" ++ show i ++ ",g" ++ show j ++ "): sugar degree " ++
                         show h ++ ", lcm of heads " ++ epShow (SSNZ (rOne cField) c SSZero)
             when (gbTrace .&. gbTProgressDetails /= 0) $ putStrLn s
-            inc nSPairsRedRef 1
+            traceEvent "  newG" $ pure ()
+            -- @@@ inc nSPairsRedRef 1
             ghs     <- readIORef genHsRef
             ghn     <- reduce_n
                         (EPolyHDeg (sPoly (phP (Seq.index ghs i)) (phP (Seq.index ghs j)) c) h)
-            newNextGenHN ghn 0
+            newNextGenHN ghn (-1)
             pure True
+        doSP        = do
+            let f nFGHNs    = (nFGHNs + 1, ())
+            mOk         <- maybeAtomicModifyIORef' numForGHNsRef (<= limForGHNs) f
+            if isNothing mOk then pure False else do
+                mSp         <- pop ijcsRef
+                case mSp of
+                    Just sp     -> newG sp
+                    Nothing     -> do
+                        inc numForGHNsRef (-1)
+                        pure False
         chooseGenHN     = do
+            traceEvent "  chooseGenHN" $ pure ()
             ghns    <- atomicModifyIORef' nextGenHNs (\ghns -> (Seq.empty, ghns))
             when gbTQueues1 $ do
                 let n   = Seq.length ghns
@@ -562,20 +615,15 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     ghn     = Seq.index ghns j
                     ghns1   = Seq.deleteAt j ghns
                 atomicModifyIORef'_ nextGenHNs (ghns1 Seq.><)
-                incNumNGHNs (-1) True
+                traceEvent "  chooseGenHN >< done" $ incFGHNs (-1) True
                 addGenHN ghn
                 pure True
-        doSP        = do
-            nNGHNs      <- readIORef numNGHNsRef
-            if nNGHNs > limNumNGHNs then pure False else do
-                mSp         <- pop ijcsRef
-                maybe (pure False) newG mSp
     numSleepingRef      <- newIORef 0       :: IO (IORef Int)   -- not counting main thread
-    -- testRef             <- newIORef 0   -- @@@
+    -- @@@ testRef             <- newCounter 0
     let checkQueues t   = do
-            {- whileM $ do inc testRef 1; (< 1_000_000_000_000) <$> getCPUTime
+            {- whileM $ do incrCounter_ 1 testRef; (< 1_000_000_000_000) <$> getCPUTime
             do
-                n           <- readIORef testRef
+                n           <- readCounter testRef
                 putStrLn $ "\n#" ++ show n -}
             loop
           where
@@ -589,13 +637,15 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         newNextGenHN ghn' (-1)
                         pure True
                     Nothing         -> pure False
-            tasks       = [checkRgs1 | t == 1] ++ newIJCs :
-                if 2 * t < nCores   -- @@ tune
-                    then [doSP, doEndReduce] else [doEndReduce, doSP]
+            tasks       = [checkRgs1 | t == 1] ++   -- @@ tune:
+                if      3 * t < nCores then [newIJCs, doSP, doEndReduce]
+                -- @@@ else if 2 * t < nCores then [doSP, doEndReduce, newIJCs]
+                else                        [doEndReduce, doSP, newIJCs]
             loop        = do
                 wake0       <- readTVarIO wakeAllThreads
                 q           <- orM tasks
                 unless q $ do
+                    traceEvent ("  sleep " ++ show t) $ pure ()
                     when (gbTrace .&. gbTQueues /= 0) $ putChar 's'
                     n1          <- atomicModifyIORef' numSleepingRef (dupe . (+ 1))
                     when (n1 == nCores - 1) $ inc1TVar wakeMainThread
@@ -614,7 +664,20 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 putStrLn $ ' ' : s
                 writeIORef cpuTime1Ref cpuTime2
                 numSleeping <- readIORef numSleepingRef
-                when (numSleeping > 0) $ putStr $ show numSleeping ++ " sleeping "
+                ghs         <- readIORef genHsRef
+                rgsMNGHs    <- readIORef rgsMNGensRef
+                rgs         <- readIORef rgsRef
+                gMGis       <- readIORef gMGisRef
+                ijcs        <- readIORef ijcsRef
+                numFGHNs    <- readIORef numForGHNsRef
+                putStr $
+                    show (Seq.length ghs) ++ " gens, " ++
+                    maybe "busy" show rgsMNGHs ++ " rg'd, " ++
+                    show (length rgs) ++ " rgs, " ++    -- @@@ omit?
+                    show (Seq.length gMGis) ++ " paired, " ++
+                    show (length ijcs) ++ " pairs, " ++
+                    show numFGHNs ++ " for next gens, " ++
+                    if numSleeping > 0 then show numSleeping ++ " sleeping, " else ""
     whileM $ do
         when (gbTrace /= 0) traceTime
         wakes0      <- mapM readTVarIO [wakeAllThreads, wakeMainThread]
@@ -623,6 +686,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 wakes1      <- mapM readTVarIO [wakeAllThreads, wakeMainThread]
                 let res     = wakes1 /= wakes0 || numSleeping < nCores - 1
                 when res $ do
+                    traceEvent "  SLEEP" $ pure ()
                     when (gbTrace .&. gbTQueues /= 0) $ putChar 'S'
                     atomically $ do
                         wakes2      <- mapM readTVar [wakeAllThreads, wakeMainThread]

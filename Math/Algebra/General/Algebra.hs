@@ -179,10 +179,10 @@ infixr 9 .*     -- for mixing with @.@
 (f .* g) x y    = f (g x y)
 
 (!$)            :: (a -> b) -> a -> b
-infixl 0 !$
+infixl 1 !$
 {- ^ strict function application for functions of more than one argument.
     
-    @'(!$)' = '($!)'@ but !$ is left-associative instead of right-associative. -}
+    @'(!$)' = '($!)'@ but !$ is @infixl 1@ instead of @infixr 0@. -}
 (!$)            = ($!)
 
 

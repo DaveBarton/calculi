@@ -55,7 +55,7 @@ main    = do
     doneMVar    <- newEmptyMVar
     _           <- forkOn 0 $ do
         -- for gbTrace bits, see Math/Algebra/Commutative/GroebnerBasis.hs:
-        let gbTrace     = gbTSummary .|. gbTQueues
+        let gbTrace     = gbTSummary -- @@@ .|. gbTQueues
         mapM_ (\ex -> ex nCores gbTrace) [katsura8, cyclic7, jason210]
         hFlush stdout
         hFlush stderr

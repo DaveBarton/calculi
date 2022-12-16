@@ -22,7 +22,7 @@ import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
 
 
-data SparseSum c d  = SSNZ c d ~(SparseSum c d) | SSZero
+data SparseSum c d  = SSNZ c d {- @@@ ~ -} (SparseSum c d) | SSZero
     deriving (Eq, Show)     -- e.g. for testing & debugging
 -- ^ a sorted list of non-\"zero\" terms, with \"degrees\" decreasing according to a total order
 
