@@ -24,7 +24,6 @@ import Data.List.Extra (chunksOf)
 import Data.Maybe (catMaybes, fromJust, isJust, isNothing, listToMaybe, mapMaybe)
 import qualified Data.Sequence as Seq
 import Data.Tuple.Extra (dupe, first, fst3, second)
-import GHC.IsList (fromList)
 import Numeric (showFFloat)
 import qualified StrictList as SL
 
@@ -49,6 +48,9 @@ slHeadMaybe         = SL.head
 
 slSingleton         :: a -> SL.List a
 slSingleton e       = SL.Cons e SL.Nil
+
+slFromList          :: [a] -> SL.List a
+slFromList          = SL.fromListReversed . reverse
 
 {- currently unused
 slZipWithReversed   :: (a -> b -> c) -> SL.List a -> SL.List b -> SL.List c
@@ -242,7 +244,7 @@ updatePairs nVars evCmp gMGis ijcs tGi      = (skipIs, skipIJCs, addITCs)
       where             -- criterion F_jk and Buchberger's 2nd criterion (gi and gt rel. prime)
         buch2 (SPair i j _ c)     = assert (j == t)
             (totDeg (fromJust (gMEvsA ! i)) + totDeg tEv == totDeg c)
-    addITCs         = fromList (sortBy hEvCmp itcs')    -- @@@ was evList
+    addITCs         = slFromList (sortBy hEvCmp itcs')    -- @@@ was evList
 
 
 data SizedEPoly c   = SizedEPoly { sepN :: Int, sepP :: EPoly c }
