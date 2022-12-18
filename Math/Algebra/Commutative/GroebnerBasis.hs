@@ -20,10 +20,11 @@ import Control.Monad.Extra (orM, whileM)
 import Data.Array.IArray (Array, (!), listArray)
 import Data.Foldable (find, foldl', minimumBy, toList)
 import Data.List (elemIndex, findIndices, groupBy, sortBy)
-import Data.List.Extra (chunksOf, mergeBy)
+import Data.List.Extra (chunksOf)
 import Data.Maybe (catMaybes, fromJust, isJust, isNothing, listToMaybe, mapMaybe)
 import qualified Data.Sequence as Seq
 import Data.Tuple.Extra (dupe, first, fst3, second)
+import GHC.IsList (fromList)
 import Numeric (showFFloat)
 import qualified StrictList as SL
 
@@ -43,8 +44,44 @@ import System.IO (hPutStr, stderr)
 -- import System.Process (callCommand)
 
 
-single          :: a -> SL.List a
-single e        = SL.Cons e SL.Nil
+slHeadMaybe         :: SL.List a -> Maybe a
+slHeadMaybe         = SL.head
+
+slSingleton         :: a -> SL.List a
+slSingleton e       = SL.Cons e SL.Nil
+
+{- currently unused
+slZipWithReversed   :: (a -> b -> c) -> SL.List a -> SL.List b -> SL.List c
+slZipWithReversed f = go SL.Nil
+  where
+    go cs (SL.Cons a as) (SL.Cons b bs)     = go (f a b `SL.Cons` cs) as bs
+    go cs _              _                  = cs
+-}
+
+slMergeBy           :: Cmp a -> Op2 (SL.List a)
+-- like 'mergeBy' in Data.List.Extra
+slMergeBy cmp       = go SL.Nil
+  where
+    go r xs@(SL.Cons x ~t) ys@(SL.Cons y ~u)    =
+        if cmp x y /= GT
+        then go (SL.Cons x r) t ys
+        else go (SL.Cons y r) xs u
+    go r xs                SL.Nil               = SL.prependReversed r xs
+    go r SL.Nil            ys                   = SL.prependReversed r ys
+
+-- @@@ change next few to constant stack space?:
+
+slMinusSorted       :: Cmp a -> Op2 (SL.List a)
+-- difference of two sorted lists, like 'minusBy' from data-ordlist
+slMinusSorted cmp   = go
+  where
+    go xs@(SL.Cons x ~t) ys@(SL.Cons y ~u)  =
+        case cmp x y of
+           LT   -> x `SL.Cons` go t ys
+           EQ   ->             go t u
+           GT   ->             go xs u
+    go xs                SL.Nil             = xs
+    go SL.Nil            _ys                = SL.Nil
 
 slInsertBy          :: Cmp a -> a -> Op1 (SL.List a)
 slInsertBy cmp x    = go
@@ -52,7 +89,7 @@ slInsertBy cmp x    = go
     go ys@(SL.Cons h ~t)    = case cmp x h of
         GT  -> SL.Cons h (go t)
         _   -> SL.Cons x ys
-    go SL.Nil               = single x
+    go SL.Nil               = slSingleton x
 
 slDeleteBy          :: EqRel a -> a -> Op1 (SL.List a)
 slDeleteBy eq x     = go
@@ -68,18 +105,6 @@ evList          :: [a] -> [a]
 -- force all elements of a list, and return it
 evList xs       = evElts xs `seq` xs
 
-minusSorted     :: Cmp a -> [a] -> [a] -> [a]
--- difference of two sorted lists, like 'minusBy' from data-ordlist
-minusSorted cmp = go
-  where
-    go xs@(x : ~t) ys@(y : ~u)  =
-        case cmp x y of
-           LT   -> x : go t ys
-           EQ   ->     go t u
-           GT   ->     go xs u
-    go xs          []           = xs
-    go []          _ys          = []
-
 minIndexBy                      :: Cmp a -> Seq.Seq a -> Int
 -- The index of the first least element of a nonempty sequence.
 minIndexBy cmp (h Seq.:<| t)    = fst (Seq.foldlWithIndex f (0, h) t)
@@ -93,11 +118,19 @@ inc ref n       = when (n /= 0) $ atomicModifyIORef'_ ref (+ n)
 inc1TVar        :: TVar Int -> IO ()
 inc1TVar var    = atomically $ modifyTVar' var (+ 1)
 
+{- currently unused
 pop             :: IORef [a] -> IO (Maybe a)
 pop esRef       = atomicModifyIORef' esRef f
   where
     f (h : t)       = (t, Just h)
     f []            = ([], Nothing)
+-}
+
+slPop           :: IORef (SL.List a) -> IO (Maybe a)
+slPop esRef     = atomicModifyIORef' esRef f
+  where
+    f (SL.Cons h t)     = (t, Just h)
+    f SL.Nil            = (SL.Nil, Nothing)
 
 maybeAtomicModifyIORef'             :: IORef a -> Pred a -> (a -> (a, b)) -> IO (Maybe b)
 -- for speed, trying to avoid atomicModifyIORef'
@@ -149,6 +182,8 @@ spCmp               :: Cmp ExponVec -> Bool -> Cmp SPair
 spCmp evCmp useSugar (SPair _ _ h1 ev1) (SPair _ _ h2 ev2)  =
     if useSugar then compare h1 h2 <> evCmp ev1 ev2 else evCmp ev1 ev2
 
+type SSPairs        = SL.List SPair     -- Sorted SPairs using (spCmp evCmp True)
+
 data EPolyHDeg c    = EPolyHDeg { phP :: EPoly c, phH :: Word } -- poly and "sugar" homog degree
 
 data GBGenInfo      = GBGenInfo { giEv :: ExponVec, giDh :: Word }
@@ -167,9 +202,9 @@ giToSp i j gi       =
     in  SPair i j (giDh gi + totDeg ev) ev
 
 {-# SCC updatePairs #-}
-updatePairs         :: Int -> Cmp ExponVec -> [Maybe GBGenInfo] -> [SPair] -> GBGenInfo ->
-                        ([Int], [SPair], [SPair])    -- all 3 [SPair]s are ascending
-updatePairs nVars evCmp gMGis ijcs tGi      = (skipIs, skipIJCs, evList (sortBy hEvCmp itcs'))
+updatePairs         :: Int -> Cmp ExponVec -> [Maybe GBGenInfo] -> SSPairs -> GBGenInfo ->
+                        ([Int], SSPairs, SSPairs)
+updatePairs nVars evCmp gMGis ijcs tGi      = (skipIs, skipIJCs, addITCs)
   where
     evDivs          = evDivides nVars
     hEvCmp          = spCmp evCmp True          :: Cmp SPair
@@ -186,12 +221,12 @@ updatePairs nVars evCmp gMGis ijcs tGi      = (skipIs, skipIJCs, evList (sortBy 
         skipQ (Just gi) (Just c)    = divEq (giEv gi) c
         skipQ _         _           = False
     skipIs          = evList (findIndices id skipIQs)
-    ijcs0           = if null skipIs then [] else   -- for efficiency
-                      filter (\(SPair i j _ _) -> i `elem` skipIs || j `elem` skipIs) ijcs
-    ijcs1           = filter (\(SPair i j _ c) -> evDivs tEv c && ne i c && ne j c) ijcs
+    ijcs0           = if null skipIs then SL.Nil else   -- for efficiency
+                      SL.filter (\(SPair i j _ _) -> i `elem` skipIs || j `elem` skipIs) ijcs
+    ijcs1           = SL.filter (\(SPair i j _ c) -> evDivs tEv c && ne i c && ne j c) ijcs
       where             -- criterion B_ijk
         ne i c      = maybe False (\itc -> not (divEq itc c)) (itmcsA ! i)
-    skipIJCs        = evList (mergeBy hEvCmp ijcs0 ijcs1)
+    skipIJCs        = slMergeBy hEvCmp ijcs0 ijcs1  -- @@@ was evList
     itcs            = catMaybes (zipWith (\i -> fmap (giToSp i t)) [0..] itMGis)    :: [SPair]
     -- "sloppy" sugar method:
     itcss           = groupBy (cmpEq lcmCmp) (sortBy lcmCmp itcs)
@@ -207,6 +242,7 @@ updatePairs nVars evCmp gMGis ijcs tGi      = (skipIs, skipIJCs, evList (sortBy 
       where             -- criterion F_jk and Buchberger's 2nd criterion (gi and gt rel. prime)
         buch2 (SPair i j _ c)     = assert (j == t)
             (totDeg (fromJust (gMEvsA ! i)) + totDeg tEv == totDeg c)
+    addITCs         = fromList (sortBy hEvCmp itcs')    -- @@@ was evList
 
 
 data SizedEPoly c   = SizedEPoly { sepN :: Int, sepP :: EPoly c }
@@ -228,7 +264,7 @@ kgsNew              :: Int -> KerGens c
 kgsNew nVars        = Seq.replicate nVars SL.Nil
 
 gkgsNew             :: Int -> GapsKerGens c
-gkgsNew nVars       = single (G1KGs 0 (kgsNew nVars))
+gkgsNew nVars       = slSingleton (G1KGs 0 (kgsNew nVars))
 
 kgsSepCmp           :: Cmp (SizedEPoly c)
 kgsSepCmp (SizedEPoly n1 p1) (SizedEPoly n2 p2)   =
@@ -243,9 +279,9 @@ kgsInsert p kgs     =       -- p /= 0, nVars > 0
         v       = fromJust (elemIndex m es)
         np      = sizeEP p
         ins             :: Op1 (SL.List (ENPs c))
-        ins SL.Nil      = single (ENPs m (single np))
+        ins SL.Nil      = slSingleton (ENPs m (slSingleton np))
         ins enpss@(SL.Cons enps@(ENPs e ~nps) ~t)
-            | m < e     = SL.Cons (ENPs m (single np)) enpss
+            | m < e     = SL.Cons (ENPs m (slSingleton np)) enpss
             | m == e    = SL.Cons (ENPs m (slInsertBy kgsSepCmp np nps)) t
             | otherwise = SL.Cons enps (ins t)
     in  Seq.adjust' ins v kgs
@@ -256,7 +292,7 @@ gkgsInsert (EPolyHDeg p hDeg)     = go    -- p /= 0, nVars > 0
     gap                     = hDeg - totDeg (ssDegNZ p)
     go (SL.Cons h@(G1KGs gap0 kgs0) t)  = assert (gap >= gap0) $
         if gap == gap0 then SL.Cons (G1KGs gap (kgsInsert p kgs0)) t
-        else if maybe True ((gap <) . g1kgsGap) (SL.head t) then
+        else if maybe True ((gap <) . g1kgsGap) (slHeadMaybe t) then
             SL.Cons h (SL.Cons (G1KGs gap (kgsInsert p (kgsNew (Seq.length kgs0)))) t)
         else SL.Cons h (go t)
     go SL.Nil                           = undefined
@@ -502,7 +538,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         writeIORef gDShownRef d
                 traceEvent ("  addGenHN end " ++ show n0) $ pure ()
     gMGisRef        <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (Maybe GBGenInfo)))
-    ijcsRef         <- newIORef []          :: IO (IORef [SPair])   -- ascending by hEvCmp
+    ijcsRef         <- newIORef SL.Nil      :: IO (IORef SSPairs)   -- ascending by hEvCmp
     let newIJCs     = do
             ghs0        <- readIORef genHsRef
             ijcs0       <- readIORef ijcsRef
@@ -523,9 +559,9 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     let ijcsF ijcs  = (ijcs', (ijcs, ijcs'))
                           where
                             ijcs'       =
-                                mergeBy hEvCmp (minusSorted hEvCmp ijcs skipIJCs) addITCs
+                                slMergeBy hEvCmp (slMinusSorted hEvCmp ijcs skipIJCs) addITCs
                     (ijcs, ijcs')   <- atomicModifyIORef' ijcsRef ijcsF
-                    pure (evElts ijcs')     -- @@ test (time) w/o this (& w/o gbTQueues) on many cores
+                    -- @@@ pure (evElts ijcs')     -- @@ test (time) w/o this (& w/o gbTQueues) on many cores
                     when (null ijcs && not (null ijcs')) $ inc1TVar wakeAllThreads
                     when (gbTrace .&. gbTQueues /= 0) $ do
                         let n       = length ijcs
@@ -598,7 +634,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
             let f nFGHNs    = (nFGHNs + 1, ())
             mOk         <- maybeAtomicModifyIORef' numForGHNsRef (<= limForGHNs) f
             if isNothing mOk then pure False else do
-                mSp         <- pop ijcsRef
+                mSp         <- slPop ijcsRef
                 case mSp of
                     Just sp     -> newG sp
                     Nothing     -> do
