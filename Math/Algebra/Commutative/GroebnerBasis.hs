@@ -16,9 +16,10 @@ import Math.Algebra.General.SparseSum
 import Math.Algebra.Commutative.EPoly
 
 import Control.Monad (forM, unless, when)
-import Control.Monad.Extra (orM, whileM)
+import Control.Monad.Extra (ifM, orM, whileM)
 import Data.Array.IArray (Array, (!), listArray)
 import Data.Foldable (find, foldl', minimumBy, toList)
+import Data.Int (Int64)
 import Data.List (elemIndex, findIndices, groupBy, sortBy)
 import Data.List.Extra (chunksOf)
 import Data.Maybe (catMaybes, fromJust, isJust, isNothing, listToMaybe, mapMaybe)
@@ -37,6 +38,7 @@ import Data.IORef.Extra (atomicModifyIORef'_, atomicWriteIORef')
 
 import Data.Time.Clock.System (SystemTime(..), getSystemTime)
 import Debug.Trace  -- @@@
+import GHC.Stats (RTSStats, getRTSStats, getRTSStatsEnabled, mutator_cpu_ns, mutator_elapsed_ns)
 import System.CPUTime (getCPUTime)
 import System.IO (hPutStr, stderr)
 -- import System.IO (hFlush, stdout)
@@ -47,57 +49,47 @@ slHeadMaybe         :: SL.List a -> Maybe a
 slHeadMaybe         = SL.head
 
 slSingleton         :: a -> SL.List a
-slSingleton e       = SL.Cons e SL.Nil
+slSingleton e       = e :! SL.Nil
 
 slFromList          :: [a] -> SL.List a
-slFromList          = SL.fromListReversed . reverse
-
-{- currently unused
-slZipWithReversed   :: (a -> b -> c) -> SL.List a -> SL.List b -> SL.List c
-slZipWithReversed f = go SL.Nil
-  where
-    go cs (SL.Cons a as) (SL.Cons b bs)     = go (f a b `SL.Cons` cs) as bs
-    go cs _              _                  = cs
--}
+slFromList          = SL.reverse . SL.fromListReversed
 
 slMergeBy           :: Cmp a -> Op2 (SL.List a)
 -- like 'mergeBy' in Data.List.Extra
 slMergeBy cmp       = go SL.Nil
   where
-    go r xs@(SL.Cons x ~t) ys@(SL.Cons y ~u)    =
+    go r xs@(x :! ~t) ys@(y :! ~u)  =
         if cmp x y /= GT
-        then go (SL.Cons x r) t ys
-        else go (SL.Cons y r) xs u
-    go r xs                SL.Nil               = SL.prependReversed r xs
-    go r SL.Nil            ys                   = SL.prependReversed r ys
-
--- @@@ change next few to constant stack space?:
+        then go (x :! r) t ys
+        else go (y :! r) xs u
+    go r xs           SL.Nil        = SL.prependReversed r xs
+    go r SL.Nil       ys            = SL.prependReversed r ys
 
 slMinusSorted       :: Cmp a -> Op2 (SL.List a)
 -- difference of two sorted lists, like 'minusBy' from data-ordlist
-slMinusSorted cmp   = go
+slMinusSorted cmp   = go SL.Nil
   where
-    go xs@(SL.Cons x ~t) ys@(SL.Cons y ~u)  =
+    go r xs@(x :! ~t) ys@(y :! ~u)    =
         case cmp x y of
-           LT   -> x `SL.Cons` go t ys
-           EQ   ->             go t u
-           GT   ->             go xs u
-    go xs                SL.Nil             = xs
-    go SL.Nil            _ys                = SL.Nil
+           LT   -> go (x :! r) t ys
+           EQ   -> go r        t u
+           GT   -> go r        xs u
+    go r xs           SL.Nil          = SL.prependReversed r xs
+    go r SL.Nil       _ys             = SL.reverse r
 
 slInsertBy          :: Cmp a -> a -> Op1 (SL.List a)
-slInsertBy cmp x    = go
+slInsertBy cmp x    = go SL.Nil
   where
-    go ys@(SL.Cons h ~t)    = case cmp x h of
-        GT  -> SL.Cons h (go t)
-        _   -> SL.Cons x ys
-    go SL.Nil               = slSingleton x
+    go r ys@(h :! ~t)   = case cmp x h of
+        GT  -> go (h :! r) t
+        _   -> SL.prependReversed r (x :! ys)
+    go r SL.Nil         = SL.prependReversed r (slSingleton x)
 
 slDeleteBy          :: EqRel a -> a -> Op1 (SL.List a)
-slDeleteBy eq x     = go
+slDeleteBy eq x     = go SL.Nil
   where
-    go ys@(SL.Cons h ~t)    = if x `eq` h then ys else SL.Cons h (go t)
-    go SL.Nil               = SL.Nil
+    go r (h :! ~t)      = if x `eq` h then SL.prependReversed r t else go (h :! r) t
+    go r SL.Nil         = SL.reverse r
 
 evElts          :: [a] -> ()
 -- force all elements of a list
@@ -131,8 +123,8 @@ pop esRef       = atomicModifyIORef' esRef f
 slPop           :: IORef (SL.List a) -> IO (Maybe a)
 slPop esRef     = atomicModifyIORef' esRef f
   where
-    f (SL.Cons h t)     = (t, Just h)
-    f SL.Nil            = (SL.Nil, Nothing)
+    f (h :! t)      = (t, Just h)
+    f SL.Nil        = (SL.Nil, Nothing)
 
 maybeAtomicModifyIORef'             :: IORef a -> Pred a -> (a -> (a, b)) -> IO (Maybe b)
 -- for speed, trying to avoid atomicModifyIORef'
@@ -158,19 +150,29 @@ maybeDequeueRefSeq ref p    = maybeAtomicModifyIORef' ref p' f
     f (h Seq.:<| t)     = (t, h)
     f _                 = undefined
 
-elapsedMicroSecs    :: SystemTime -> IO Integer
-elapsedMicroSecs (MkSystemTime s0 ns0)      = do
+elapsedNs                           :: SystemTime -> IO Int64
+elapsedNs (MkSystemTime s0 ns0)     = do
     MkSystemTime s ns       <- getSystemTime
-    pure $ 1_000_000 * fromIntegral (s - s0)
-        + fromIntegral ns `quot` 1000 - fromIntegral ns0 `quot` 1000
+    pure $ 1_000_000_000 * (s - s0) + fromIntegral ns - fromIntegral ns0
 
-cpuElapsedStr                       :: Integer -> SystemTime -> IO String
-cpuElapsedStr cpuTime0 sysTime0     = do
+getMaybeRTSStats    :: IO (Maybe RTSStats)
+getMaybeRTSStats    = ifM getRTSStatsEnabled (Just <$> getRTSStats) (pure Nothing)
+
+cpuElapsedStr       :: Integer -> SystemTime -> Maybe RTSStats -> IO String
+cpuElapsedStr cpuTime0 sysTime0 mStats0     = do
     t       <- getCPUTime
-    t1      <- elapsedMicroSecs sysTime0
-    pure (showMicroSecs (quot (t - cpuTime0) 1_000_000) ++ "/" ++ showMicroSecs t1)
+    t1      <- elapsedNs sysTime0
+    mutS    <- maybe (pure "") getMutS mStats0
+    pure (showNs2 (quot (t - cpuTime0) 1000) t1 ++ mutS)
   where
-    showMicroSecs n     = showFFloat (Just 6) (1e-6 * fromIntegral n :: Double) "s"
+    showSecs t          = showFFloat (Just 3) (t :: Double) "s"
+    showNs n            = showSecs (1e-9 * fromIntegral n)
+    showNs2 cpu elapsed = showNs cpu ++ "/" ++ showNs elapsed
+    getMutS stats0      = do
+        stats       <- getRTSStats
+        let cpu     = mutator_cpu_ns stats - mutator_cpu_ns stats0
+            elapsed = mutator_elapsed_ns stats - mutator_elapsed_ns stats0
+        pure $ ", MUT " ++ showNs2 cpu elapsed
 
 
 {- See Gebauer & Moller, J. Symbolic Computation (1988) 6, 275-286;
@@ -184,7 +186,7 @@ spCmp               :: Cmp ExponVec -> Bool -> Cmp SPair
 spCmp evCmp useSugar (SPair _ _ h1 ev1) (SPair _ _ h2 ev2)  =
     if useSugar then compare h1 h2 <> evCmp ev1 ev2 else evCmp ev1 ev2
 
-type SSPairs        = SL.List SPair     -- Sorted SPairs using (spCmp evCmp True)
+type SortedSPairs   = SL.List SPair     -- sorted using (spCmp evCmp True)
 
 data EPolyHDeg c    = EPolyHDeg { phP :: EPoly c, phH :: Word } -- poly and "sugar" homog degree
 
@@ -204,8 +206,8 @@ giToSp i j gi       =
     in  SPair i j (giDh gi + totDeg ev) ev
 
 {-# SCC updatePairs #-}
-updatePairs         :: Int -> Cmp ExponVec -> [Maybe GBGenInfo] -> SSPairs -> GBGenInfo ->
-                        ([Int], SSPairs, SSPairs)
+updatePairs         :: Int -> Cmp ExponVec -> [Maybe GBGenInfo] -> SortedSPairs -> GBGenInfo ->
+                        ([Int], SortedSPairs, SortedSPairs)
 updatePairs nVars evCmp gMGis ijcs tGi      = (skipIs, skipIJCs, addITCs)
   where
     evDivs          = evDivides nVars
@@ -253,7 +255,7 @@ sizeEP              :: EPoly c -> SizedEPoly c
 sizeEP p            = SizedEPoly (ssNumTerms p) p
 
 data ENPs c         = ENPs { _enpsE :: Word, _enpsL :: SL.List (SizedEPoly c) }
--- exponent and list of ps
+-- exponent and list of sized polys
 
 -- nVars > 0, each enpss has increasing es, all p /= 0, (ssDegNZ p) unique:
 type KerGens c      = Seq.Seq (SL.List (ENPs c))
@@ -282,21 +284,21 @@ kgsInsert p kgs     =       -- p /= 0, nVars > 0
         np      = sizeEP p
         ins             :: Op1 (SL.List (ENPs c))
         ins SL.Nil      = slSingleton (ENPs m (slSingleton np))
-        ins enpss@(SL.Cons enps@(ENPs e ~nps) ~t)
-            | m < e     = SL.Cons (ENPs m (slSingleton np)) enpss
-            | m == e    = SL.Cons (ENPs m (slInsertBy kgsSepCmp np nps)) t
-            | otherwise = SL.Cons enps (ins t)
+        ins enpss@(enps@(ENPs e ~nps) :! ~t)
+            | m < e     = ENPs m (slSingleton np) :! enpss
+            | m == e    = ENPs m (slInsertBy kgsSepCmp np nps) :! t
+            | otherwise = enps :! ins t
     in  Seq.adjust' ins v kgs
 
 gkgsInsert          :: forall c. EPolyHDeg c -> Op1 (GapsKerGens c)
 gkgsInsert (EPolyHDeg p hDeg)     = go    -- p /= 0, nVars > 0
   where
     gap                     = hDeg - totDeg (ssDegNZ p)
-    go (SL.Cons h@(G1KGs gap0 kgs0) t)  = assert (gap >= gap0) $
-        if gap == gap0 then SL.Cons (G1KGs gap (kgsInsert p kgs0)) t
+    go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
+        if gap == gap0 then G1KGs gap (kgsInsert p kgs0) :! t
         else if maybe True ((gap <) . g1kgsGap) (slHeadMaybe t) then
-            SL.Cons h (SL.Cons (G1KGs gap (kgsInsert p (kgsNew (Seq.length kgs0)))) t)
-        else SL.Cons h (go t)
+            h :! G1KGs gap (kgsInsert p (kgsNew (Seq.length kgs0))) :! t
+        else h :! go t
     go SL.Nil                           = undefined
 
 kgsDelete           :: forall c. EPoly c -> Op1 (KerGens c)
@@ -309,10 +311,10 @@ kgsDelete p kgs     =       -- p in kgs (so p /= 0, nVars > 0), (ssDegNZ p) uniq
         np      = sizeEP p
         eq np1 np2      = kgsSepCmp np1 np2 == EQ
         del             :: Op1 (SL.List (ENPs c))
-        del (SL.Cons enps@(ENPs e ~nps) t)
-            | m > e     = SL.Cons enps (del t)
+        del (enps@(ENPs e ~nps) :! t)
+            | m > e     = enps :! del t
             | m == e    = assert (isJust (find (eq np) nps)) $
-                            SL.Cons (ENPs m (slDeleteBy eq np nps)) t
+                            ENPs m (slDeleteBy eq np nps) :! t
             | otherwise = undefined
         del SL.Nil      = undefined
     in  Seq.adjust' del v kgs
@@ -322,9 +324,9 @@ gkgsDelete (EPolyHDeg p hDeg)     = go      -- p in gkgs (so p /= 0, nVars > 0),
                                             -- (ssDegNZ p) unique in gkgs
   where
     gap                     = hDeg - totDeg (ssDegNZ p)
-    go (SL.Cons h@(G1KGs gap0 kgs0) t)  = assert (gap >= gap0) $
-        if gap == gap0 then SL.Cons (G1KGs gap (kgsDelete p kgs0)) t
-        else SL.Cons h (go t)
+    go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
+        if gap == gap0 then G1KGs gap (kgsDelete p kgs0) :! t
+        else h :! go t
     go SL.Nil               = undefined
 
 -- kgsReplace              :: EPoly c -> EPoly c -> Op1 (KerGens c)
@@ -341,11 +343,11 @@ kgsFindReducer p kgs    =
     let nVars   = Seq.length kgs
         pEv     = ssDegNZ p
         npsF bnp                   SL.Nil                               = bnp
-        npsF bnp@(SizedEPoly bn _) (SL.Cons ng@(SizedEPoly n ~g) ~t)
+        npsF bnp@(SizedEPoly bn _) (ng@(SizedEPoly n ~g) :! ~t)
             | bn <= n   = bnp
             | otherwise = npsF (if evDivides nVars (ssDegNZ g) pEv then ng else bnp) t
         esF bnp _  SL.Nil   = bnp
-        esF bnp pe (SL.Cons (ENPs e ~nps) ~t)
+        esF bnp pe ((ENPs e ~nps) :! ~t)
             | pe < e    = bnp
             | otherwise = esF (npsF bnp nps) pe t
         vF bnp (pe, enpss)      = esF bnp pe enpss
@@ -450,28 +452,31 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     cpuTime0        <- getCPUTime
     sysTime0        <- getSystemTime
     cpuTime1Ref     <- newIORef cpuTime0
+    mRTSStats0      <- getMaybeRTSStats
     gkgsRef         <- newIORef (gkgsNew nVars, 0)  -- (gkgs, # gens)
+    genHsRef        <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (EPolyHDeg c)))
     nRedStepsRef    <- newIORef 0           :: IO (IORef Int)
     nSPairsRedRef   <- newIORef 0           :: IO (IORef Int)
     let gbTQueues1  = gbTrace .&. gbTQueues /= 0 && nCores > 1
         topDiv2     = rBDiv2 epRing False
         topReduce   = gkgsTopReduce topDiv2 (readIORef gkgsRef) nRedStepsRef
+        endReduce_n :: Int -> EPolyHDeg c -> IO (EPolyHDeg c, Int)
         reduce2 SSZero          = pure SSZero
-        reduce2 (SSNZ c d t)    = do
-            (SL.Cons (G1KGs 0 kgs) _, _)    <- readIORef gkgsRef
+        reduce2 (SSNZ c d t)    = do        -- fully reduce by 0 sugar gap generators
+            ((G1KGs 0 kgs) :! _, _)     <- readIORef gkgsRef
             let (t', nSteps)        = kgsReduce topDiv2 kgs t
             -- @@@ inc nRedStepsRef nSteps
             pure (SSNZ c d t')
-        reduce_n gh = do
-            (EPolyHDeg g1 h1, n)    <- topReduce gh
-            g2                      <- reduce2 (ssForceTails g1)
-            pure (EPolyHDeg g2 h1, n)
-    genHsRef        <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (EPolyHDeg c)))
-    let gap0NZ (EPolyHDeg g h)  = if h /= totDeg (ssDegNZ g) then Nothing else Just g
-        endReduce_n kN gh       = do
+        reduce_n gh = do        -- top reduce by all gens, then fully reduce by 0 sugar gap gens
+            (EPolyHDeg g1 h1, kN)   <- topReduce gh
+            g2                      <- reduce2 g1
+            endReduce_n kN (EPolyHDeg g2 h1)
+        gap0NZ (EPolyHDeg g h)  = if h /= totDeg (ssDegNZ g) then Nothing else Just g
+        endReduce_n kN gh       = do    -- result is reduced like by reduce_n
             ghs         <- readIORef genHsRef
             let kN'     = Seq.length ghs
-            if kN == kN' || ssIsZero (phP gh) then pure (gh, kN')
+            if ssIsZero (phP gh) then pure (gh, kN')
+            else if kN >= kN' then pure (gh {- @@@ { phP = withRing cField ssMonicize (phP gh) } -}, kN)
             else if 3 * nVars * (kN' - kN) > kN' {- @@ tune -} then reduce_n gh
             else
                 let endGHs      = Seq.drop kN ghs
@@ -479,13 +484,13 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     endRed1 (ph, nSteps)    = do
                         -- @@@ inc nRedStepsRef nSteps
                         reduce_n ph
-                    endRed2 (EPolyHDeg (SSNZ c d t) h)  = do
+                    endRed2 (EPolyHDeg (cd :! t) h)  = do
                         let g0s                 = mapMaybe gap0NZ (toList endGHs)
                             (todo, t', nSteps)  = foldReduce nVars topDiv2 g0s t
                         -- @@@ inc nRedStepsRef nSteps
-                        p       <- (if todo then reduce2 else pure) (SSNZ c d t')
-                        pure (EPolyHDeg p h, kN')
-                    endRed2 (EPolyHDeg SSZero _)        = undefined
+                        p       <- (if todo then reduce2 else pure) (cd :! t')
+                        endReduce_n kN' (EPolyHDeg p h)
+                    endRed2 (EPolyHDeg SL.Nil _)        = undefined
                 in  maybe (endRed2 gh) endRed1 mghn
     -- rgs is a [(g, i)] of nonzero g with descending (ssDegNZ g)
     rNTraceRef      <- newIORef 0
@@ -526,7 +531,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 let g1      = traceEvent "  addGenHN start" $ withRing cField ssMonicize g0
                     gh1     = EPolyHDeg g1 h
                     f (gkgs, n)     = ((gkgsInsert gh1 gkgs, n + 1), n)
-                traceEvent ("  atomicModifyIORef' gkgsRef") $ pure ()
+                traceEvent "  atomicModifyIORef' gkgsRef" $ pure ()
                 n0          <- atomicModifyIORef' gkgsRef f
                 traceEvent "  atomicModifyIORef'_ genHsRef" $ pure ()
                 atomicModifyIORef'_ genHsRef (Seq.|> gh1)
@@ -540,7 +545,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         writeIORef gDShownRef d
                 traceEvent ("  addGenHN end " ++ show n0) $ pure ()
     gMGisRef        <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (Maybe GBGenInfo)))
-    ijcsRef         <- newIORef SL.Nil      :: IO (IORef SSPairs)   -- ascending by hEvCmp
+    ijcsRef         <- newIORef SL.Nil      :: IO (IORef SortedSPairs)   -- ascending by hEvCmp
     let newIJCs     = do
             ghs0        <- readIORef genHsRef
             ijcs0       <- readIORef ijcsRef
@@ -588,7 +593,6 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         when res $ do
                             rgs         <- readIORef rgsRef
                             let gh      = Seq.index ghs k
-                            -- @@@ pure (ssRTails (phP gh))    -- @@@ check ok (search for "rg"s)
                             rgs'        <- rgsInsert gh k rgs
                             atomicWriteIORef' rgsRef rgs'
                             atomicWriteIORef' rgsMNGensRef (Just (k + 1))
@@ -617,7 +621,6 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
         newNextGenHN ghn@(EPolyHDeg g _h, _kN) dn   =
             if ssIsZero g then incFGHNs dn False else do
                 traceEvent "  newNextGenHN" $ pure ()
-                -- let ghn     = (EPolyHDeg (ssForceTails g) h, kN)    -- @@@ don't force
                 ghns0       <- atomicModifyIORef' nextGenHNs (\ghns -> (ghns Seq.|> ghn, ghns))
                 incFGHNs (dn + 1) False  -- trying to limit/avoid atomicModifyIORef' calls
                 when (null ghns0) $ inc1TVar wakeMainThread
@@ -644,7 +647,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         pure False
         chooseGenHN     = do
             traceEvent "  chooseGenHN" $ pure ()
-            ghns    <- atomicModifyIORef' nextGenHNs (\ghns -> (Seq.empty, ghns))
+            ghns    <- atomicModifyIORef' nextGenHNs (Seq.empty, )
             when gbTQueues1 $ do
                 let n   = Seq.length ghns
                 when (n > nCores + 10) $ putStr $ 'c' : show n ++ " "   -- # "candidates"
@@ -698,7 +701,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
             cpuTime2        <- getCPUTime
             cpuTime1        <- readIORef cpuTime1Ref
             when (cpuTime2 - cpuTime1 > 1_000_000_000_000) $ do
-                s               <- cpuElapsedStr cpuTime0 sysTime0
+                s               <- cpuElapsedStr cpuTime0 sysTime0 mRTSStats0
                 putStrLn $ ' ' : s
                 writeIORef cpuTime1Ref cpuTime2
                 numSleeping <- readIORef numSleepingRef
@@ -737,7 +740,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     let ghsL    = toList ghs
     gMGisL      <- toList <$> readIORef gMGisRef
     when (gbTrace .&. gbTSummary /= 0) $ do
-        t           <- cpuElapsedStr cpuTime0 sysTime0
+        t           <- cpuElapsedStr cpuTime0 sysTime0 mRTSStats0
         putStrLn $ "Groebner Basis CPU/Elapsed Times: " ++ t
         nSPairsRed  <- readIORef nSPairsRedRef
         putStrLn $ "# SPairs reduced = " ++ show nSPairsRed

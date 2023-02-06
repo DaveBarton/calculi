@@ -22,9 +22,10 @@ tested-with:        ghc ==9.0.2 ghc ==9.2.4 ghc ==9.4.2
 
 common deps
     default-language:   Haskell2010
-    default-extensions: FlexibleContexts FlexibleInstances GeneralizedNewtypeDeriving
-                        LambdaCase MonoLocalBinds NamedFieldPuns NumericUnderscores
-                        ScopedTypeVariables TypeApplications
+    default-extensions: DisambiguateRecordFields FlexibleContexts FlexibleInstances
+                        GeneralizedNewtypeDeriving LambdaCase MonoLocalBinds NamedFieldPuns
+                        NumericUnderscores ScopedTypeVariables TupleSections TypeApplications
+                        -- when we require ghc >= 9.2.0: OverloadedRecordDot
     ghc-options:        -Wall -Wcompat -Wno-incomplete-uni-patterns -feager-blackholing
     build-depends:      base >= 4.9 && < 5
 
@@ -46,8 +47,8 @@ library
     -- Modules included in this library but not exported.
     -- other-modules:
 
-    other-extensions:   AllowAmbiguousTypes ConstraintKinds CPP PolyKinds RankNTypes Strict
-                        TupleSections UndecidableInstances
+    other-extensions:   AllowAmbiguousTypes ConstraintKinds CPP PatternSynonyms PolyKinds
+                        RankNTypes Strict UndecidableInstances
     
     build-depends:
         array == 0.5.*,

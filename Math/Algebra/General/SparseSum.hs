@@ -1,4 +1,4 @@
-{-# LANGUAGE Strict #-}
+{-# LANGUAGE NoFieldSelectors, PatternSynonyms, Strict #-}
 
 {- |  A 'SparseSum' is a linear combination where zero terms are omitted.
     
@@ -7,11 +7,11 @@
 -}
 
 module Math.Algebra.General.SparseSum (
-    SparseSum(..), SparseSumUniv,
-    ssIsZero, ssDegNZ, ssHeadCoef, ssTail, ssLeadTerm,
+    pattern (:!), slZipWithReversed,
+    SparseSum, pattern SSNZ, pattern SSZero, SparseSumUniv,
+    ssIsZero, ssDegNZ, ssHeadCoef, ssTail,
     ssLexCmp, ssDegCmp,
-    ssLead, ssMapC, ssMapNZFC, ssShift, ssShiftMapC, ssShiftMapNZFC, ssFoldr,
-    ssRTails, ssForceTails, ssNumTerms,
+    ssLead, ssMapC, ssMapNZFC, ssShift, ssShiftMapC, ssShiftMapNZFC, ssFoldr, ssNumTerms,
     ssAGUniv, ssDotWith,
     ssNZCTimes, ssCTimes, ssMonicize, ssTimesNZC, ssTimesC, ssTimesNZMonom, ssTimesMonom,
         ssTimes,
@@ -21,10 +21,38 @@ module Math.Algebra.General.SparseSum (
 import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
 
+import qualified StrictList as SL
 
-data SparseSum c d  = SSNZ c d {- @@@ ~ -} (SparseSum c d) | SSZero
+
+pattern (:!)        :: a -> SL.List a -> SL.List a
+infixr 5  :!
+pattern h :! t      = SL.Cons h t
+{- INLINE (:!) -}
+
+{-# COMPLETE (:!), SL.Nil #-}
+
+slZipWithReversed   :: (a -> b -> c) -> SL.List a -> SL.List b -> SL.List c
+slZipWithReversed f = go SL.Nil
+  where
+    go r (a :! as) (b :! bs)    = go (f a b :! r) as bs
+    go r _         _            = r
+
+
+data SSTerm c d     = SSTerm { c :: c, d :: d }
     deriving (Eq, Show)     -- e.g. for testing & debugging
+
+type SparseSum c d  = SL.List (SSTerm c d)
 -- ^ a sorted list of non-\"zero\" terms, with \"degrees\" decreasing according to a total order
+
+pattern SSNZ        :: c -> d -> SparseSum c d -> SparseSum c d
+pattern SSNZ c d t  = SSTerm c d :! t
+{- INLINE SSNZ -}
+
+pattern SSZero      :: SparseSum c d
+pattern SSZero      = SL.Nil
+{- INLINE SSZero -}
+
+{-# COMPLETE SSNZ, SSZero #-}
 
 type SparseSumUniv d c  = UnivL AbelianGroup (TgtArrsF (->) c d) (->) (SparseSum c d)
 {- ^ an @AbelianGroup (SparseSum c d)@, @dcToSS@ function, and a function for mapping to other
@@ -45,12 +73,8 @@ ssHeadCoef (SSNZ c _ _) = c
 ssHeadCoef SSZero       = undefined
 
 ssTail                  :: SparseSum c d -> SparseSum c d
-ssTail (SSNZ _ _ t)     = t
-ssTail SSZero           = undefined
-
-ssLeadTerm              :: Op1 (SparseSum c d)
-ssLeadTerm SSZero       = SSZero
-ssLeadTerm (SSNZ c d _) = SSNZ c d SSZero
+ssTail (_ :! t)         = t
+ssTail SL.Nil           = undefined
 
 ssLexCmp        :: Cmp d -> c -> Cmp c -> Cmp (SparseSum c d)
 -- ^ \"lexicographic\" comparison
@@ -77,56 +101,43 @@ ssDegCmp dCmp deep s t
 
 ssLead          :: Pred c -> c -> d -> SparseSum c d -> SparseSum c d
 -- ^ @ssLead cIs0 c d s@ assumes @d > degree(s)@
-ssLead cIs0 c d ~t      = if cIs0 c then t else SSNZ c d t
+ssLead cIs0 c d t   = if cIs0 c then t else SSNZ c d t
 
 ssMapC          :: Pred c' -> (c -> c') -> SparseSum c d -> SparseSum c' d
-ssMapC _   _ SSZero         = SSZero
-ssMapC is0 f (SSNZ c d ~t)  =
-    let c'      = f c
-        ~t'     = ssMapC is0 f t
-    in  if is0 c' then t' else SSNZ c' d t'
+ssMapC is0 f    = go SSZero
+  where
+    go r (SSNZ c ~d t)  =
+        let c'      = f c
+        in  go (if is0 c' then r else (SSTerm c' d) :! r) t
+    go r SSZero         = SL.reverse r
 
 ssMapNZFC       :: (c -> c') -> SparseSum c d -> SparseSum c' d
 -- ^ assumes the @(c -> c')@ takes nonzero values to nonzero values
-ssMapNZFC _ SSZero          = SSZero
-ssMapNZFC f (SSNZ c d ~t)   = SSNZ (f c) d (ssMapNZFC f t)
+ssMapNZFC f     = fmap (\cd@(SSTerm c _d) -> cd{ c = f c })
 
 ssShift         :: (d -> d') -> SparseSum c d -> SparseSum c d'
 -- ^ assumes the @(d -> d')@ is order-preserving
-ssShift _ SSZero        = SSZero
-ssShift f (SSNZ c d ~t) = SSNZ c (f d) (ssShift f t)
+ssShift f       = fmap (\cd@(SSTerm _c d) -> cd{ d = f d })
 
 ssShiftMapC     :: Pred c' -> (d -> d') -> (c -> c') -> SparseSum c d -> SparseSum c' d'
 -- ^ assumes the @(d -> d')@ is order-preserving
-ssShiftMapC is0 df cf     = go
+ssShiftMapC is0 df cf   = go SSZero
   where
-    go SSZero           = SSZero
-    go (SSNZ c d ~t)    =
+    go r (SSNZ c ~d t)      =
         let c'  = cf c
-            ~t' = go t
-        in  if is0 c' then t' else SSNZ c' (df d) t'
+        in  go (if is0 c' then r else (SSTerm c' (df d)) :! r) t
+    go r SSZero             = SL.reverse r
 
 ssShiftMapNZFC  :: (d -> d') -> (c -> c') -> SparseSum c d -> SparseSum c' d'
 {- ^ assumes the @(d -> d')@ is order-preserving, and the @(c -> c')@ takes nonzero values to
     nonzero values -}
-ssShiftMapNZFC _  _  SSZero         = SSZero
-ssShiftMapNZFC df cf (SSNZ c d ~t)  = SSNZ (cf c) (df d) (ssShiftMapNZFC df cf t)
+ssShiftMapNZFC df cf    = fmap (\(SSTerm c d) -> SSTerm (cf c) (df d))
 
 ssFoldr         :: (c -> d -> t -> t) -> t -> SparseSum c d -> t
-ssFoldr f t     = go
-  where
-    go SSZero           = t
-    go (SSNZ c d ~r)    = f c d (go r)
-
-ssRTails                :: SparseSum c d -> ()  -- @@ change to rnf and instance NFData !?
-ssRTails SSZero         = ()
-ssRTails (SSNZ _c _d t) = ssRTails t `seq` ()   -- @@ rnf c and d also!?
-
-ssForceTails            :: Op1 (SparseSum c d)
-ssForceTails x          = ssRTails x `seq` x
+ssFoldr f       = foldr (\(SSTerm c d) -> f c d)
 
 ssNumTerms      :: SparseSum c d -> Int
-ssNumTerms      = ssFoldr (\ _ _ t -> t + 1) 0
+ssNumTerms      = length
 
 ssAGUniv        :: forall c d. IAbelianGroup c => Cmp d -> SparseSumUniv d c
 ssAGUniv dCmp   = UnivL ssAG (TgtArrsF dcToSS) univF
@@ -134,16 +145,14 @@ ssAGUniv dCmp   = UnivL ssAG (TgtArrsF dcToSS) univF
     ssLead'     = ssLead (isZero @c)
     -- {-# SCC ssPlus #-}
     ssPlus      :: Op2 (SparseSum c d)
-    ssPlus SSZero          t                    = t
-    ssPlus s               SSZero               = s
-    ssPlus s@(SSNZ c d ~r) t@(SSNZ c' d' ~r')   =   -- {-# SCC ssPlusNZ #-}
+    ssPlus s@(t@(SSTerm ~c d) :! ~r) s'@(t'@(SSTerm ~c' d') :! ~r') =   -- {-# SCC ssPlusNZ #-}
         case d `dCmp` d' of
-            GT -> SSNZ c  d  (r `ssPlus` t)
-            LT -> SSNZ c' d' (s `ssPlus` r')
-            EQ -> ssLead' (c +. c') d (r `ssPlus` r')
-    ssNeg       :: Op1 (SparseSum c d)
-    ssNeg SSZero        = SSZero
-    ssNeg (SSNZ c d ~t) = SSNZ (neg c) d (ssNeg t)
+            GT  -> t  :! (r `ssPlus` s')
+            LT  -> t' :! (s `ssPlus` r')
+            EQ  -> ssLead' (c +. c') d (r `ssPlus` r')
+    ssPlus s                         SL.Nil                         = s
+    ssPlus SL.Nil                    t                              = t
+    ssNeg       = ssMapNZFC (neg @c)
     ssEq        :: EqRel (SparseSum c d)
     ssEq SSZero SSZero  = True
     ssEq SSZero _       = False
@@ -159,13 +168,13 @@ ssAGUniv dCmp   = UnivL ssAG (TgtArrsF dcToSS) univF
 ssDotWith       :: IAbelianGroup c2 => Cmp d -> (c -> c1 -> c2) ->
                         SparseSum c d -> SparseSum c1 d -> c2
 ssDotWith dCmp f    = dot where
-    dot s t     = if ssIsZero s || ssIsZero t then zero else
+    dot s s'     = if ssIsZero s || ssIsZero s' then zero else
         let d = ssDegNZ s
-            e = ssDegNZ t
+            e = ssDegNZ s'
         in case d `dCmp` e of
-            GT -> dot (ssTail s) t
-            LT -> dot s (ssTail t)
-            EQ -> (+.) !$ (f !$ ssHeadCoef s !$ ssHeadCoef t) !$ dot (ssTail s) (ssTail t)
+            GT -> dot (ssTail s) s'
+            LT -> dot s (ssTail s')
+            EQ -> (+.) !$ (f !$ ssHeadCoef s !$ ssHeadCoef s') !$ dot (ssTail s) (ssTail s')
 
 ssNZCTimes      :: forall c d. IRing c => c -> Op1 (SparseSum c d)
 -- ^ the @c@ is nonzero

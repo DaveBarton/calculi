@@ -20,7 +20,7 @@ import System.Info (compilerVersion)
 #endif
 
 import Control.Exception (SomeException, try)
-import Control.Monad (void)
+import Control.Monad (void, when)
 import System.IO (hFlush, stderr, stdout)
 import System.Process (callCommand)
 
@@ -33,7 +33,7 @@ main    = do
     let tryCommand s    = void $ try @SomeException $ callCommand s
     tryCommand "uptime"
     if isLinux then
-        tryCommand "lscpu; echo; numactl --hardware; echo; numactl --show"
+        tryCommand "echo; lscpu; echo; numactl --hardware; echo; numactl --show"
     else
         tryCommand "sysctl hw.physicalcpu"
     
@@ -62,4 +62,4 @@ main    = do
         putMVar doneMVar ()
     takeMVar doneMVar
     
-    -- when isLinux $ tryCommand "echo; numastat $PPID"
+    when isLinux $ tryCommand "echo; numastat $PPID"
