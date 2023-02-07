@@ -21,6 +21,7 @@ module Math.Algebra.General.SparseSum (
 import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
 
+import StrictList (List(Nil))    -- for COMPLETE below in GHC < 9.4
 import qualified StrictList as SL
 
 
@@ -29,7 +30,7 @@ infixr 5  :!
 pattern h :! t      = SL.Cons h t
 {- INLINE (:!) -}
 
-{-# COMPLETE (:!), SL.Nil #-}
+{-# COMPLETE (:!), Nil #-}
 
 slZipWithReversed   :: (a -> b -> c) -> SL.List a -> SL.List b -> SL.List c
 slZipWithReversed f = go SL.Nil
