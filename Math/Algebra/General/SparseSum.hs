@@ -188,7 +188,9 @@ ssCTimes c s    = if isZero c then SSZero else ssNZCTimes c s
 
 ssMonicize      :: IRing c => Op1 (SparseSum c d)
 -- ^ @(ssMonicize s)@ requires that @s@ is nonzero, and its leading coefficient is a unit
-ssMonicize s    = ssMapNZFC (rInv (ssHeadCoef s) *.) s
+ssMonicize s    =
+    let c           = ssHeadCoef s  -- check for c = 1 for speed
+    in  if rIsOne iRing c then s else ssMapNZFC (rInv c *.) s
 
 ssTimesNZC      :: forall c d. IRing c => c -> Op1 (SparseSum c d)
 -- ^ the @c@ is nonzero
