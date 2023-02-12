@@ -18,7 +18,7 @@ cores.
 You can see some timings at [timings/timings.txt](timings/timings.txt). If you want to compile
 and run these calculations on your machine, the quickest way is probably:
 
-1. Download and install ghcup, ghc 9.0 or later, and cabal from
+1. Download and install ghcup, ghc 9.2.1 or later, and cabal from
 [GHCup](https://www.haskell.org/ghcup/) or
 [Getting started - GHCup](https://www.haskell.org/ghcup/install/), if you haven't already.
 

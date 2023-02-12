@@ -1,5 +1,3 @@
-{-# LANGUAGE RankNTypes #-}
-
 module Math.Prob.Random {- @@() -} where
 
 import Data.List (unfoldr)

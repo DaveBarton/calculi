@@ -18,14 +18,11 @@ copyright:          Copyright (c) David R. Barton, 2022
 category:           Math
 extra-source-files: CHANGELOG.md Math/dirs.txt timings/timings.txt
 
-tested-with:        ghc ==9.0.2 ghc ==9.2.4 ghc ==9.4.2
+tested-with:        ghc ==9.2.4 ghc ==9.4.2
 
 common deps
-    default-language:   Haskell2010
-    default-extensions: DisambiguateRecordFields FlexibleContexts FlexibleInstances
-                        GeneralizedNewtypeDeriving LambdaCase MonoLocalBinds NamedFieldPuns
-                        NumericUnderscores ScopedTypeVariables TupleSections TypeApplications
-                        -- when we require ghc >= 9.2.0: OverloadedRecordDot
+    default-language:   GHC2021
+    default-extensions: DisambiguateRecordFields LambdaCase MonoLocalBinds OverloadedRecordDot
     ghc-options:        -Wall -Wcompat -Wno-incomplete-uni-patterns -feager-blackholing
     build-depends:      base >= 4.9 && < 5
 
@@ -47,8 +44,7 @@ library
     -- Modules included in this library but not exported.
     -- other-modules:
 
-    other-extensions:   AllowAmbiguousTypes ConstraintKinds CPP PatternSynonyms PolyKinds
-                        RankNTypes Strict UndecidableInstances
+    other-extensions:   AllowAmbiguousTypes CPP PatternSynonyms Strict UndecidableInstances
     
     build-depends:
         array == 0.5.*,
@@ -112,8 +108,6 @@ benchmark time-gb
     -- Modules included in this executable, other than Main.
     -- other-modules:
 
-    other-extensions:   CPP
-    
     build-depends:      calculi, process >= 1.2 && < 2, time >= 1.9.3 && < 2
 
     hs-source-dirs:     timings

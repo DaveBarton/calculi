@@ -1,4 +1,4 @@
-{-# LANGUAGE NoMonoLocalBinds, PolyKinds, RankNTypes, Strict #-}
+{-# LANGUAGE NoMonoLocalBinds, Strict #-}
 
 {- |  This module defines the most common types of categories, functors and universal
     properties.

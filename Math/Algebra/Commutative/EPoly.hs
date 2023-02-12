@@ -68,9 +68,9 @@ evMake es       =
 
 exponsL         :: Int -> ExponVec -> [Word]
 exponsL nVars (ExponVec td es)  = case es of
-    (Expons1 w)     -> bytesL nVars w []
-    (Expons2 w0 w1) -> bytesL (nVars - perW) w1 (bytesL perW w0 [])
-    (ExponsN a)     -> elems a
+    Expons1 w       -> bytesL nVars w []
+    Expons2 w0 w1   -> bytesL (nVars - perW) w1 (bytesL perW w0 [])
+    ExponsN a       -> elems a
   where
     perW        = perWord64 nVars td
     nBits       = if perW == 8 then 8 else 16

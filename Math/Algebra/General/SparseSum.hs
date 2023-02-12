@@ -28,7 +28,7 @@ import qualified StrictList as SL
 pattern (:!)        :: a -> SL.List a -> SL.List a
 infixr 5  :!
 pattern h :! t      = SL.Cons h t
-{- INLINE (:!) -}
+{-# INLINE (:!) #-}
 
 {-# COMPLETE (:!), Nil #-}
 
@@ -47,11 +47,11 @@ type SparseSum c d  = SL.List (SSTerm c d)
 
 pattern SSNZ        :: c -> d -> SparseSum c d -> SparseSum c d
 pattern SSNZ c d t  = SSTerm c d :! t
-{- INLINE SSNZ -}
+{-# INLINE SSNZ #-}
 
 pattern SSZero      :: SparseSum c d
 pattern SSZero      = SL.Nil
-{- INLINE SSZero -}
+{-# INLINE SSZero #-}
 
 {-# COMPLETE SSNZ, SSZero #-}
 
@@ -109,7 +109,7 @@ ssMapC is0 f    = go SSZero
   where
     go r (SSNZ c ~d t)  =
         let c'      = f c
-        in  go (if is0 c' then r else (SSTerm c' d) :! r) t
+        in  go (if is0 c' then r else SSTerm c' d :! r) t
     go r SSZero         = SL.reverse r
 
 ssMapNZFC       :: (c -> c') -> SparseSum c d -> SparseSum c' d
@@ -126,7 +126,7 @@ ssShiftMapC is0 df cf   = go SSZero
   where
     go r (SSNZ c ~d t)      =
         let c'  = cf c
-        in  go (if is0 c' then r else (SSTerm c' (df d)) :! r) t
+        in  go (if is0 c' then r else SSTerm c' (df d) :! r) t
     go r SSZero             = SL.reverse r
 
 ssShiftMapNZFC  :: (d -> d') -> (c -> c') -> SparseSum c d -> SparseSum c' d'

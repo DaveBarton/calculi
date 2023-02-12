@@ -24,7 +24,7 @@ import Data.List (elemIndex, findIndices, groupBy, sortBy)
 import Data.List.Extra (chunksOf)
 import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
 import qualified Data.Sequence as Seq
-import Data.Tuple.Extra (dupe, first, fst3, second)
+import Data.Tuple.Extra (dupe, fst3, second)
 import Numeric (showFFloat)
 import qualified StrictList as SL
 
@@ -37,7 +37,7 @@ import Data.IORef (IORef, atomicModifyIORef {- @@@ -}, atomicModifyIORef', newIO
 import Data.IORef.Extra (atomicModifyIORef'_, atomicWriteIORef')
 
 import Data.Time.Clock.System (SystemTime(..), getSystemTime)
--- @@@ import Debug.Trace
+import Debug.Trace
 import GHC.Stats (RTSStats, getRTSStats, getRTSStatsEnabled, mutator_cpu_ns, mutator_elapsed_ns)
 import System.CPUTime (getCPUTime)
 import System.IO (hPutStr, stderr)
@@ -45,8 +45,8 @@ import System.IO (hPutStr, stderr)
 -- import System.Process (callCommand)
 
 
-traceEvent          :: String -> a -> a -- @@@
-traceEvent _s x     = x
+-- @@@ traceEvent          :: String -> a -> a
+-- @@@ traceEvent _s x     = x
 
 
 slHeadMaybe         :: SL.List a -> Maybe a
@@ -267,6 +267,13 @@ sizeEP p            = SizedEPoly (ssNumTerms p) p
 data ENPs c         = ENPs { _enpsE :: Word, _enpsL :: SL.List (SizedEPoly c) }
 -- exponent and list of sized polys
 
+
+data WithNGens a    = WithNGens a Int
+
+wngFirst                    :: (a -> a') -> WithNGens a -> WithNGens a'
+wngFirst f (WithNGens a n)  = WithNGens (f a) n
+
+
 -- nVars > 0, each enpss has increasing es, all p /= 0, (ssDegNZ p) unique:
 type KerGens c      = Seq.Seq (SL.List (ENPs c))
 
@@ -380,18 +387,19 @@ sugarReduce div2 (EPolyHDeg p pHDeg) (EPolyHDeg g gHDeg)    = (EPolyHDeg r rHDeg
     rHDeg       = if ssIsZero q then pHDeg else max pHDeg (epHomogDeg0 q + gHDeg)
     nSteps      = ssNumTerms q
 
-gkgsTopReduce           :: (EPoly c -> EPoly c -> (EPoly c, EPoly c)) -> IO (GapsKerGens c, Int)
-                            -> IORef Int -> EPolyHDeg c -> IO (EPolyHDeg c, Int)
+gkgsTopReduce           :: (EPoly c -> EPoly c -> (EPoly c, EPoly c)) -> 
+                            IO (WithNGens (GapsKerGens c)) -> IORef Int -> EPolyHDeg c ->
+                            IO (WithNGens (EPolyHDeg c))
 -- top-reduce a (gh, kN)
 gkgsTopReduce div2 kerVar nRedStepsRef      = go
   where
-    go ph@(EPolyHDeg p _)    = do
-        (ker, nGens)    <- kerVar
+    go ph@(EPolyHDeg p _)   = do
+        WithNGens ker nGens     <- kerVar
         let go1 gh      = do
                 let (rh, nSteps)    = sugarReduce div2 ph gh
                 -- @@@ inc nRedStepsRef nSteps
                 go rh
-        maybe (pure (ph, nGens)) go1 (gkgsFindReducer p ker)
+        maybe (pure (WithNGens ph nGens)) go1 (gkgsFindReducer p ker)
 
 kgsReduce               :: (EPoly c -> EPoly c -> (EPoly c, EPoly c)) -> KerGens c -> EPoly c ->
                             (EPoly c, Int)
@@ -463,30 +471,31 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     sysTime0        <- getSystemTime
     cpuTime1Ref     <- newIORef cpuTime0
     mRTSStats0      <- getMaybeRTSStats
-    gkgsRef         <- newIORef (gkgsNew nVars, 0)  -- (gkgs, # gens)
+    gkgsRef         <- newTVarIO (WithNGens (gkgsNew nVars) 0)
     genHsRef        <- newIORef Seq.empty   :: IO (IORef (Seq.Seq (EPolyHDeg c)))
     nRedStepsRef    <- newIORef 0           :: IO (IORef Int)
     nSPairsRedRef   <- newIORef 0           :: IO (IORef Int)
     let _gbTQueues1 = gbTrace .&. gbTQueues /= 0 && nCores > 1
         topDiv2     = rBDiv2 epRing False
-        topReduce   = gkgsTopReduce topDiv2 (readIORef gkgsRef) nRedStepsRef
-        endReduce_n :: Int -> EPolyHDeg c -> IO (EPolyHDeg c, Int)
+        topReduce   = gkgsTopReduce topDiv2 (readTVarIO gkgsRef) nRedStepsRef
+        endReduce_n :: Int -> EPolyHDeg c -> IO (WithNGens (EPolyHDeg c))
         reduce2 SSZero          = pure SSZero
         reduce2 (SSNZ c d t)    = do        -- fully reduce by 0 sugar gap generators
-            ((G1KGs 0 kgs) :! _, _)     <- readIORef gkgsRef
+            WithNGens ((G1KGs 0 kgs) :! _) _    <- readTVarIO gkgsRef
             let (t', nSteps)        = kgsReduce topDiv2 kgs t
             -- @@@ inc nRedStepsRef nSteps
             pure (SSNZ c d t')
         reduce_n gh = do        -- top reduce by all gens, then fully reduce by 0 sugar gap gens
-            (EPolyHDeg g1 h1, kN)   <- topReduce gh
-            g2                      <- reduce2 g1
+            WithNGens (EPolyHDeg g1 h1) kN  <- topReduce gh
+            g2                              <- reduce2 g1
             endReduce_n kN (EPolyHDeg g2 h1)
         gap0NZ (EPolyHDeg g h)  = if h /= totDeg (ssDegNZ g) then Nothing else Just g
         endReduce_n kN gh       = do    -- result is reduced like by reduce_n
             ghs         <- readIORef genHsRef
             let kN'     = Seq.length ghs
-            if ssIsZero (phP gh) then pure (gh, kN')
-            else if kN >= kN' then pure (gh { phP = withRing cField ssMonicize (phP gh) }, kN)
+            if ssIsZero (phP gh) then pure (WithNGens gh kN')
+            else if kN >= kN' then
+                pure (WithNGens (gh { phP = withRing cField ssMonicize (phP gh) }) kN)
             else if 3 * nVars * (kN' - kN) > kN' {- @@ tune -} then reduce_n gh
             else
                 let endGHs      = Seq.drop kN ghs
@@ -502,6 +511,17 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         endReduce_n kN' (EPolyHDeg p h)
                     endRed2 (EPolyHDeg SL.Nil _)        = undefined
                 in  maybe (endRed2 gh) endRed1 mghn
+        checkGkgs   = do
+            ghs         <- readIORef genHsRef
+            let n       = Seq.length ghs
+            WithNGens _gkgs k   <- readTVarIO gkgsRef
+            when (k < n) $ do       -- partly for speed, to limit atomic modifications
+                traceEvent "  checkGkgs: atomic modify gkgsRef" $ pure ()
+                let f arg@(WithNGens gkgs k1)   =
+                        if k1 < n then WithNGens (gkgsInsert (Seq.index ghs k1) gkgs) (k1 + 1)
+                        else arg
+                atomically $ modifyTVar' gkgsRef f
+                checkGkgs
     -- rgs is a [(g, i)] of nonzero g with descending (ssDegNZ g)
     rNTraceRef      <- newIORef 0
     let rgsInsert   :: EPolyHDeg c -> Int -> [(EPoly c, Int)] -> IO [(EPoly c, Int)]
@@ -514,7 +534,8 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         ++ " (" ++ _showEV g ++ ")"
                 ghs     <- readIORef genHsRef
                 let hh  = Seq.index ghs j
-                atomicModifyIORef'_ gkgsRef (first (gkgsDelete hh))
+                checkGkgs
+                atomically $ modifyTVar' gkgsRef (wngFirst (gkgsDelete hh))
                 rgsInsert gh i t
             | otherwise                                 = do
                 t'          <- rgsInsert gh i t
@@ -528,26 +549,29 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         ghs0        <- readIORef genHsRef
                         let hh      = Seq.index ghs0 j
                             rh'     = EPolyHDeg r' (phH hh)
-                        atomicModifyIORef'_ gkgsRef (first (gkgsReplace hh rh'))
+                        checkGkgs
+                        atomically $ modifyTVar' gkgsRef (wngFirst (gkgsReplace hh rh'))
                         atomicModifyIORef'_ genHsRef (Seq.update j rh')
                         assert (not (ssIsZero r')) (pure ((r', j) : t'))
     wakeAllThreads  <- newTVarIO 0          :: IO (TVar Int)
     wakeMainThread  <- newTVarIO 0          :: IO (TVar Int)
     gDShownRef      <- newIORef 0           :: IO (IORef Integer)
     let putS        = if gbTrace .&. gbTProgressChars /= 0 then hPutStr stderr else putStr
-    let addGenHN (gh, kN)   = {-# SCC addGenHN #-}
+    let addGenHN (WithNGens gh kN)  = {-# SCC addGenHN #-}
             unless (ssIsZero (phP gh)) $ do
                 traceEvent "  addGenHN start" $ pure ()
                 -- @@@ change f1/f2 to use STM?:
                 let f1 ghs              =
                         if Seq.length ghs == kN then (ghs Seq.|> gh, False) else (ghs, True)
-                    f2 arg@(gkgs, n)    =
-                        if n == kN then ((gkgsInsert gh gkgs, n + 1), False) else (arg, True)
-                traceEvent "  atomicModifyIORef' genHsRef" $ pure ()
+                    f2 arg@(WithNGens gkgs n)   =
+                        if n == kN then WithNGens (gkgsInsert gh gkgs) (n + 1) else arg
                 ifM (atomicModifyIORef' genHsRef f1) (addGenHN =<< endReduce_n kN gh) $ do
                     inc1TVar wakeAllThreads
-                    traceEvent "  atomicModifyIORef' gkgsRef" $ pure ()
-                    whileM $ atomicModifyIORef' gkgsRef f2
+                    WithNGens _gkgs kN1     <- readTVarIO gkgsRef
+                    when (kN1 == kN) $ do   -- for speed, to limit atomicModifyIORef'_ calls
+                        traceEvent "  atomic modify gkgsRef" $ pure ()
+                        atomically $ modifyTVar' gkgsRef f2
+                        checkGkgs
                     when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ do
                         putS "d"
                         let d       = headTotDeg (phP gh)
@@ -597,7 +621,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     let checkRgs1   = do    -- may add 1 gh to rgs
             mk          <- readIORef rgsMNGensRef   -- for speed, to avoid atomicModifyIORef'
             case mk of
-                (Just k)    -> do
+                Just k      -> do
                     ghs         <- readIORef genHsRef
                     if k < Seq.length ghs then do
                         let f mk1   = if mk1 == mk then (Nothing, True) else (mk1, False)
@@ -605,9 +629,6 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         when res $ do
                             rgs         <- readIORef rgsRef
                             let gh      = Seq.index ghs k
-                            whileM $ do
-                                (_gkgs, n)  <- readIORef gkgsRef
-                                pure (n <= k)
                             rgs'        <- rgsInsert gh k rgs
                             atomicWriteIORef' rgsRef rgs'
                             atomicWriteIORef' rgsMNGensRef (Just (k + 1))
@@ -633,7 +654,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         (EPolyHDeg (sPoly (phP (Seq.index ghs i)) (phP (Seq.index ghs j)) c) h)
             addGenHN ghn
             pure True
-        doSP        = maybe (pure False) newG =<< (slPop ijcsRef)
+        doSP        = maybe (pure False) newG =<< slPop ijcsRef
     numSleepingRef      <- newIORef 0       :: IO (IORef Int)   -- not counting main thread
     -- @@@ testRef             <- newCounter 0
     let checkQueues t   = do
@@ -671,12 +692,14 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 writeIORef cpuTime1Ref cpuTime2
                 numSleeping <- readIORef numSleepingRef
                 ghs         <- readIORef genHsRef
+                WithNGens _gkgs kN  <- readTVarIO gkgsRef
                 rgsMNGHs    <- readIORef rgsMNGensRef
                 rgs         <- readIORef rgsRef
                 gMGis       <- readIORef gMGisRef
                 ijcs        <- readIORef ijcsRef
                 putStr $
                     show (Seq.length ghs) ++ " gens, " ++
+                    show kN ++ " gkg'd, " ++
                     maybe "busy" show rgsMNGHs ++ " rg'd, " ++
                     show (length rgs) ++ " rgs, " ++    -- @@@ omit?
                     show (Seq.length gMGis) ++ " paired, " ++

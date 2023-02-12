@@ -1,5 +1,3 @@
-{-# LANGUAGE CPP #-}
-
 import Math.Algebra.Commutative.GBDemo
 
 import Data.List (isInfixOf)
@@ -13,11 +11,7 @@ import Data.Time.LocalTime (getCurrentTimeZone, localDay, utcToLocalTime)
 
 import Data.Version (showVersion)
 import System.Info (arch, compilerName, os)
-#if MIN_VERSION_base(4,15,0)
-import System.Info (fullCompilerVersion)    -- ghc >= 9.0.1
-#else
-import System.Info (compilerVersion)
-#endif
+import System.Info (fullCompilerVersion)
 
 import Control.Exception (SomeException, try)
 import Control.Monad (void, when)
@@ -44,12 +38,7 @@ main    = do
     let today       = localDay (utcToLocalTime tz now)
     maxNCores   <- getNumProcessors
     putStrLn $ "\n" ++ show today ++ ", " ++ arch ++ "-" ++ os ++ "/" ++ compilerName ++ "-"
-        ++ showVersion
-#if MIN_VERSION_base(4,15,0)
-            fullCompilerVersion
-#else
-            compilerVersion
-#endif
+        ++ showVersion fullCompilerVersion
         ++ ", using " ++ show nCores ++ " of " ++ show maxNCores ++ " cores\n"
     
     doneMVar    <- newEmptyMVar

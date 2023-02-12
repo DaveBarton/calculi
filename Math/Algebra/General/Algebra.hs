@@ -1,5 +1,4 @@
-{-# LANGUAGE AllowAmbiguousTypes, ConstraintKinds, CPP, RankNTypes, Strict,
-    UndecidableInstances #-}
+{-# LANGUAGE AllowAmbiguousTypes, CPP, Strict, UndecidableInstances #-}
 
 {- |  This module defines the most common types of algebras, and simple functions using them.
     

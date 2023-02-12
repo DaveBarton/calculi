@@ -72,7 +72,7 @@ upRingUniv      = UnivL cxRing (RingTgtX cToCx x) cxUnivF
     cxUnivF     :: Ring t -> RingTgtX c t -> UPoly c -> t
     cxUnivF tR (RingTgtX cToT xT) p     = case p of     -- uses Horner's rule
         SSZero          -> rZero tR
-        (SSNZ c' d' r') -> cxToT (cToT c') d' r'
+        SSNZ c' d' r'   -> cxToT (cToT c') d' r'
           where
             (*~)                    = rTimes tR
             cxToT t 0 SSZero        = t
