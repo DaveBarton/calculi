@@ -31,7 +31,7 @@ import qualified StrictList as SL
 import Control.Concurrent (ThreadId, forkOn, killThread, myThreadId, threadCapability)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO)
 import Control.Monad.STM (atomically, retry)
--- @@@ import Data.Atomics (atomicModifyIORefCAS, atomicModifyIORefCAS_)
+import Data.Atomics (atomicModifyIORefCAS, atomicModifyIORefCAS_)   -- @@@
 -- @@@ import Data.Atomics.Counter (incrCounter_, newCounter, readCounter)
 import Data.IORef (IORef, atomicModifyIORef {- @@@ -}, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.IORef.Extra (atomicModifyIORef'_, atomicWriteIORef')
@@ -176,8 +176,10 @@ cpuElapsedStr cpuTime0 sysTime0 mStats0     = do
     pure (showNs2 (quot (t - cpuTime0) 1000) t1 ++ mutS)
   where
     showSecs t          = showFFloat (Just 3) (t :: Double) "s"
-    showNs n            = showSecs (1e-9 * fromIntegral n)
-    showNs2 cpu elapsed = showNs cpu ++ "/" ++ showNs elapsed
+    fromNs n            = 1e-9 * fromIntegral n :: Double
+    showNs n            = showSecs (fromNs n)
+    showNs2 cpu elapsed = showNs cpu ++ "/" ++ showNs elapsed ++ "=" ++
+                            showFFloat (Just 1) (fromNs cpu / fromNs elapsed) ""
     getMutS stats0      = do
         stats       <- getRTSStats
         let cpu     = mutator_cpu_ns stats - mutator_cpu_ns stats0
@@ -551,7 +553,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                             rh'     = EPolyHDeg r' (phH hh)
                         checkGkgs
                         atomically $ modifyTVar' gkgsRef (wngFirst (gkgsReplace hh rh'))
-                        atomicModifyIORef'_ genHsRef (Seq.update j rh')
+                        atomicModifyIORefCAS_ genHsRef (Seq.update j rh')
                         assert (not (ssIsZero r')) (pure ((r', j) : t'))
     wakeAllThreads  <- newTVarIO 0          :: IO (TVar Int)
     wakeMainThread  <- newTVarIO 0          :: IO (TVar Int)
@@ -565,10 +567,10 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         if Seq.length ghs == kN then (ghs Seq.|> gh, False) else (ghs, True)
                     f2 arg@(WithNGens gkgs n)   =
                         if n == kN then WithNGens (gkgsInsert gh gkgs) (n + 1) else arg
-                ifM (atomicModifyIORef' genHsRef f1) (addGenHN =<< endReduce_n kN gh) $ do
+                ifM (atomicModifyIORefCAS genHsRef f1) (addGenHN =<< endReduce_n kN gh) $ do
                     inc1TVar wakeAllThreads
                     WithNGens _gkgs kN1     <- readTVarIO gkgsRef
-                    when (kN1 == kN) $ do   -- for speed, to limit atomicModifyIORef'_ calls
+                    when (kN1 == kN) $ do   -- for speed, to limit atomic modify calls
                         traceEvent "  atomic modify gkgsRef" $ pure ()
                         atomically $ modifyTVar' gkgsRef f2
                         checkGkgs
@@ -619,7 +621,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
     rgsRef          <- newIORef []          :: IO (IORef [(EPoly c, Int)])
     rgsMNGensRef    <- newIORef (Just 0)    :: IO (IORef (Maybe Int))   -- Nothing if locked
     let checkRgs1   = do    -- may add 1 gh to rgs
-            mk          <- readIORef rgsMNGensRef   -- for speed, to avoid atomicModifyIORef'
+            mk          <- readIORef rgsMNGensRef   -- for speed, to avoid atomic modify
             case mk of
                 Just k      -> do
                     ghs         <- readIORef genHsRef

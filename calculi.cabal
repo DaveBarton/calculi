@@ -48,7 +48,8 @@ library
     
     build-depends:
         array == 0.5.*,
-        -- @@@ atomic-primops,
+        -- @@@ atomic-primops:
+        atomic-primops,
         -- constraints >= 0.11 && < 0.14,
             -- note 'implied' added in 0.13
         containers == 0.6.*,
