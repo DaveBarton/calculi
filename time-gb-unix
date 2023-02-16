@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# cd into the calculi dir, and run this on unix. Arguments can specify GHC RTS options.
+
+uptime
+sysctl hw.physicalcpu
+
+cabal build time-gb
+/usr/bin/time -l $(cabal list-bin time-gb) +RTS "$@"

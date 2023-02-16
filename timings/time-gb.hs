@@ -1,6 +1,6 @@
 import Math.Algebra.Commutative.GBDemo
 
-import Data.List (isInfixOf)
+-- import Data.List (isInfixOf)
 
 import Control.Concurrent (forkOn, getNumCapabilities)
 import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
@@ -13,24 +13,17 @@ import Data.Version (showVersion)
 import System.Info (arch, compilerName, os)
 import System.Info (fullCompilerVersion)
 
-import Control.Exception (SomeException, try)
-import Control.Monad (void, when)
+-- import Control.Exception (SomeException, try)
+-- import Control.Monad (void, when)
 import System.IO (hFlush, stderr, stdout)
-import System.Process (callCommand)
+-- import System.Process (callCommand)
 
 
-isLinux         :: Bool
-isLinux         = "linux" `isInfixOf` os
+-- isLinux         :: Bool
+-- isLinux         = "linux" `isInfixOf` os
 
 main    :: IO ()
 main    = do
-    let tryCommand s    = void $ try @SomeException $ callCommand s
-    tryCommand "uptime"
-    if isLinux then
-        tryCommand "echo; lscpu; echo; numactl --hardware; echo; numactl --show"
-    else
-        tryCommand "sysctl hw.physicalcpu"
-    
     nCores      <- getNumCapabilities
     
     now         <- getCurrentTime
@@ -51,4 +44,5 @@ main    = do
         putMVar doneMVar ()
     takeMVar doneMVar
     
-    when isLinux $ tryCommand "echo; numastat $PPID"
+    -- let tryCommand s    = void $ try @SomeException $ callCommand s
+    -- when isLinux $ tryCommand "numastat $PPID; echo"
