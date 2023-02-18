@@ -683,7 +683,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
             cpuTime1        <- readIORef cpuTime1Ref
             when (cpuTime2 - cpuTime1 > 1_000_000_000_000) $ do
                 s               <- cpuElapsedStr cpuTime0 sysTime0 mRTSStats0
-                putStrLn $ ' ' : s
+                putStr $ ' ' : s ++ ": "
                 writeIORef cpuTime1Ref cpuTime2
                 numSleeping <- readIORef numSleepingRef
                 ghs         <- readTVarIO genHsRef
@@ -692,14 +692,14 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 rgs         <- readIORef rgsRef
                 gMGis       <- readTVarIO gMGisRef
                 ijcs        <- readTVarIO ijcsRef
-                putStr $
+                putStrLn $
                     show (Seq.length ghs) ++ " gens, " ++
                     show kN ++ " gkg'd, " ++
                     maybe "busy" show rgsMNGHs ++ " rg'd, " ++
                     show (length rgs) ++ " rgs, " ++    -- omit?
                     show (Seq.length gMGis) ++ " paired, " ++
-                    show (length ijcs) ++ " pairs, " ++
-                    if numSleeping > 0 then show numSleeping ++ " sleeping, " else ""
+                    show (length ijcs) ++ " pairs" ++
+                    if numSleeping > 0 then ", " ++ show numSleeping ++ " sleeping" else ""
     whileM $ do
         when (gbTrace /= 0) traceTime
         wakes0      <- mapM readTVarIO [wakeAllThreads, wakeMainThread]
@@ -715,7 +715,8 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         when (wakes2 == wakes0) retry
                 pure res
         orM [newIJCs, checkRgs1, doSP, doSleep]
-    when (gbTrace .&. gbTSummary /= 0) $ printThreadCapabilities "\n" auxThreadIds
+    when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ putS "\n"
+    when (gbTrace .&. gbTSummary /= 0) $ printThreadCapabilities " " auxThreadIds
     mapM_ killThread auxThreadIds
     when (gbTrace .&. gbTSummary /= 0) $ do
         t           <- cpuElapsedStr cpuTime0 sysTime0 mRTSStats0

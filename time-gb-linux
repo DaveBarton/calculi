@@ -5,5 +5,5 @@ uptime
 
 echo; lscpu; echo; numactl --hardware; echo; numactl --show
 
-cabal build time-gb
+echo; cabal build time-gb
 perf stat -d $(cabal list-bin time-gb) +RTS "$@"
