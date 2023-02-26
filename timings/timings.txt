@@ -304,3 +304,35 @@ jason210
 Groebner Basis CPU/Elapsed Times: 12.970513s/1.616204s 
 # reduction steps = 2479098
 
+
+====
+
+
+Model name:          AMD EPYC 7763 64-Core Processor
+CPU MHz:             3093.343
+Core(s) per socket:  64
+L1d cache:           32K
+L1i cache:           32K
+L2 cache:            512K
+L3 cache:            32768K
+Memory per socket:   1019310 MB
+
+2023-02-18, x86_64-linux/ghc-9.4.1, using 60 of 60 cores in 1 NUMA socket, -A128m
+
+katsura8
+Groebner Basis CPU/Elapsed Times: 20.678s/0.527s=39.3, MUT 17.580s/0.401s=43.9
+generated (redundant) basis has 145 elements with 26535 monomials
+143 generators
+
+cyclic7
+Groebner Basis CPU/Elapsed Times: 15.746s/0.302s=52.1, MUT 15.122s/0.277s=54.6
+generated (redundant) basis has 520 elements with 109225 monomials
+209 generators
+
+jason210
+Groebner Basis CPU/Elapsed Times: 25.672s/0.600s=42.8, MUT 21.924s/0.441s=49.7
+generated (redundant) basis has 904 elements with 291508 monomials
+900 generators
+
+  MUT     time   54.656s  (  1.150s elapsed)
+  GC      time    7.477s  (  0.317s elapsed)

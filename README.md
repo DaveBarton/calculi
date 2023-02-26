@@ -13,7 +13,9 @@ easy to parallelize efficiently in [Haskell](https://www.haskell.org/). Calculat
 [Gröbner Bases](https://en.wikipedia.org/wiki/Gr%C3%B6bner_basis) is a good first example. So
 far, we have implemented the improved Buchberger algorithm for the case of polynomials over
 `ℤ/pℤ` using the `gRevLex` monomial order, achieving near-linear speedups for up to at least 6
-cores.
+cores, and currently about 25x speedups counting garbage collection, or 32x not counting gc, for
+60 cores. The Buchberger algorithm is not obviously or "embarrassingly" parallel, and we believe
+this is the first successful attempt to parallelize it.
 
 You can see some timings at [timings/timings.txt](timings/timings.txt). If you want to compile
 and run these calculations on your machine, the quickest way is probably:
