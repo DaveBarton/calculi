@@ -41,8 +41,8 @@ library
         Math.Algebra.Commutative.GBDemo
         Math.Prob.Random
 
-    -- Modules included in this library but not exported.
-    -- other-modules:
+    other-modules:
+        StrictList2
 
     other-extensions:   AllowAmbiguousTypes CPP PatternSynonyms Strict UndecidableInstances
     

@@ -7,7 +7,6 @@
 -}
 
 module Math.Algebra.General.SparseSum (
-    pattern (:!), slZipWithReversed,
     SparseSum, pattern SSNZ, pattern SSZero, SparseSumUniv,
     ssIsZero, ssDegNZ, ssHeadCoef, ssTail,
     ssLexCmp, ssDegCmp,
@@ -21,22 +20,8 @@ module Math.Algebra.General.SparseSum (
 import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
 
-import StrictList (List(Nil))    -- for COMPLETE below in GHC < 9.4
-import qualified StrictList as SL
-
-
-pattern (:!)        :: a -> SL.List a -> SL.List a
-infixr 5  :!
-pattern h :! t      = SL.Cons h t
-{-# INLINE (:!) #-}
-
-{-# COMPLETE (:!), Nil #-}
-
-slZipWithReversed   :: (a -> b -> c) -> SL.List a -> SL.List b -> SL.List c
-slZipWithReversed f = go SL.Nil
-  where
-    go r (a :! as) (b :! bs)    = go (f a b :! r) as bs
-    go r _         _            = r
+import StrictList2 (pattern (:!))
+import qualified StrictList2 as SL
 
 
 data SSTerm c d     = SSTerm { c :: c, d :: d }

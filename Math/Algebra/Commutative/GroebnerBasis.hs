@@ -1,4 +1,4 @@
-{-# LANGUAGE Strict #-}
+{-# LANGUAGE PatternSynonyms, Strict #-}
 
 {- |  This module defines functions for computing and using a Groebner Basis.
     
@@ -26,7 +26,8 @@ import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
 import qualified Data.Sequence as Seq
 import Data.Tuple.Extra (dupe, fst3)
 import Numeric (showFFloat)
-import qualified StrictList as SL
+import StrictList2 (pattern (:!))
+import qualified StrictList2 as SL
 
 import Control.Concurrent (ThreadId, forkOn, killThread, myThreadId, threadCapability)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO,
@@ -47,52 +48,6 @@ import System.IO (hPutStr, stderr)
 -- @@@ traceEvent          :: String -> a -> a
 -- @@@ traceEvent _s x     = x
 
-
-slHeadMaybe         :: SL.List a -> Maybe a
-slHeadMaybe         = SL.head
-
-slSingleton         :: a -> SL.List a
-slSingleton e       = e :! SL.Nil
-
-slFromList          :: [a] -> SL.List a
-slFromList          = SL.reverse . SL.fromListReversed
-
-slMergeBy           :: Cmp a -> Op2 (SL.List a)
--- like 'mergeBy' in Data.List.Extra
-slMergeBy cmp       = go SL.Nil
-  where
-    go r xs@(x :! ~t) ys@(y :! ~u)  =
-        if cmp x y /= GT
-        then go (x :! r) t  ys
-        else go (y :! r) xs u
-    go r xs           SL.Nil        = SL.prependReversed r xs
-    go r SL.Nil       ys            = SL.prependReversed r ys
-
-slMinusSorted       :: Cmp a -> Op2 (SL.List a)
--- difference of two sorted lists, like 'minusBy' from data-ordlist
-slMinusSorted cmp   = go SL.Nil
-  where
-    go r xs@(x :! ~t) ys@(y :! ~u)    =
-        case cmp x y of
-           LT   -> go (x :! r) t  ys
-           EQ   -> go r        t  u
-           GT   -> go r        xs u
-    go r xs           SL.Nil          = SL.prependReversed r xs
-    go r SL.Nil       _ys             = SL.reverse r
-
-slInsertBy          :: Cmp a -> a -> Op1 (SL.List a)
-slInsertBy cmp x    = go SL.Nil
-  where
-    go r ys@(h :! ~t)   = case cmp x h of
-        GT  -> go (h :! r) t
-        _   -> SL.prependReversed r (x :! ys)
-    go r SL.Nil         = SL.prependReversed r (slSingleton x)
-
-slDeleteBy          :: EqRel a -> a -> Op1 (SL.List a)
-slDeleteBy eq x     = go SL.Nil
-  where
-    go r (h :! ~t)      = if x `eq` h then SL.prependReversed r t else go (h :! r) t
-    go r SL.Nil         = SL.reverse r
 
 evElts          :: [a] -> ()
 -- force all elements of a list
@@ -235,7 +190,7 @@ updatePairs nVars evCmp gMGis ijcs tGi      = (skipIs, skipIJCs, addITCs)
     ijcs1           = SL.filter (\(SPair i j _ c) -> evDivs tEv c && ne i c && ne j c) ijcs
       where             -- criterion B_ijk
         ne i c      = maybe False (\itc -> not (divEq itc c)) (itmcsA ! i)
-    skipIJCs        = slMergeBy hEvCmp ijcs0 ijcs1
+    skipIJCs        = SL.mergeBy hEvCmp ijcs0 ijcs1
     itcs            = catMaybes (zipWith (\i -> fmap (giToSp i t)) [0..] itMGis)    :: [SPair]
     -- "sloppy" sugar method:
     itcss           = groupBy (cmpEq lcmCmp) (sortBy lcmCmp itcs)
@@ -251,7 +206,7 @@ updatePairs nVars evCmp gMGis ijcs tGi      = (skipIs, skipIJCs, addITCs)
       where             -- criterion F_jk and Buchberger's 2nd criterion (gi and gt rel. prime)
         buch2 (SPair i j _ c)     = assert (j == t)
             (totDeg (fromJust (gMEvsA ! i)) + totDeg tEv == totDeg c)
-    addITCs         = slFromList (sortBy hEvCmp itcs')
+    addITCs         = SL.fromList (sortBy hEvCmp itcs')
 
 
 data SizedEPoly c   = SizedEPoly { sepN :: Int, sepP :: EPoly c }
@@ -280,7 +235,7 @@ kgsNew              :: Int -> KerGens c
 kgsNew nVars        = Seq.replicate nVars SL.Nil
 
 gkgsNew             :: Int -> GapsKerGens c
-gkgsNew nVars       = slSingleton (G1KGs 0 (kgsNew nVars))
+gkgsNew nVars       = SL.singleton (G1KGs 0 (kgsNew nVars))
 
 kgsSepCmp           :: Cmp (SizedEPoly c)
 kgsSepCmp (SizedEPoly n1 p1) (SizedEPoly n2 p2)   =
@@ -295,10 +250,10 @@ kgsInsert p kgs     =       -- p /= 0, nVars > 0
         v       = fromJust (elemIndex m es)
         np      = sizeEP p
         ins             :: Op1 (SL.List (ENPs c))
-        ins SL.Nil      = slSingleton (ENPs m (slSingleton np))
+        ins SL.Nil      = SL.singleton (ENPs m (SL.singleton np))
         ins enpss@(enps@(ENPs e ~nps) :! ~t)
-            | m < e     = ENPs m (slSingleton np) :! enpss
-            | m == e    = ENPs m (slInsertBy kgsSepCmp np nps) :! t
+            | m < e     = ENPs m (SL.singleton np) :! enpss
+            | m == e    = ENPs m (SL.insertBy kgsSepCmp np nps) :! t
             | otherwise = enps :! ins t
     in  Seq.adjust' ins v kgs
 
@@ -308,7 +263,7 @@ gkgsInsert (EPolyHDeg p hDeg)     = go    -- p /= 0, nVars > 0
     gap                     = hDeg - totDeg (ssDegNZ p)
     go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
         if gap == gap0 then G1KGs gap (kgsInsert p kgs0) :! t
-        else if maybe True ((gap <) . g1kgsGap) (slHeadMaybe t) then
+        else if maybe True ((gap <) . g1kgsGap) (SL.headMaybe t) then
             h :! G1KGs gap (kgsInsert p (kgsNew (Seq.length kgs0))) :! t
         else h :! go t
     go SL.Nil                           = undefined
@@ -326,7 +281,7 @@ kgsDelete p kgs     =       -- p in kgs (so p /= 0, nVars > 0), (ssDegNZ p) uniq
         del (enps@(ENPs e ~nps) :! t)
             | m > e     = enps :! del t
             | m == e    = assert (isJust (find (eq np) nps)) $
-                            ENPs m (slDeleteBy eq np nps) :! t
+                            ENPs m (SL.deleteBy eq np nps) :! t
             | otherwise = undefined
         del SL.Nil      = undefined
     in  Seq.adjust' del v kgs
@@ -598,11 +553,11 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                             atomically $ modifyTVar' gMGisRef (\ms -> foldl' skipIF ms skipIs)
                         ijcs        <- atomically $ do
                             ijcs        <- readTVar ijcsRef
-                            writeTVar ijcsRef $! slMinusSorted hEvCmp ijcs skipIJCs
+                            writeTVar ijcsRef $! SL.minusSorted hEvCmp ijcs skipIJCs
                             pure ijcs
                         ijcs'       <- atomically $ do
                             ijcs1       <- readTVar ijcsRef
-                            let ijcs'   = slMergeBy hEvCmp ijcs1 addITCs
+                            let ijcs'   = SL.mergeBy hEvCmp ijcs1 addITCs
                             writeTVar ijcsRef ijcs'
                             pure ijcs'
                         when (null ijcs && not (null ijcs')) $ inc1TVar wakeAllThreads
