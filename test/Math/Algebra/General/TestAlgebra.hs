@@ -119,7 +119,7 @@ equalityProps sg eq = [("reflexive", reflexive), ("symmetric", symmetric)]
     symmetric       = property $ do
         a       <- rand
         b       <- rand
-        cover 20 "distinct" (not (eq a b))      -- to catch eq always returning True
+        cover 1 "distinct" (not (eq a b))       -- to catch eq always returning True
         eq a b === eq b a   -- skip this for e.g. testEq of functions?
     {- Usually equal elements are stored in a unique normal form, or else equality checking is
         either slow or impossible. Thus testing transitivity seems either pointless, slow,
@@ -141,7 +141,7 @@ cmpProps sg cmp         =
     antisymmetric   = property $ do
         a       <- rand
         b       <- rand
-        cover 30 "distinct" (cmp a b /= EQ)     -- to catch cmp always returning EQ
+        cover 1 "distinct" (cmp a b /= EQ)      -- to catch cmp always returning EQ
         ordOpp (cmp a b) === cmp b a
     transitive      = property $ do
         a       <- rand

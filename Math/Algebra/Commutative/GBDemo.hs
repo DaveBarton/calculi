@@ -13,8 +13,8 @@ module Math.Algebra.Commutative.GBDemo (
 
 import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
-import Math.Algebra.Commutative.EPoly
 import Math.Algebra.Commutative.GroebnerBasis
+import Math.Algebra.Commutative.EPoly
 import Math.Algebra.Commutative.Field.ZModP32
 
 
@@ -27,14 +27,14 @@ gbDemo          :: String -> Integer -> [String] -> [String] -> Int -> Int -> IO
 gbDemo name p varSs genSs nCores gbTrace    = case someNatVal (fromInteger p) of
  SomeNat (Proxy :: Proxy p)     -> do
     putStr $ name ++ " "
-    _           <- groebnerBasis nVars gRevLex cField epRing gens nCores gbTrace epShow
+    _           <- groebnerBasis gbpA gens nCores gbTrace
     putChar '\n'
   where
     (cField, cBalRep)   = zzModPW @p
+    gbpA        = epGBPOps gRevLex True cField varSs (const (show . cBalRep))
     nVars       = length varSs
     epru        = withRing cField epRingUniv nVars gRevLex
     UnivL epRing (RingTgtXs _cToEp varEps) _epUnivF     = epru
-    epShow      = epShowPrec varSs (\_prec c -> show (cBalRep c)) 0
     gens        = map ((\ [(x,"")] -> x) . withRing epRing polynomReads (zip varSs varEps))
                     genSs
 

@@ -1,4 +1,4 @@
-{-# LANGUAGE NoFieldSelectors, PatternSynonyms, Strict #-}
+{-# LANGUAGE NoFieldSelectors, Strict #-}
 
 {- |  A 'SparseSum' is a linear combination where zero terms are omitted.
     
@@ -7,8 +7,8 @@
 -}
 
 module Math.Algebra.General.SparseSum (
-    SparseSum, pattern SSNZ, pattern SSZero, SparseSumUniv,
-    ssIsZero, ssDegNZ, ssHeadCoef, ssTail,
+    SSTerm, SparseSum, pattern SSNZ, pattern SSZero, SparseSumUniv,
+    ssIsZero, ssDegNZ, ssHeadCoef, ssTail, sparseSum, ssCons, ssUnconsNZ,
     ssLexCmp, ssDegCmp,
     ssLead, ssMapC, ssMapNZFC, ssShift, ssShiftMapC, ssShiftMapNZFC, ssFoldr, ssNumTerms,
     ssAGUniv, ssDotWith,
@@ -61,6 +61,18 @@ ssHeadCoef SSZero       = undefined
 ssTail                  :: SparseSum c d -> SparseSum c d
 ssTail (_ :! t)         = t
 ssTail SL.Nil           = undefined
+
+sparseSum                       :: b -> (c -> d -> SparseSum c d -> b) -> SparseSum c d -> b
+-- ^ like 'maybe' or 'either'
+sparseSum ~z ~_ SSZero          = z
+sparseSum ~_ ~f (SSNZ c d t)    = f c d t
+
+ssCons                  :: SSTerm c d -> SparseSum c d -> SparseSum c d
+ssCons                  = (:!)
+
+ssUnconsNZ              :: SparseSum c d -> (SSTerm c d, SparseSum c d)
+ssUnconsNZ (cd :! t)    = (cd, t)
+ssUnconsNZ SL.Nil       = undefined
 
 ssLexCmp        :: Cmp d -> c -> Cmp c -> Cmp (SparseSum c d)
 -- ^ \"lexicographic\" comparison

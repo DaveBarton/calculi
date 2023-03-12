@@ -1,7 +1,9 @@
-{-# LANGUAGE PatternSynonyms, Strict #-}
+{-# LANGUAGE Strict #-}
 
 {- This internal module "StrictList2" extends "StrictList". Ideally the two should be merged,
-    and possibly renamed to "Data.List.Strict". They are normally imported qualified.
+    and possibly renamed to "Data.List.Strict". They are normally imported qualified. Note that
+    to import only @pattern (:!)@ unqualified, the importing module apparently needs to enable
+    @PatternSynonyms@.
     
     Note that this module uses LANGUAGE Strict. Be mindful of this when changing or merging this
     module.
@@ -9,7 +11,7 @@
 
 module StrictList2 (
     module StrictList, pattern (:!), headMaybe, singleton, fromList, zipWithReversed,
-    mergeBy, minusSorted, insertBy, deleteBy
+    partitionReversed, eqBy, lexCmpBy, mergeBy, minusSorted, insertBy, deleteBy
 ) where
 
 import Prelude hiding (reverse, take, drop, filter, takeWhile, dropWhile, span, break)
@@ -42,6 +44,27 @@ zipWithReversed f   = go Nil
   where
     go r (a :! as) (b :! bs)    = go (f a b :! r) as bs
     go r _         _            = r
+
+partitionReversed   :: Pred a -> List a -> (List a, List a)
+partitionReversed p = go Nil Nil    -- would using foldl' be slower?
+  where
+    go rts rfs (x :! t)     = if p x then go (x :! rts) rfs t else go rts (x :! rfs) t
+    go rts rfs _            = (rts, rfs)
+
+eqBy                :: EqRel a -> EqRel (List a)
+eqBy aEq            = go
+  where
+    go (x :! ~t) (y :! ~u)  = aEq x y && go t u
+    go Nil       Nil        = True
+    go _         _          = False
+
+lexCmpBy            :: Cmp a -> Cmp (List a)
+lexCmpBy aCmp       = go
+  where
+    go (x :! ~t) (y :! ~u)  = aCmp x y <> go t u
+    go Nil       Nil        = EQ
+    go Nil       _          = LT
+    go _         Nil        = GT
 
 mergeBy             :: Cmp a -> Op2 (List a)
 -- like 'mergeBy' in Data.List.Extra

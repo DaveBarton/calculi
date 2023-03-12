@@ -1,26 +1,28 @@
-{-# LANGUAGE Strict #-}
+{-# LANGUAGE NoFieldSelectors, Strict #-}
 
-{- |  An 'EPoly' is an \"Expanded\" or \"Exponent Vector\" Polynomial.
+{- |  An 'EPoly' is an \"Expanded\" or \"Exponent Vector\" Polynomial. That is, each term
+    consists of a coefficient and an exponent vector ('ExponVec').
     
     This module uses LANGUAGE Strict. In particular, constructor fields are strict unless marked
     with a ~.
 -}
 
 module Math.Algebra.Commutative.EPoly (
-    ExponVec, totDeg, evMake, exponsL, evPlus, evMinusMay, evDivides, evLCM, gRevLex,
+    ExponVec, eVecTotDeg, evMake, exponsL, evPlus, evMinusMay, evDividesF, evLCMF, gRevLex,
     EPoly, RingTgtXs(..), EPolyUniv,
-    headTotDeg, epHomogDeg0, epTimesNZMonom, epTimesMonom, epRingUniv,
-    epShowPrec,
+    headTotDeg, epTimesNZMonom, epTimesMonom, epRingUniv, epGBPOps
 ) where
 
 import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
 import Math.Algebra.General.SparseSum
+import Math.Algebra.Commutative.GroebnerBasis (SPair(..), GBPolyOps(..))
 
 import Data.Array.Base (numElements, unsafeAt)
 import Data.Array.IArray (bounds, elems, listArray)
 import Data.Array.Unboxed (UArray)
 import Data.Bits (xor, unsafeShiftL, unsafeShiftR)
+import Data.Maybe (fromJust)
 import Data.Word (Word64)
 
 
@@ -33,6 +35,7 @@ data Expons     = Expons1 Word64
                 | Expons2 Word64 Word64
                 | ExponsN (UArray Int Word)
     deriving Eq     -- e.g. for testing
+-- In 'Expons1' and 'Expons2', the reversed exponents are stored in big-endian order.
 
 instance Show Expons where  -- for debugging
     show (Expons1 w)        = show0x w
@@ -45,6 +48,9 @@ data ExponVec   = ExponVec { totDeg :: Word, expons :: Expons }
 -- if totDeg < 2^8 then we use Expons1 for nVars <= 8 or Expons2 for nVars <= 16,
 -- else if totDeg < 2^16 then we use Expons1 for nVars <= 4 or Expons2 for nVars <= 8
 
+eVecTotDeg      :: ExponVec -> Word
+eVecTotDeg      = (.totDeg)
+
 perWord64       :: Int -> Word -> Int
 perWord64 nVars td
     | td < 256 && nVars > 4     = 8
@@ -52,6 +58,7 @@ perWord64 nVars td
     | otherwise                 = -1
 
 evMake          :: [Word] -> ExponVec
+-- ^ The exponents are listed in little-endian order.
 evMake es       =
     let td          = sum es
         nVars       = length es
@@ -67,6 +74,7 @@ evMake es       =
     in  ExponVec td exps
 
 exponsL         :: Int -> ExponVec -> [Word]
+-- ^ The exponents are listed in little-endian order.
 exponsL nVars (ExponVec td es)  = case es of
     Expons1 w       -> bytesL nVars w []
     Expons2 w0 w1   -> bytesL (nVars - perW) w1 (bytesL perW w0 [])
@@ -93,7 +101,7 @@ evPlus nVars ev@(ExponVec d es) ev'@(ExponVec d' es')   = go es es'
 
 evMinusMay      :: Int -> ExponVec -> ExponVec -> Maybe ExponVec
 evMinusMay nVars ev@(ExponVec d es) ev'@(ExponVec d' es')   =
-    if not (evDivides nVars ev' ev) then Nothing else Just (evMinus es es')
+    if not (evDividesF nVars ev' ev) then Nothing else Just (evMinus es es')
   where
     evMinus (Expons1 w)   (Expons1 w')                      =
         ExponVec (d - d') (Expons1 (w - w'))
@@ -105,9 +113,9 @@ evMinusMay nVars ev@(ExponVec d es) ev'@(ExponVec d' es')   =
     evMinus _             _                                 =
         evMake (zipWithExact (-) (exponsL nVars ev) (exponsL nVars ev'))
 
-evDivides       :: Int -> ExponVec -> ExponVec -> Bool
+evDividesF      :: Int -> ExponVec -> ExponVec -> Bool
 -- ^ note args reversed from evMinusMay; really vars^ev1 `divides` vars^ev2
-evDivides nVars ev@(ExponVec d es) ev'@(ExponVec d' es')    = d <= d' &&    -- for efficiency
+evDividesF nVars ev@(ExponVec d es) ev'@(ExponVec d' es')   = d <= d' &&    -- for efficiency
     expsDivs es es'
   where
     expsDivs (Expons1 w)   (Expons1 w')     = bytesDivs w w'
@@ -119,10 +127,11 @@ evDivides nVars ev@(ExponVec d es) ev'@(ExponVec d' es')    = d <= d' &&    -- f
         perW        = perWord64 nVars d
         mask        = if perW == 8 then 0x0101_0101_0101_0100 else 0x0001_0001_0001_0000
 
-evLCM           :: Int -> Op2 ExponVec  -- really Least Common Multiple of vars^ev1 and vars^ev2
-evLCM nVars ev ev'      = evMake (zipWithExact max (exponsL nVars ev) (exponsL nVars ev'))
+evLCMF          :: Int -> Op2 ExponVec  -- really Least Common Multiple of vars^ev1 and vars^ev2
+evLCMF nVars ev ev'     = evMake (zipWithExact max (exponsL nVars ev) (exponsL nVars ev'))
 
 gRevLex         :: Cmp ExponVec
+-- ^ The variables go from most main (variable 0) to least main, in little-endian order.
 gRevLex (ExponVec d es) (ExponVec d' es')       =
     case compare d d' of
         EQ      -> cmpExps es es'
@@ -154,10 +163,7 @@ type EPolyUniv c        = UnivL Ring (RingTgtXs c) (->) (EPoly c)
 
 
 headTotDeg      :: EPoly c -> Integer
-headTotDeg p    = if ssIsZero p then -1 else fromIntegral (totDeg (ssDegNZ p))
-
-epHomogDeg0     :: EPoly c -> Word      -- returns 0 for SSZero
-epHomogDeg0     = ssFoldr (\ _ ev n -> max (totDeg ev) n) 0
+headTotDeg p    = if ssIsZero p then -1 else fromIntegral (ssDegNZ p).totDeg
 
 epTimesNZMonom  :: IRing c => Int -> EPoly c -> ExponVec -> c -> EPoly c
 -- ^ the @c@ is nonzero
@@ -213,12 +219,38 @@ epRingUniv nVars evCmp  = UnivL epRing (RingTgtXs cToEp xs) epUnivF
             foldr1 (rTimes tR) (cToT c : zipWithExact (rExpt tR) xTs (exponsL nVars ev))
 
 
-epShowPrec          :: [String] -> ShowPrec c -> ShowPrec (EPoly c)
--- ^ varS prec > '^'
-epShowPrec varSs    = ssShowPrec dSP
+epGBPOps        :: forall c. Cmp ExponVec -> Bool -> Ring c -> [String] -> ShowPrec c ->
+                    GBPolyOps ExponVec (SSTerm c ExponVec) (EPoly c)
+{- ^ In @ep58GBPOps evCmp isGraded cR varSs@, @varSs@ lists more main variables first,
+    and each @varS@ has precedence > '^'. -}
+epGBPOps evCmp isGraded cR varSs cShowPrec  = GBPolyOps { numTerms = length, .. }
   where
-    dSP _prec ev    = concat (zipWithExact pow varSs (exponsL (length varSs) ev))
-    pow varS e      = case e of
-        0   -> ""
-        1   -> varS
-        _   -> varS ++ '^' : show e
+    nVars               = length varSs
+    evDivides           = evDividesF nVars
+    evLCM               = evLCMF nVars
+    evTotDeg            = (.totDeg)
+    nEvGroups           = nVars
+    evGroup             = exponsL nVars
+    isRev               = nVars > 0 && evCmp (evMake es) (evMake (reverse es)) == GT
+      where
+        ~es         = 1 : replicate (nVars - 1) 0
+    evShow ev           = concat (zipWith pow varSs es)
+      where
+        es          = (if isRev then id else reverse) (exponsL nVars ev)
+        pow varS e  = case e of
+            0   -> ""
+            1   -> varS
+            _   -> varS ++ '^' : show e
+    UnivL pR (RingTgtXs _cToP _xs) _pUnivF  = withRing cR epRingUniv nVars evCmp
+    leadEvNZ            = sparseSum undefined (\_ ev _ -> ev)
+    monicize            = withRing cR ssMonicize
+    extraSPairs         = \_ _ _ -> []
+    sPoly f g (SPair { m })     = withAG (rAG pR) (-.) (shift f) (shift g)
+      where
+        shift (SSNZ _ ev t) = ssShift (evPlus nVars (fromJust (evMinusMay nVars m ev))) t
+        shift _             = undefined
+    homogDeg0           = if isGraded then sparseSum 0 (\_ ev _ -> evTotDeg ev) else
+        ssFoldr (\ _ ev n -> max ev.totDeg n) 0
+    cons                = ssCons
+    unconsNZ            = ssUnconsNZ
+    pShow               = ssShowPrec (const evShow) cShowPrec 0

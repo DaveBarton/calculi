@@ -1,4 +1,4 @@
-{-# LANGUAGE PatternSynonyms, Strict #-}
+{-# LANGUAGE NoFieldSelectors, Strict #-}
 
 {- |  This module defines functions for computing and using a Groebner Basis.
     
@@ -7,13 +7,12 @@
 -}
 
 module Math.Algebra.Commutative.GroebnerBasis (
+    SPair(..), GBPolyOps(..),
     gbTSummary, gbTProgressChars, gbTProgressInfo, gbTResults, gbTQueues, gbTProgressDetails,
     groebnerBasis
 ) where
 
 import Math.Algebra.General.Algebra
-import Math.Algebra.General.SparseSum
-import Math.Algebra.Commutative.EPoly
 
 import Control.Monad (forM, unless, when)
 import Control.Monad.Extra (ifM, orM, whenM, whileM)
@@ -43,10 +42,6 @@ import System.CPUTime (getCPUTime)
 import System.IO (hPutStr, stderr)
 -- import System.IO (hFlush, stdout)
 -- import System.Process (callCommand)
-
-
--- @@@ traceEvent          :: String -> a -> a
--- @@@ traceEvent _s x     = x
 
 
 evElts          :: [a] -> ()
@@ -135,86 +130,111 @@ cpuElapsedStr cpuTime0 sysTime0 mStats0     = do
         pure $ ", MUT " ++ showNs2 cpu elapsed
 
 
+data SPair ev       = SPair { _i, _j :: Int, h :: Word, m :: ev }
+    -- i, j, "sugar" (homog) degree, LCM of head evs of gens i and j
+
+{- | 'GBPolyOps' are the operations on Exponent Vectors @ev@ and Polynomials @p@ that are needed
+    by our (Buchberger) Groebner Basis algorithm. An Exponent Vector is abstractly a vector of
+    small nonnegative integers, possibly together with its total degree or other weights. Also,
+    these polynomials may be reduced modulo some relations, and the exponents may thus have
+    bounded degrees. For example, see the "BinPoly" module. -}
+data GBPolyOps ev term p    = GBPolyOps {
+    evCmp       :: Cmp ev,          -- ^ the chosen monomial order (a total ordering)
+    evDivides   :: ev -> ev -> Bool,    -- ^ note args reversed from e.g. 'maybeQuo'
+    evLCM       :: Op2 ev,          -- ^ Least Common Multiple
+    evTotDeg    :: ev -> Word,
+    nEvGroups   :: Int,             -- ^ # of groups of exponents
+    evGroup     :: ev -> [Word],    -- ^ totDeg in each group
+    evShow      :: ev -> String,    -- ^ e.g. for debugging or logging
+    pR          :: Ring p,
+    leadEvNZ    :: p -> ev,         -- ^ the argument must be nonzero
+    monicize    :: Op1 p,           -- ^ the argument must be nonzero, with a unit leading coef
+    extraSPairs :: ev -> Int -> Word -> [SPair ev],     -- ^ @extraSPairs ev j h@
+    sPoly       :: p -> p -> SPair ev -> p, -- ^ @sPoly f g sp@ assumes @f@ and @g@ are monic
+    homogDeg0   :: p -> Word,       -- ^ max totDeg, or 0 for the 0 polynomial
+    numTerms    :: p -> Int,
+    cons        :: term -> p -> p,  -- ^ the first argument must be more main than the second
+    unconsNZ    :: p -> (term, p),  -- ^ the argument must be nonzero
+    pShow       :: p -> String      -- ^ e.g. for debugging or logging
+}
+
+
 {- See Gebauer & Moller, J. Symbolic Computation (1988) 6, 275-286;
     Giovini, Mora, Niesi, Robbiano, Traverso, "One sugar cube, please ...", 1991: -}
 
-data SPair          = SPair { _spI, _spJ :: Int, spH :: Word, spLcm :: ExponVec }
-    -- i, j, "sugar" (homog) degree, LCM of head evs of gens i and j
-
-spCmp               :: Cmp ExponVec -> Bool -> Cmp SPair
+spCmp               :: Cmp ev -> Bool -> Cmp (SPair ev)
                         -- stable sorts/merges (usually) means j then i breaks ties
 spCmp evCmp useSugar (SPair _ _ h1 ev1) (SPair _ _ h2 ev2)  =
     if useSugar then compare h1 h2 <> evCmp ev1 ev2 else evCmp ev1 ev2
 
-type SortedSPairs   = SL.List SPair     -- sorted using (spCmp evCmp True)
+type SortedSPairs ev    = SL.List (SPair ev)    -- sorted using (spCmp evCmp True)
 
-data EPolyHDeg c    = EPolyHDeg { phP :: EPoly c, phH :: Word } -- poly and "sugar" homog degree
+data EPolyHDeg p    = EPolyHDeg { p :: p, h :: Word }   -- poly and "sugar" homog degree
 
-data GBGenInfo      = GBGenInfo { giEv :: ExponVec, giDh :: Word }
+data GBGenInfo ev   = GBGenInfo { ev :: ev, dh :: Word }
 
-giNew               :: EPolyHDeg c -> GBGenInfo
-giNew (EPolyHDeg p h)   =   -- p /= 0, h is "sugar" (homog) degree
-    let ev      = ssDegNZ p
-    in  GBGenInfo ev (h - totDeg ev)
-
-giLcm               :: Int -> Op2 GBGenInfo
-giLcm nVars gi1 gi2 = GBGenInfo (evLCM nVars (giEv gi1) (giEv gi2)) (max (giDh gi1) (giDh gi2))
-
-giToSp              :: Int -> Int -> GBGenInfo -> SPair
-giToSp i j gi       =
-    let ev      = giEv gi
-    in  SPair i j (giDh gi + totDeg ev) ev
+giNew               :: GBPolyOps ev term p -> EPolyHDeg p -> GBGenInfo ev
+-- p /= 0, h is "sugar" (homog) degree
+giNew (GBPolyOps { leadEvNZ, evTotDeg }) (EPolyHDeg p h)    =
+    let ev      = leadEvNZ p
+    in  GBGenInfo ev (h - evTotDeg ev)
 
 {-# SCC updatePairs #-}
-updatePairs         :: Int -> Cmp ExponVec -> [Maybe GBGenInfo] -> SortedSPairs -> GBGenInfo ->
-                        ([Int], SortedSPairs, SortedSPairs)
-updatePairs nVars evCmp gMGis ijcs tGi      = (skipIs, skipIJCs, addITCs)
+updatePairs     :: forall ev term p. GBPolyOps ev term p -> [Maybe (GBGenInfo ev)] ->
+                    SortedSPairs ev -> GBGenInfo ev -> ([Int], SortedSPairs ev, SortedSPairs ev)
+updatePairs (GBPolyOps { evCmp, evDivides, evLCM, evTotDeg, extraSPairs }) gMGis ijcs tGi   =
+    (skipIs, skipIJCs, addITCs)
   where
-    evDivs          = evDivides nVars
-    hEvCmp          = spCmp evCmp True          :: Cmp SPair
-    lcmCmp          = spCmp evCmp False         :: Cmp SPair
-    hCmp            = compare `on` spH          :: Cmp SPair
+    hEvCmp          = spCmp evCmp True          :: Cmp (SPair ev)
+    lcmCmp          = spCmp evCmp False         :: Cmp (SPair ev)
+    hCmp            = compare `on` (.h)         :: Cmp (SPair ev)
+    giLcm gi1 gi2   = GBGenInfo (evLCM gi1.ev gi2.ev) (max gi1.dh gi2.dh)
+    giToSp i j gi   =
+        let ev          = gi.ev
+        in  SPair i j (gi.dh + evTotDeg ev) ev
     t               = length gMGis
-    tEv             = giEv tGi
-    itMGis          = map (fmap (giLcm nVars tGi)) gMGis    :: [Maybe GBGenInfo]
-    itmcs           = map (fmap giEv) itMGis                :: [Maybe ExponVec]     -- lcms
-    itmcsA          = listArray (0, t - 1) itmcs            :: Array Int (Maybe ExponVec)
-    divEq ev c      = assert (evDivs ev c) (totDeg ev == totDeg c)
+    tEv             = tGi.ev
+    itMGis          = map (fmap (giLcm tGi)) gMGis    :: [Maybe (GBGenInfo ev)]
+    itmcs           = map (fmap (.ev)) itMGis               :: [Maybe ev]     -- lcms
+    itmcsA          = listArray (0, t - 1) itmcs            :: Array Int (Maybe ev)
+    divEq ev c      = assert (evDivides ev c) (evTotDeg ev == evTotDeg c)
     skipIQs         = zipWith skipQ gMGis itmcs     -- newly redundant gens
       where
-        skipQ (Just gi) (Just c)    = divEq (giEv gi) c
+        skipQ (Just gi) (Just c)    = divEq gi.ev c
         skipQ _         _           = False
     skipIs          = evList (findIndices id skipIQs)
     ijcs0           = if null skipIs then SL.Nil else   -- for efficiency
                       SL.filter (\(SPair i j _ _) -> i `elem` skipIs || j `elem` skipIs) ijcs
-    ijcs1           = SL.filter (\(SPair i j _ c) -> evDivs tEv c && ne i c && ne j c) ijcs
+    ijcs1           = SL.filter canSkip ijcs
       where             -- criterion B_ijk
-        ne i c      = maybe False (\itc -> not (divEq itc c)) (itmcsA ! i)
+        canSkip (SPair i j _ c)     = i >= 0 && evDivides tEv c && ne i c && ne j c
+        ne i c                      = maybe False (\itc -> not (divEq itc c)) (itmcsA ! i)
     skipIJCs        = SL.mergeBy hEvCmp ijcs0 ijcs1
-    itcs            = catMaybes (zipWith (\i -> fmap (giToSp i t)) [0..] itMGis)    :: [SPair]
+    itcs            = catMaybes (zipWith (\i -> fmap (giToSp i t)) [0..] itMGis)  :: [SPair ev]
     -- "sloppy" sugar method:
     itcss           = groupBy (cmpEq lcmCmp) (sortBy lcmCmp itcs)
-    itcsToC         = spLcm . head
+    itcsToC         = (.m) . head
     itcss'          = filter (noDivs . itcsToC) itcss       -- criterion M_ik
       where
-        firstDiv c  = find (\ itcs1 -> evDivs (itcsToC itcs1) c) itcss
+        firstDiv c  = find (\ itcs1 -> evDivides (itcsToC itcs1) c) itcss
         noDivs c    = divEq (itcsToC (fromJust (firstDiv c))) c
-    gMEvsA          = listArray (0, t - 1) (map (fmap giEv) gMGis)
-                        :: Array Int (Maybe ExponVec)
+    gMEvsA          = listArray (0, t - 1) (map (fmap (.ev)) gMGis)
+                        :: Array Int (Maybe ev)
     bestH           = minimumBy hCmp
     itcs'           = mapMaybe (\gp -> if any buch2 gp then Nothing else Just (bestH gp)) itcss'
       where             -- criterion F_jk and Buchberger's 2nd criterion (gi and gt rel. prime)
         buch2 (SPair i j _ c)     = assert (j == t)
-            (totDeg (fromJust (gMEvsA ! i)) + totDeg tEv == totDeg c)
-    addITCs         = SL.fromList (sortBy hEvCmp itcs')
+            (evTotDeg (fromJust (gMEvsA ! i)) + evTotDeg tEv == evTotDeg c)
+    addITCs         = SL.fromList
+                        (sortBy hEvCmp itcs' ++ extraSPairs tEv t (evTotDeg tEv + tGi.dh))
 
 
-data SizedEPoly c   = SizedEPoly { sepN :: Int, sepP :: EPoly c }
+data SizedEPoly p   = SizedEPoly { n :: Int, p :: p }
 
-sizeEP              :: EPoly c -> SizedEPoly c
-sizeEP p            = SizedEPoly (ssNumTerms p) p
+sizeEP               :: (p -> Int) -> p -> SizedEPoly p
+sizeEP numTermsF p   = SizedEPoly (numTermsF p) p
 
-data ENPs c         = ENPs { _enpsE :: Word, _enpsL :: SL.List (SizedEPoly c) }
+data ENPs p         = ENPs { _e :: Word, _nps :: SL.List (SizedEPoly p) }
 -- exponent and list of sized polys
 
 
@@ -224,178 +244,195 @@ wngFirst                    :: (a -> a') -> WithNGens a -> WithNGens a'
 wngFirst f (WithNGens a n)  = WithNGens (f a) n
 
 
--- nVars > 0, each enpss has increasing es, all p /= 0, (ssDegNZ p) unique:
-type KerGens c      = Seq.Seq (SL.List (ENPs c))
+-- nEvGroups > 0, each enpss has increasing es, all p /= 0, (leadEvNZ p) unique:
+type KerGens p      = Seq.Seq (SL.List (ENPs p))
 
-data GapKerGens c   = G1KGs { g1kgsGap :: Word, _g1kgsKgs :: KerGens c }
+data GapKerGens p   = G1KGs { gap :: Word, _kgs :: KerGens p }
 
-type GapsKerGens c  = SL.List (GapKerGens c)    -- gaps increasing, 0 gap always present
+type GapsKerGens p  = SL.List (GapKerGens p)    -- gaps increasing, 0 gap always present
 
-kgsNew              :: Int -> KerGens c
-kgsNew nVars        = Seq.replicate nVars SL.Nil
+data KGsOps p       = KGsOps {
+    gkgsEmpty   :: GapsKerGens p,
+    gkgsInsert  :: EPolyHDeg p -> Op1 (GapsKerGens p),
+    gkgsDelete  :: EPolyHDeg p -> Op1 (GapsKerGens p),
+    gkgsReplace :: EPolyHDeg p -> EPolyHDeg p -> Op1 (GapsKerGens p),
+    gkgsTopReduce   :: (p -> p -> (p, p)) -> IO (WithNGens (GapsKerGens p)) -> IORef Int ->
+                        EPolyHDeg p -> IO (WithNGens (EPolyHDeg p)),
+        -- top-reduce a (gh, kN)
+    kgsReduce   :: (p -> p -> (p, p)) -> KerGens p -> p -> (p, Int),
+        -- fully reduce a polynomial, counting steps
+    foldReduce  :: forall f. Foldable f => (p -> p -> (p, p)) -> f p -> p -> (Bool, p, Int),
+        -- fully reduce by folding (not kgs), except stop and return True if/when a deg > 0
+        -- quotient
+    foldTopReduce1  :: forall f. Foldable f => (p -> p -> (p, p)) -> f (EPolyHDeg p) ->
+                        EPolyHDeg p -> Maybe (EPolyHDeg p, Int)
+        -- do 1 folding step if there's a top-reducer
+}
 
-gkgsNew             :: Int -> GapsKerGens c
-gkgsNew nVars       = SL.singleton (G1KGs 0 (kgsNew nVars))
-
-kgsSepCmp           :: Cmp (SizedEPoly c)
-kgsSepCmp (SizedEPoly n1 p1) (SizedEPoly n2 p2)   =
-    n1 `compare` n2 <> gRevLex (ssDegNZ p1) (ssDegNZ p2)
-
-kgsInsert           :: forall c. EPoly c -> Op1 (KerGens c)
-kgsInsert p kgs     =       -- p /= 0, nVars > 0
-    assert (not (ssIsZero p) && Seq.length kgs > 0) $
-    let nVars   = Seq.length kgs
-        es      = exponsL nVars (ssDegNZ p)
-        m       = maximum es
-        v       = fromJust (elemIndex m es)
-        np      = sizeEP p
-        ins             :: Op1 (SL.List (ENPs c))
-        ins SL.Nil      = SL.singleton (ENPs m (SL.singleton np))
-        ins enpss@(enps@(ENPs e ~nps) :! ~t)
-            | m < e     = ENPs m (SL.singleton np) :! enpss
-            | m == e    = ENPs m (SL.insertBy kgsSepCmp np nps) :! t
-            | otherwise = enps :! ins t
-    in  Seq.adjust' ins v kgs
-
-gkgsInsert          :: forall c. EPolyHDeg c -> Op1 (GapsKerGens c)
-gkgsInsert (EPolyHDeg p hDeg)     = go    -- p /= 0, nVars > 0
+kgsOps                      :: forall ev term p. GBPolyOps ev term p -> KGsOps p
+kgsOps (GBPolyOps { .. })   = KGsOps { .. }
   where
-    gap                     = hDeg - totDeg (ssDegNZ p)
-    go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
-        if gap == gap0 then G1KGs gap (kgsInsert p kgs0) :! t
-        else if maybe True ((gap <) . g1kgsGap) (SL.headMaybe t) then
-            h :! G1KGs gap (kgsInsert p (kgsNew (Seq.length kgs0))) :! t
-        else h :! go t
-    go SL.Nil                           = undefined
+    pZero       = rZero pR
+    pIsZero     = rIsZero pR
+    
+    kgsEmpty            :: KerGens p
+    kgsEmpty            = Seq.replicate nEvGroups SL.Nil
+    
+    gkgsEmpty           :: GapsKerGens p
+    gkgsEmpty           = SL.singleton (G1KGs 0 kgsEmpty)
 
-kgsDelete           :: forall c. EPoly c -> Op1 (KerGens c)
-kgsDelete p kgs     =       -- p in kgs (so p /= 0, nVars > 0), (ssDegNZ p) unique in kgs
-    assert (not (ssIsZero p) && Seq.length kgs > 0) $
-    let nVars   = Seq.length kgs
-        es      = exponsL nVars (ssDegNZ p)
-        m       = maximum es
-        v       = fromJust (elemIndex m es)
-        np      = sizeEP p
-        eq np1 np2      = kgsSepCmp np1 np2 == EQ
-        del             :: Op1 (SL.List (ENPs c))
-        del (enps@(ENPs e ~nps) :! t)
-            | m > e     = enps :! del t
-            | m == e    = assert (isJust (find (eq np) nps)) $
-                            ENPs m (SL.deleteBy eq np nps) :! t
-            | otherwise = undefined
-        del SL.Nil      = undefined
-    in  Seq.adjust' del v kgs
+    kgsSepCmp           :: Cmp (SizedEPoly p)
+    kgsSepCmp (SizedEPoly n1 p1) (SizedEPoly n2 p2)   =
+        n1 `compare` n2 <> evCmp (leadEvNZ p1) (leadEvNZ p2)
 
-gkgsDelete          :: forall c. EPolyHDeg c -> Op1 (GapsKerGens c)
-gkgsDelete (EPolyHDeg p hDeg)     = go      -- p in gkgs (so p /= 0, nVars > 0),
-                                            -- (ssDegNZ p) unique in gkgs
-  where
-    gap                     = hDeg - totDeg (ssDegNZ p)
-    go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
-        if gap == gap0 then G1KGs gap (kgsDelete p kgs0) :! t
-        else h :! go t
-    go SL.Nil               = undefined
+    kgsInsert           :: p -> Op1 (KerGens p)
+    kgsInsert p kgs     =       -- p /= 0, nEvGroups > 0
+        assert (not (pIsZero p) && Seq.length kgs > 0) $
+        let es      = evGroup (leadEvNZ p)
+            m       = maximum es
+            v       = fromJust (elemIndex m es)
+            np      = sizeEP numTerms p
+            ins             :: Op1 (SL.List (ENPs p))
+            ins SL.Nil      = SL.singleton (ENPs m (SL.singleton np))
+            ins enpss@(enps@(ENPs e ~nps) :! ~t)
+                | m < e     = ENPs m (SL.singleton np) :! enpss
+                | m == e    = ENPs m (SL.insertBy kgsSepCmp np nps) :! t
+                | otherwise = enps :! ins t
+        in  Seq.adjust' ins v kgs
 
--- kgsReplace              :: EPoly c -> EPoly c -> Op1 (KerGens c)
--- kgsReplace p p' kgs     = kgsInsert p' (kgsDelete p kgs)
-
-gkgsReplace             :: EPolyHDeg c -> EPolyHDeg c -> Op1 (GapsKerGens c)
-gkgsReplace ph ph' gkgs = gkgsInsert ph' (gkgsDelete ph gkgs)
-
-{-# SCC kgsFindReducer #-}
-kgsFindReducer          :: forall c. EPoly c -> KerGens c -> Maybe (EPoly c)
--- returns the best (shortest) top-reducer, if any
-kgsFindReducer p kgs    =
-    if ssIsZero p then Nothing else
-    let nVars   = Seq.length kgs
-        pEv     = ssDegNZ p
-        npsF bnp                   SL.Nil                               = bnp
-        npsF bnp@(SizedEPoly bn _) (ng@(SizedEPoly n ~g) :! ~t)
-            | bn <= n   = bnp
-            | otherwise = npsF (if evDivides nVars (ssDegNZ g) pEv then ng else bnp) t
-        esF bnp _  SL.Nil   = bnp
-        esF bnp pe ((ENPs e ~nps) :! ~t)
-            | pe < e    = bnp
-            | otherwise = esF (npsF bnp nps) pe t
-        vF bnp (pe, enpss)      = esF bnp pe enpss
-        resSep  = foldl' vF (SizedEPoly (maxBound :: Int) SSZero)
-                    (zip (exponsL nVars pEv) (toList kgs))
-    in  if sepN resSep < (maxBound :: Int) then Just (sepP resSep) else Nothing
-
-gkgsFindReducer         :: forall c. EPoly c -> GapsKerGens c -> Maybe (EPolyHDeg c)
--- returns the best (least sugar gap, then shortest) top-reducer, if any
-gkgsFindReducer p gkgs  = listToMaybe (mapMaybe find1 (toList gkgs))
-  where
-    find1 (G1KGs gap kgs)   =
-        fmap (\g -> EPolyHDeg g (totDeg (ssDegNZ g) + gap)) (kgsFindReducer p kgs)
-
-sugarReduce             :: (EPoly c -> EPoly c -> (EPoly c, EPoly c)) ->
-                            EPolyHDeg c -> EPolyHDeg c -> (EPolyHDeg c, Int)
-sugarReduce div2 (EPolyHDeg p pHDeg) (EPolyHDeg g gHDeg)    = (EPolyHDeg r rHDeg, nSteps)
-  where
-    (q, r)      = div2 p g
-    rHDeg       = if ssIsZero q then pHDeg else max pHDeg (epHomogDeg0 q + gHDeg)
-    nSteps      = ssNumTerms q
-
-gkgsTopReduce           :: (EPoly c -> EPoly c -> (EPoly c, EPoly c)) ->
-                            IO (WithNGens (GapsKerGens c)) -> IORef Int -> EPolyHDeg c ->
-                            IO (WithNGens (EPolyHDeg c))
--- top-reduce a (gh, kN)
-gkgsTopReduce div2 kerVar nRedStepsRef      = go
-  where
-    go ph@(EPolyHDeg p _)   = do
-        WithNGens ker nGens     <- kerVar
-        let go1 gh      = do
-                let (rh, nSteps)    = sugarReduce div2 ph gh
-                -- @@@ inc nRedStepsRef nSteps
-                go rh
-        maybe (pure (WithNGens ph nGens)) go1 (gkgsFindReducer p ker)
-
-kgsReduce               :: (EPoly c -> EPoly c -> (EPoly c, EPoly c)) -> KerGens c -> EPoly c ->
-                            (EPoly c, Int)
--- fully reduce a polynomial, counting steps
-kgsReduce div2 kgs      = go 0
-  where
-    go nRedSteps p  = if ssIsZero p then (SSZero, nRedSteps) else
-                        maybe go2 go1 (kgsFindReducer p kgs)
+    gkgsInsert          :: EPolyHDeg p -> Op1 (GapsKerGens p)
+    gkgsInsert (EPolyHDeg p hDeg)     = go    -- p /= 0, nEvGroups > 0
       where
-        go1 g   =
-            let (q, r)      = div2 p g
-            in  go (nRedSteps + ssNumTerms q) r
-        ~go2    =
-            let SSNZ c d t          = p
-                (t', nRedSteps')    = go nRedSteps t
-            in  (SSNZ c d t', nRedSteps')
+        gap                     = hDeg - evTotDeg (leadEvNZ p)
+        go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
+            if gap == gap0 then G1KGs gap (kgsInsert p kgs0) :! t
+            else if maybe True ((gap <) . (.gap)) (SL.headMaybe t) then
+                h :! G1KGs gap (kgsInsert p kgsEmpty) :! t
+            else h :! go t
+        go SL.Nil                           = undefined
 
-foldReduce                  :: forall c f. Foldable f => Int ->
-                                (EPoly c -> EPoly c -> (EPoly c, EPoly c)) -> f (EPoly c) ->
-                                EPoly c -> (Bool, EPoly c, Int)
--- fully reduce by folding (not kgs), except stop and return True if/when a deg > 0 quotient
-foldReduce nVars div2 g0s   = go 0      -- all g0s /= 0, with gap 0
-  where
-    go nRedSteps p      = if ssIsZero p then (False, SSZero, nRedSteps) else
-        let pEv     = ssDegNZ p
-            mg      = find (\g -> evDivides nVars (ssDegNZ g) pEv) g0s
-            useG g  =
+    kgsDelete           :: p -> Op1 (KerGens p)
+    kgsDelete p kgs     =   -- p in kgs (so p /= 0, nEvGroups > 0), (leadEvNZ p) unique in kgs
+        assert (not (pIsZero p) && Seq.length kgs > 0) $
+        let es      = evGroup (leadEvNZ p)
+            m       = maximum es
+            v       = fromJust (elemIndex m es)
+            np      = sizeEP numTerms p
+            eq np1 np2      = kgsSepCmp np1 np2 == EQ
+            del             :: Op1 (SL.List (ENPs p))
+            del (enps@(ENPs e ~nps) :! t)
+                | m > e     = enps :! del t
+                | m == e    = assert (isJust (find (eq np) nps)) $
+                                ENPs m (SL.deleteBy eq np nps) :! t
+                | otherwise = undefined
+            del SL.Nil      = undefined
+        in  Seq.adjust' del v kgs
+
+    gkgsDelete          :: EPolyHDeg p -> Op1 (GapsKerGens p)
+    gkgsDelete (EPolyHDeg p hDeg)     = go      -- p in gkgs (so p /= 0, nEvGroups > 0),
+                                                -- (leadEvNZ p) unique in gkgs
+      where
+        gap                     = hDeg - evTotDeg (leadEvNZ p)
+        go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
+            if gap == gap0 then G1KGs gap (kgsDelete p kgs0) :! t
+            else h :! go t
+        go SL.Nil               = undefined
+
+    -- kgsReplace              :: p -> p -> Op1 (KerGens p)
+    -- kgsReplace p p' kgs     = kgsInsert p' (kgsDelete p kgs)
+
+    gkgsReplace             :: EPolyHDeg p -> EPolyHDeg p -> Op1 (GapsKerGens p)
+    gkgsReplace ph ph' gkgs = gkgsInsert ph' (gkgsDelete ph gkgs)
+
+    {-# SCC kgsFindReducer #-}
+    kgsFindReducer          :: p -> KerGens p -> Maybe p
+    -- returns the best (shortest) top-reducer, if any
+    kgsFindReducer p kgs    =
+        if pIsZero p then Nothing else
+        let pEv     = leadEvNZ p
+            npsF bnp                   SL.Nil                               = bnp
+            npsF bnp@(SizedEPoly bn _) (ng@(SizedEPoly n ~g) :! ~t)
+                | bn <= n   = bnp
+                | otherwise = npsF (if evDivides (leadEvNZ g) pEv then ng else bnp) t
+            esF bnp _  SL.Nil   = bnp
+            esF bnp pe ((ENPs e ~nps) :! ~t)
+                | pe < e    = bnp
+                | otherwise = esF (npsF bnp nps) pe t
+            vF bnp (pe, enpss)      = esF bnp pe enpss
+            resSep  = foldl' vF (SizedEPoly (maxBound :: Int) pZero)
+                        (zip (evGroup pEv) (toList kgs))
+        in  if resSep.n < (maxBound :: Int) then Just resSep.p else Nothing
+
+    gkgsFindReducer         :: p -> GapsKerGens p -> Maybe (EPolyHDeg p)
+    -- returns the best (least sugar gap, then shortest) top-reducer, if any
+    gkgsFindReducer p gkgs  = listToMaybe (mapMaybe find1 (toList gkgs))
+      where
+        find1 (G1KGs gap kgs)   =
+            fmap (\g -> EPolyHDeg g (evTotDeg (leadEvNZ g) + gap)) (kgsFindReducer p kgs)
+
+    sugarReduce             :: (p -> p -> (p, p)) -> EPolyHDeg p -> EPolyHDeg p ->
+                                (EPolyHDeg p, Int)
+    sugarReduce div2 (EPolyHDeg p pHDeg) (EPolyHDeg g gHDeg)    = (EPolyHDeg r rHDeg, nSteps)
+      where
+        (q, r)      = div2 p g
+        rHDeg       = if pIsZero q then pHDeg else max pHDeg (homogDeg0 q + gHDeg)
+        nSteps      = numTerms q
+
+    gkgsTopReduce           :: (p -> p -> (p, p)) -> IO (WithNGens (GapsKerGens p)) ->
+                                IORef Int -> EPolyHDeg p -> IO (WithNGens (EPolyHDeg p))
+    -- top-reduce a (gh, kN)
+    gkgsTopReduce div2 kerVar nRedStepsRef      = go
+      where
+        go ph@(EPolyHDeg p _)   = do
+            WithNGens ker nGens     <- kerVar
+            let go1 gh      = do
+                    let (rh, nSteps)    = sugarReduce div2 ph gh
+                    -- @@@ inc nRedStepsRef nSteps
+                    go rh
+            maybe (pure (WithNGens ph nGens)) go1 (gkgsFindReducer p ker)
+
+    kgsReduce               :: (p -> p -> (p, p)) -> KerGens p -> p -> (p, Int)
+    -- fully reduce a polynomial, counting steps
+    kgsReduce div2 kgs      = go 0
+      where
+        go nRedSteps p  = if pIsZero p then (p, nRedSteps) else
+                            maybe go2 go1 (kgsFindReducer p kgs)
+          where
+            go1 g   =
                 let (q, r)      = div2 p g
-                in  if totDeg (ssDegNZ q) > 0 then (True, r, nRedSteps + ssNumTerms q)
-                    else go (nRedSteps + 1) r
+                in  go (nRedSteps + numTerms q) r
             ~go2    =
-                let SSNZ c d t              = p
-                    (todo, t', nRedSteps')  = go nRedSteps t
-                in  (todo, SSNZ c d t', nRedSteps')
-        in  maybe go2 useG mg
+                let (!cd, !t)           = unconsNZ p
+                    (!t', !nRedSteps')  = go nRedSteps t
+                in  (cd `cons` t', nRedSteps')
 
-foldTopReduce1              :: forall c f. Foldable f => Int ->
-                                (EPoly c -> EPoly c -> (EPoly c, EPoly c)) -> f (EPolyHDeg c) ->
-                                EPolyHDeg c -> Maybe (EPolyHDeg c, Int)
--- do 1 folding step if there's a top-reducer
-foldTopReduce1 nVars div2 ghs ph@(EPolyHDeg p _)    =       -- all gs /= 0
-    if ssIsZero p then Nothing else
-    let pEv     = ssDegNZ p
-        mgh     = find (\gh -> evDivides nVars (ssDegNZ (phP gh)) pEv) ghs
-            -- @@@ improve to find best reducer!?
-    in  fmap (sugarReduce div2 ph) mgh
+    foldReduce              :: forall f. Foldable f => (p -> p -> (p, p)) -> f p -> p ->
+                                (Bool, p, Int)
+    -- fully reduce by folding (not kgs), except stop and return True if/when a deg > 0 quotient
+    foldReduce div2 g0s     = go 0      -- all g0s /= 0, with gap 0
+      where
+        go nRedSteps p      = if pIsZero p then (False, p, nRedSteps) else
+            let pEv     = leadEvNZ p
+                mg      = find (\g -> evDivides (leadEvNZ g) pEv) g0s
+                useG g  =
+                    let (q, r)      = div2 p g
+                    in  if evTotDeg (leadEvNZ q) > 0 then (True, r, nRedSteps + numTerms q)
+                        else go (nRedSteps + 1) r
+                ~go2    =
+                    let (!cd, !t)                   = unconsNZ p
+                        (!todo, !t', !nRedSteps')   = go nRedSteps t
+                    in  (todo, cd `cons` t', nRedSteps')
+            in  maybe go2 useG mg
+
+    foldTopReduce1          :: forall f. Foldable f => (p -> p -> (p, p)) ->
+                                f (EPolyHDeg p) -> EPolyHDeg p -> Maybe (EPolyHDeg p, Int)
+    -- do 1 folding step if there's a top-reducer
+    foldTopReduce1 div2 ghs ph@(EPolyHDeg p _)    =       -- all gs /= 0
+        if pIsZero p then Nothing else
+        let pEv     = leadEvNZ p
+            mgh     = find (\gh -> evDivides (leadEvNZ gh.p) pEv) ghs
+                -- @@@ improve to find best reducer!?
+        in  fmap (sugarReduce div2 ph) mgh
 
 
 -- | gbTrace bits for 'groebnerBasis' tracing. Bits 0x0F are useful to end users.
@@ -414,52 +451,54 @@ printThreadCapabilities prefix otherThreadIds   = do
     putStr $ prefix ++ "Threads are on capabilities: "
     mapM_ (putStrLn . unwords) (chunksOf 20 (map (show . fst) capInfos))
 
-groebnerBasis       :: forall c. Int -> Cmp ExponVec -> Field c -> Ring (EPoly c) -> [EPoly c]
-                        -> Int -> Int -> (EPoly c -> String) -> IO [EPoly c]
-groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
+groebnerBasis   :: forall ev term p. (GBPolyOps ev term p) -> [p] -> Int -> Int -> IO [p]
+groebnerBasis gbpA@(GBPolyOps { .. }) initGens nCores gbTrace   = do
     cpuTime0        <- getCPUTime
     sysTime0        <- getSystemTime
     cpuTime1Ref     <- newIORef cpuTime0
     mRTSStats0      <- getMaybeRTSStats
-    gkgsRef         <- newTVarIO (WithNGens (gkgsNew nVars) 0)
-    genHsRef        <- newTVarIO Seq.empty  :: IO (TVar (Seq.Seq (EPolyHDeg c)))
+    let KGsOps { .. }   = kgsOps gbpA
+    gkgsRef         <- newTVarIO (WithNGens gkgsEmpty 0)
+    genHsRef        <- newTVarIO Seq.empty  :: IO (TVar (Seq.Seq (EPolyHDeg p)))
     nRedStepsRef    <- newIORef 0           :: IO (IORef Int)
     nSPairsRedRef   <- newIORef 0           :: IO (IORef Int)
     let _gbTQueues1 = gbTrace .&. gbTQueues /= 0 && nCores > 1
-        topDiv2     = rBDiv2 epRing False
+        topDiv2     = rBDiv2 pR False
         topReduce   = gkgsTopReduce topDiv2 (readTVarIO gkgsRef) nRedStepsRef
-        endReduce_n :: Int -> EPolyHDeg c -> IO (WithNGens (EPolyHDeg c))
-        reduce2 SSZero          = pure SSZero
-        reduce2 (SSNZ c d t)    = do        -- fully reduce by 0 sugar gap generators
-            WithNGens ((G1KGs 0 kgs) :! _) _    <- readTVarIO gkgsRef
-            let (t', nSteps)        = kgsReduce topDiv2 kgs t
-            -- @@@ inc nRedStepsRef nSteps
-            pure (SSNZ c d t')
+        endReduce_n :: Int -> EPolyHDeg p -> IO (WithNGens (EPolyHDeg p))
+        reduce2 p
+            | pIsZero p     = pure pZero
+            | otherwise     = do    -- fully reduce by 0 sugar gap generators
+                WithNGens ((G1KGs 0 kgs) :! _) _    <- readTVarIO gkgsRef
+                let (!cd, !t)       = unconsNZ p
+                    (!t', !nSteps)  = kgsReduce topDiv2 kgs t
+                -- @@@ inc nRedStepsRef nSteps
+                pure (cd `cons` t')
         reduce_n gh = do        -- top reduce by all gens, then fully reduce by 0 sugar gap gens
             WithNGens (EPolyHDeg g1 h1) kN  <- topReduce gh
             g2                              <- reduce2 g1
             endReduce_n kN (EPolyHDeg g2 h1)
-        gap0NZ (EPolyHDeg g h)  = if h /= totDeg (ssDegNZ g) then Nothing else Just g
+        gap0NZ (EPolyHDeg g h)  = if h /= evTotDeg (leadEvNZ g) then Nothing else Just g
         endReduce_n kN gh       = do    -- result is reduced like by reduce_n
             ghs         <- readTVarIO genHsRef
             let kN'     = Seq.length ghs
-            if ssIsZero (phP gh) then pure (WithNGens gh kN')
+            if pIsZero gh.p then pure (WithNGens gh kN')
             else if kN >= kN' then
-                pure (WithNGens (gh { phP = withRing cField ssMonicize (phP gh) }) kN)
-            else if 3 * nVars * (kN' - kN) > kN' {- @@ tune -} then reduce_n gh
+                pure (WithNGens (EPolyHDeg (monicize gh.p) gh.h) kN)
+            else if 3 * nEvGroups * (kN' - kN) > kN' {- @@ tune -} then reduce_n gh
             else
                 let endGHs      = Seq.drop kN ghs
-                    mghn        = foldTopReduce1 nVars topDiv2 endGHs gh
+                    mghn        = foldTopReduce1 topDiv2 endGHs gh
                     endRed1 (ph, nSteps)    = do
                         -- @@@ inc nRedStepsRef nSteps
                         reduce_n ph
-                    endRed2 (EPolyHDeg (cd :! t) h)  = do
-                        let g0s                 = mapMaybe gap0NZ (toList endGHs)
-                            (todo, t', nSteps)  = foldReduce nVars topDiv2 g0s t
+                    endRed2 (EPolyHDeg g h) = do
+                        let g0s                     = mapMaybe gap0NZ (toList endGHs)
+                            (!cd, !t)               = unconsNZ g
+                            (!todo, !t', !nSteps)   = foldReduce topDiv2 g0s t
                         -- @@@ inc nRedStepsRef nSteps
-                        p       <- (if todo then reduce2 else pure) (cd :! t')
+                        p       <- (if todo then reduce2 else pure) (cd `cons` t')
                         endReduce_n kN' (EPolyHDeg p h)
-                    endRed2 (EPolyHDeg SL.Nil _)        = undefined
                 in  maybe (endRed2 gh) endRed1 mghn
         checkGkgs   = do
             ghs         <- readTVarIO genHsRef
@@ -469,16 +508,16 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
             whenM (maybeAtomicModifyTVarIO' gkgsRef p f) $ do
                 traceEvent "  checkGkgs: atomic modified gkgsRef" $ pure ()
                 checkGkgs
-    -- rgs is a [(g, i)] of nonzero g with descending (ssDegNZ g)
+    -- rgs is a [(g, i)] of nonzero g with descending (leadEvNZ g)
     rNTraceRef      <- newIORef 0
-    let rgsInsert   :: EPolyHDeg c -> Int -> [(EPoly c, Int)] -> IO [(EPoly c, Int)]
+    let rgsInsert   :: EPolyHDeg p -> Int -> [(p, Int)] -> IO [(p, Int)]
         rgsInsert (EPolyHDeg g _) i []                  = pure [(g, i)]
         rgsInsert gh@(EPolyHDeg g gHDeg) i rgs@((h, j) : t)
-            | evCmp (ssDegNZ g) (ssDegNZ h) == GT       = pure ((g, i) : rgs)
-            | evDivides nVars (ssDegNZ g) (ssDegNZ h)   = do
+            | evCmp (leadEvNZ g) (leadEvNZ h) == GT       = pure ((g, i) : rgs)
+            | evDivides (leadEvNZ g) (leadEvNZ h)   = do
                 when (gbTrace .&. gbTProgressInfo /= 0) $
-                    putStrLn $ " remove g" ++ show j ++ " (" ++ _showEV h ++ ") by g" ++ show i
-                        ++ " (" ++ _showEV g ++ ")"
+                    putStrLn $ " remove g" ++ show j ++ " (" ++ pShowEV h ++ ") by g" ++ show i
+                        ++ " (" ++ pShowEV g ++ ")"
                 ghs     <- readTVarIO genHsRef
                 let hh  = Seq.index ghs j
                 checkGkgs
@@ -486,26 +525,26 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                 rgsInsert gh i t
             | otherwise                                 = do
                 t'          <- rgsInsert gh i t
-                if gHDeg /= totDeg (ssDegNZ g) then pure ((h, j) : t') else do
-                    let (q, r)  = rBDiv2 epRing True h g
-                    if ssIsZero q then pure ((h, j) : t') else do
-                        -- @@@ inc nRedStepsRef (ssNumTerms q)
+                if gHDeg /= evTotDeg (leadEvNZ g) then pure ((h, j) : t') else do
+                    let (q, r)  = rBDiv2 pR True h g
+                    if pIsZero q then pure ((h, j) : t') else do
+                        -- @@@ inc nRedStepsRef (numTerms q)
                         when (gbTrace .&. gbTQueues /= 0) $
-                            if totDeg (ssDegNZ q) == 0 then inc rNTraceRef 1 else putChar 'R'
-                        r'          <- if totDeg (ssDegNZ q) == 0 then pure r else reduce2 r
+                            if evTotDeg (leadEvNZ q) == 0 then inc rNTraceRef 1 else putChar 'R'
+                        r'          <- if evTotDeg (leadEvNZ q) == 0 then pure r else reduce2 r
                         ghs0        <- readTVarIO genHsRef
                         let hh      = Seq.index ghs0 j
-                            rh'     = EPolyHDeg r' (phH hh)
+                            rh'     = EPolyHDeg r' hh.h
                         checkGkgs
                         atomically $ modifyTVar' gkgsRef (wngFirst (gkgsReplace hh rh'))
                         atomically $ modifyTVar' genHsRef (Seq.update j rh')
-                        assert (not (ssIsZero r')) (pure ((r', j) : t'))
+                        assert (not (pIsZero r')) (pure ((r', j) : t'))
     wakeAllThreads  <- newTVarIO 0          :: IO (TVar Int)
     wakeMainThread  <- newTVarIO 0          :: IO (TVar Int)
-    gDShownRef      <- newIORef 0           :: IO (IORef Integer)
+    gDShownRef      <- newIORef 0           :: IO (IORef Word)
     let putS        = if gbTrace .&. gbTProgressChars /= 0 then hPutStr stderr else putStr
     let addGenHN (WithNGens gh kN)  = {-# SCC addGenHN #-}
-            unless (ssIsZero (phP gh)) $ do
+            unless (pIsZero gh.p) $ do
                 traceEvent "  addGenHN start" $ pure ()
                 kNIsLow     <- atomically $ do
                     ghs         <- readTVar genHsRef
@@ -521,14 +560,14 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         checkGkgs
                     when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ do
                         putS "d"
-                        let d       = headTotDeg (phP gh)
+                        let d       = evTotDeg (leadEvNZ gh.p)
                         gDShown     <- readIORef gDShownRef
                         when (d /= gDShown) $ do
                             putS $ show d ++ " "
                             writeIORef gDShownRef d
                     traceEvent ("  addGenHN end " ++ show kN) $ pure ()
-    gMGisRef        <- newTVarIO Seq.empty  :: IO (TVar (Seq.Seq (Maybe GBGenInfo)))
-    ijcsRef         <- newTVarIO SL.Nil     :: IO (TVar SortedSPairs)   -- ascending by hEvCmp
+    gMGisRef        <- newTVarIO Seq.empty  :: IO (TVar (Seq.Seq (Maybe (GBGenInfo ev))))
+    ijcsRef         <- newTVarIO SL.Nil :: IO (TVar (SortedSPairs ev))  -- ascending by hEvCmp
     let newIJCs     = do
             ghs0        <- readTVarIO genHsRef
             gMGis00     <- readTVarIO gMGisRef  -- for speed, to avoid atomic transaction
@@ -539,7 +578,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     if Seq.length gMGis >= Seq.length ghs0 then pure Nothing else do
                         let t       = Seq.length gMGis
                             gh      = Seq.index ghs0 t
-                            tGi     = giNew gh
+                            tGi     = giNew gbpA gh
                         traceEvent ("  newIJCs start " ++ show t) $ pure ()
                         writeTVar gMGisRef $! gMGis Seq.|> Just tGi
                         pure (Just (gMGis, t, gh, tGi))
@@ -547,7 +586,7 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                     Nothing                     -> pure False
                     Just (!gMGis0, !t, !gh, !tGi)       -> do
                         let (skipIs, skipIJCs, addITCs)     =
-                                updatePairs nVars evCmp (toList gMGis0) ijcs0 tGi
+                                updatePairs gbpA (toList gMGis0) ijcs0 tGi
                             skipIF s i  = Seq.update i Nothing s
                         unless (null skipIs) $      -- 'unless' for speed
                             atomically $ modifyTVar' gMGisRef (\ms -> foldl' skipIF ms skipIs)
@@ -569,9 +608,9 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                             when ((t + 1) `rem` 50 == 0) $
                                 putStr $ 'p' : show (t + 1) ++ ":" ++ show n' ++ " "
                         when (gbTrace .&. gbTProgressInfo /= 0) $
-                            putStrLn $ " g" ++ show t ++ ": " ++ _showEV (phP gh)
+                            putStrLn $ " g" ++ show t ++ ": " ++ pShowEV gh.p
                         traceEvent ("  newIJCs done " ++ show t) $ pure True
-    rgsRef          <- newIORef []          :: IO (IORef [(EPoly c, Int)])
+    rgsRef          <- newIORef []          :: IO (IORef [(p, Int)])
     rgsMNGensRef    <- newIORef (Just 0)    :: IO (IORef (Maybe Int))   -- Nothing if locked
     let checkRgs1   = do    -- may add 1 gh to rgs
             mk          <- readIORef rgsMNGensRef   -- for speed, to avoid atomic modify
@@ -598,15 +637,15 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         pure res
                     else pure False
                 Nothing     -> pure False
-    let newG (SPair i j h c)      = {-# SCC newG #-} do
+    let newG sp@(SPair i j h c)     = {-# SCC newG #-} do
             let ~s  = " start spair(g" ++ show i ++ ",g" ++ show j ++ "): sugar degree " ++
-                        show h ++ ", lcm of heads " ++ epShow (SSNZ (rOne cField) c SSZero)
+                        show h ++ ", lcm of heads " ++ evShow c
             when (gbTrace .&. gbTProgressDetails /= 0) $ putStrLn s
             traceEvent "  newG" $ pure ()
             -- @@@ inc nSPairsRedRef 1
             ghs     <- readTVarIO genHsRef
-            ghn     <- reduce_n
-                        (EPolyHDeg (sPoly (phP (Seq.index ghs i)) (phP (Seq.index ghs j)) c) h)
+            let f   = if i < 0 then pZero else (Seq.index ghs i).p
+            ghn     <- reduce_n (EPolyHDeg (sPoly f (Seq.index ghs j).p sp) h)
             addGenHN ghn
             pure True
         doSP        = maybe (pure False) newG =<< slPop ijcsRef
@@ -630,8 +669,8 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
                         when (wake1 == wake0) retry
                     inc numSleepingRef (-1)
                 loop
-    mapM_ (\g -> addGenHN =<< endReduce_n 0 (EPolyHDeg g (epHomogDeg0 g)))
-        (sortBy (ssDegCmp evCmp True) initGens)
+    mapM_ (\g -> addGenHN =<< endReduce_n 0 (EPolyHDeg g (homogDeg0 g)))
+        (sortBy (evCmp `on` leadEvNZ) (filter (not . pIsZero) initGens))
     auxThreadIds        <- forM [1 .. nCores - 1] (\t -> forkOn t (checkQueues t))
     let traceTime   = do
             cpuTime2        <- getCPUTime
@@ -682,13 +721,13 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
         putStrLn $ "# reduction steps (quotient terms) = " ++ show nRedSteps
             -- Macaulay just counts top-reduced
         ghs         <- readTVarIO genHsRef
-        let ndhs    = [(ssNumTerms g, headTotDeg g, h) | EPolyHDeg g h <- toList ghs]
+        let ndhs    = [(numTerms g, evTotDeg (leadEvNZ g), h) | EPolyHDeg g h <- toList ghs]
         putStrLn $ "generated (redundant) basis has " ++ show (Seq.length ghs) ++
             " elements with " ++ show (sum (map fst3 ndhs)) ++ " monomials"
         when (gbTrace .&. gbTProgressDetails /= 0) $ do
             putStrLn "(whether used & head degree + sugar, # monomials):"
             let show4 (n, d, h) m   =
-                    let dh  = fromIntegral h - d
+                    let dh  = h - d
                     in  maybe "x" (const "") m ++ show d ++
                             (if dh > 0 then '+' : show dh else "") ++ "," ++ show n
             gMGisL      <- toList <$> readTVarIO gMGisRef
@@ -698,23 +737,17 @@ groebnerBasis nVars evCmp cField epRing initGens nCores gbTrace epShow    = do
         ~s      = show (length gb) ++ " generators"
     if gbTrace .&. gbTResults /= 0 then do
         putStrLn (s ++ ":")
-        mapM_ (putStrLn . epShow) gb
+        mapM_ (putStrLn . pShow) gb
     else when (gbTrace .&. gbTSummary /= 0) $ putStrLn s
     {- when (gbTrace .&. gbTQueues /= 0) $ do
         hFlush stdout
         callCommand "echo; ps -v" -}
     pure gb
   where
-    _showEV SSZero  = "0"
-    _showEV p       = if ssNumTerms p < 10 then epShow (withRing cField ssMonicize p)
-                      else epShow (SSNZ (rOne cField) (ssDegNZ p) SSZero) ++ "+... ("
-                            ++ show (ssNumTerms p) ++ " terms)"
-    sPoly           :: EPoly c -> EPoly c -> ExponVec -> EPoly c
-    sPoly f g c     =   -- f and g are nonzero and monic, c = lcm (ssDegNZ f) (ssDegNZ g)
-        {-# SCC sPoly #-}
-        {- trace ("sPoly: " ++ _showEV f ++ ", " ++ _showEV g ++ ", " ++ show c) $ -}
-        withAG (rAG epRing) (-.) (shift f) (shift g)
-      where
-        shift p     = ssShift (evPlus nVars (fromJust (evMinusMay nVars c (ssDegNZ p))))
-                        (ssTail p)
-    hEvCmp          = spCmp evCmp True          :: Cmp SPair
+    pZero           = rZero pR
+    pIsZero         = rIsZero pR
+    pShowEV p
+        | pIsZero p         = "0"
+        | numTerms p < 10   = pShow (monicize p)
+        | otherwise         = evShow (leadEvNZ p) ++ "+... (" ++ show (numTerms p) ++ " terms)"
+    hEvCmp          = spCmp evCmp True          :: Cmp (SPair ev)

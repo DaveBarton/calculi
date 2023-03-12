@@ -9,6 +9,7 @@ module Math.Algebra.Commutative.TestEPoly (
 import Math.Algebra.General.Algebra hiding (assert)
 import Math.Algebra.Category.Category
 import Math.Algebra.Commutative.Field.ZModP32
+import Math.Algebra.Commutative.GroebnerBasis (GBPolyOps(..))
 import Math.Algebra.Commutative.EPoly
 
 import Math.Algebra.General.TestAlgebra
@@ -37,8 +38,8 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
     ts              = take nVars (unfoldr (\b -> Just (b, nextT b)) (nT 12345))
     epToT           = epUnivF cRing (RingTgtXs id ts)
     varSs           = map (: []) (take nVars ['a' .. 'z'])
-    epShow          = epShowPrec varSs (const cShow) 0
-    testEq          = diffWith epShow (rEq epRing)
+    GBPolyOps { pShow }     = epGBPOps gRevLex True cRing varSs (const cShow)
+    testEq          = diffWith pShow (rEq epRing)
     varPowGen       = liftM2 (expt1 (rTimes epRing)) (Gen.element varEps)
                         (Gen.int (Range.exponential 1 200_000))
     monomGen        = do
@@ -46,11 +47,11 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
         varPows <- Gen.list (Range.linear 0 nVars) varPowGen
         pure $ rTimes epRing (cToEp c) (rProductL' epRing varPows)
     epGen           = fmap (rSumL' epRing) (Gen.list (Range.linear 0 10) monomGen)
-    sg              = (epShow, epGen)
+    sg              = (pShow, epGen)
     
     props           = withRing epRing ringProps sg testEq (eiBit IsCommutativeRing)
                         ++ ringHomomProps cSG cRing testEq epRing cToEp
-                        ++ [("xs", propertyOnce $ zipWithM_ (===) (map epShow varEps) varSs)]
+                        ++ [("xs", propertyOnce $ zipWithM_ (===) (map pShow varEps) varSs)]
                         ++ ringHomomProps sg epRing cTestEq cRing epToT
                         ++ [("C -> T", property $ sameFun1PT cSG cTestEq (epToT . cToEp) id),
                             ("xs ->",

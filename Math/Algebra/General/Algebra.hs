@@ -791,6 +791,8 @@ polynomReads varSRs     =
             let s' = trimStart s
             in  case s' of
                 c:_     | isDigit c     -> [(fromZ n, t) | (n, t) <- zzReads s']
-                _                       ->
-                    [(var, t) | (varS, var) <- varSRs, t <- maybeToList (stripPrefix varS s')]
+                _                       -> [(var, t)
+                    | (varS, var) <- varSRs,
+                      t <- maybeToList (stripPrefix varS s'),
+                      null t || not (isDigit (head t))]
     in  rngReads digitsOrVarReads

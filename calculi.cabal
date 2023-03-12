@@ -22,7 +22,8 @@ tested-with:        ghc ==9.2.4 ghc ==9.4.2
 
 common deps
     default-language:   GHC2021
-    default-extensions: DisambiguateRecordFields LambdaCase MonoLocalBinds OverloadedRecordDot
+    default-extensions: DuplicateRecordFields LambdaCase MonoLocalBinds OverloadedRecordDot
+                        PatternSynonyms RecordWildCards
     ghc-options:        -Wall -Wcompat -Wno-incomplete-uni-patterns -feager-blackholing
     build-depends:      base >= 4.9 && < 5
 
@@ -36,15 +37,16 @@ library
         Math.Algebra.Linear.SparseVector
         Math.Algebra.General.SparseSum
         Math.Algebra.Commutative.UPoly
-        Math.Algebra.Commutative.EPoly
         Math.Algebra.Commutative.GroebnerBasis
+        Math.Algebra.Commutative.EPoly
+        Math.Algebra.Commutative.BinPoly
         Math.Algebra.Commutative.GBDemo
         Math.Prob.Random
 
     other-modules:
         StrictList2
 
-    other-extensions:   AllowAmbiguousTypes CPP PatternSynonyms Strict UndecidableInstances
+    other-extensions:   AllowAmbiguousTypes CPP Strict UndecidableInstances
     
     build-depends:
         array == 0.5.*,
@@ -62,20 +64,17 @@ library
     hs-source-dirs:     .
 
 -- executable calculi
-    -- import:             deps
-    
-    -- main-is:            calculi.hs
-
-    -- Modules included in this executable, other than Main.
-    -- other-modules:
-
-    -- LANGUAGE extensions used by modules in this package.
-    -- other-extensions:
-    
-    -- build-depends:      calculi
-
     -- hs-source-dirs:     app
-    -- ghc-options:        -threaded -rtsopts
+
+executable bp-demo
+    import:             deps
+    
+    main-is:            BPDemo.hs
+
+    build-depends:      calculi
+
+    hs-source-dirs:     Math/Algebra/Commutative
+    ghc-options:        -threaded -rtsopts
 
 test-suite calculi-test
     import:             deps
@@ -89,10 +88,13 @@ test-suite calculi-test
         Math.Algebra.Commutative.Field.TestZModP32
         Math.Algebra.Commutative.TestUPoly
         Math.Algebra.Commutative.TestEPoly
+        Math.Algebra.Commutative.TestBinPoly
+        StrictList2
 
     default-extensions: OverloadedStrings
+    other-extensions:   DataKinds
     
-    build-depends:      calculi, extra >= 1.6 && < 1.8, hedgehog == 1.*, mod
+    build-depends:      calculi, extra >= 1.6 && < 1.8, hedgehog == 1.*, mod, strict-list
 
     hs-source-dirs:     test
     ghc-options:        -threaded -rtsopts "-with-rtsopts=-N -A64m"
