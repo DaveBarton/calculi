@@ -42,8 +42,6 @@ library
         Math.Algebra.Commutative.BinPoly
         Math.Algebra.Commutative.GBDemo
         Math.Prob.Random
-
-    other-modules:
         StrictList2
 
     other-extensions:   AllowAmbiguousTypes CPP Strict UndecidableInstances
@@ -89,7 +87,6 @@ test-suite calculi-test
         Math.Algebra.Commutative.TestUPoly
         Math.Algebra.Commutative.TestEPoly
         Math.Algebra.Commutative.TestBinPoly
-        StrictList2
 
     default-extensions: OverloadedStrings
     other-extensions:   DataKinds
