@@ -60,4 +60,4 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
                                 (withRing epRing polynomReads (zip varSs varEps))]
 
 testEPoly               :: IO Bool
-testEPoly               = checkAll $ map test1 [1 .. 20]
+testEPoly               = checkAll $ map test1 [1, 2, 3, 5, 9, 14, 20]

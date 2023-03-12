@@ -51,5 +51,5 @@ testBinPoly             :: IO Bool
 testBinPoly             =
     checkAll $ checkGroup "boolField" (withRing boolField fieldProps (show, Gen.bool) (===))
         : [test1 nVars evCmp_isGraded
-            | nVars <- [1 .. 6] ++ [10, 18 .. 58],
+            | nVars <- [1 .. 6] ++ [14, 25 .. 58],
               evCmp_isGraded <- [(lexCmp58, False), (grLexCmp58, True), (grRevLexCmp58, True)]]

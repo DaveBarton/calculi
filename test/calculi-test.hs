@@ -4,11 +4,12 @@ import Math.Algebra.Commutative.TestUPoly
 import Math.Algebra.Commutative.TestEPoly
 import Math.Algebra.Commutative.TestBinPoly
 
-import System.Exit (exitSuccess, exitFailure)
+import Control.Monad (unless)
+import System.Exit (exitFailure)
 
 
 main    :: IO ()
 main    = do
     ok      <- checkAll
         [testAlgebra, testZModP32, testUPoly, testEPoly, testBinPoly {- @@ , other modules -}]
-    if ok then exitSuccess else exitFailure
+    unless ok exitFailure

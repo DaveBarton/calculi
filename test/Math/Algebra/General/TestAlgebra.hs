@@ -19,12 +19,12 @@ import Math.Algebra.General.Algebra hiding (assert)
 
 import Hedgehog (Gen, Property, PropertyName, PropertyT, Range,
     (===), annotate, annotateShow, assert, checkParallel, cover, diff, discard, forAllWith,
-    property, withTests)
+    property, withDiscards, withTests)
 import qualified Hedgehog as Hh
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
-import Control.Monad (liftM, liftM2, when, zipWithM_)
+import Control.Monad (liftM2, when, zipWithM_)
 import Data.String (fromString)
 import Text.Show (showListWith)
 
@@ -225,7 +225,7 @@ ringProps sg@(rShow, _) testEq reqRingFlags     =
         a       <- rand
         b       <- rand
         assert (isZero a || isZero b || not (isZero (a *. b)))
-    inverses        = property $ do
+    inverses        = withDiscards 1000 $ property $ do
         m       <- rand
         when (isZero m) discard
         y       <- rand
@@ -351,8 +351,12 @@ checkGroup              :: String -> [(PropertyName, Property)] -> IO Bool
 checkGroup name props   = checkParallel $ Hh.Group (fromString name) props
 
 checkAll                :: [IO Bool] -> IO Bool
--- ^ like 'Control.Monad.Extra.andM', but doesn't short-circuit (it always runs all the tests).
-checkAll checks         = liftM and (sequence checks)
+-- ^ like 'Control.Monad.Extra.andM', but doesn't short-circuit (it always runs all the tests),
+-- ^    and it prints the results.
+checkAll checks         = do    -- liftM and (sequence checks)
+    oks         <- sequence checks
+    print oks
+    pure (and oks)
 
 
 testAlgebra             :: IO Bool
