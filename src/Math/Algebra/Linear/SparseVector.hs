@@ -28,7 +28,7 @@ import Data.Maybe (isNothing)
 
 -- * SparseVector
 
-newtype SparseVector c  = SV { unSV :: IntMap c }
+newtype SparseVector c  = SV { im :: IntMap c }
     deriving (Eq, Show)     -- Eq & Show e.g. for testing & debugging
 {- ^ a finite sequence of coordinates (basis coefficients), indexed starting at 0. Coordinates
     which are zero must be omitted. -}
@@ -46,11 +46,11 @@ pICToSV         :: Pred c -> Int -> c -> SparseVector c
 pICToSV cIsZero i c     = if cIsZero c then svZero else SV (IM.singleton i c)
 
 svIsZero        :: SparseVector c -> Bool
-svIsZero        = IM.null . unSV
+svIsZero        = IM.null . (.im)
 
 svSize          :: SparseVector c -> Int
 -- ^ \(n\), the number of nonzero coefficients; \(O(n)\)
-svSize          = IM.size . unSV
+svSize          = IM.size . (.im)
 
 svMapC          :: Pred c' -> (c -> c') -> SparseVector c -> SparseVector c'
 svMapC is0 f (SV m)     = SV (IM.filter (not . is0) (IM.map f m))
@@ -66,26 +66,26 @@ svAGUniv        :: forall c. IAbelianGroup c => SparseVectorUniv c
 svAGUniv        = UnivL svAG (TgtArrsF iCToSV) univF
   where
     maybePlus       :: Int -> c -> c -> Maybe c
-    maybePlus _ a b     = let c = a +. b in if isZero c then Nothing else Just c
+    maybePlus _ a b     = let c = a +. b in if iIsZero c then Nothing else Just c
     svPlus (SV m) (SV m')   = SV (IM.mergeWithKey maybePlus id id m m')
-    svNeg (SV m)    = SV (IM.map (neg @c) m)
-    svEq            = liftEq ((==.) @c) `on` unSV
+    svNeg (SV m)    = SV (IM.map (iNeg @c) m)
+    svEq            = liftEq ((==.) @c) `on` (.im)
     svAG            = Group agFlags svEq svPlus svZero svIsZero svNeg
-    iCToSV          = pICToSV (isZero @c)
+    iCToSV          = pICToSV (iIsZero @c)
     univF (Group _ _ tPlus tZero _ _) (TgtArrsF iCToT)  = svFoldr' tPlus tZero iCToT
 
 svDotWith       :: IAbelianGroup c2 => (c -> c1 -> c2) ->
                     SparseVector c -> SparseVector c1 -> c2
-svDotWith f (SV m) (SV m')   = IM.foldr' (+.) zero (IM.intersectionWith f m m')
+svDotWith f (SV m) (SV m')   = IM.foldr' (+.) iZero (IM.intersectionWith f m m')
 
 svNZCTimes      :: forall c. IRing c => c -> Op1 (SparseVector c)
 -- ^ the @c@ is nonzero
 svNZCTimes
     | hasEIBit (iRFlags @c) NoZeroDivisors  = \c -> svMapNZFC (c *.)
-    | otherwise                             = \c -> svMapC isZero (c *.)
+    | otherwise                             = \c -> svMapC iIsZero (c *.)
 
 svCTimes        :: IRing c => c -> Op1 (SparseVector c)
-svCTimes c v    = if isZero c then svZero else svNZCTimes c v
+svCTimes c v    = if iIsZero c then svZero else svNZCTimes c v
 
 svMonicize      :: IRing c => Int -> Op1 (SparseVector c)
 -- ^ @(svMonicize i v)@ requires that the @i@'th coefficient of @v@ is a unit
@@ -95,10 +95,10 @@ svTimesNZC      :: forall c. IRing c => c -> Op1 (SparseVector c)
 -- ^ the @c@ is nonzero
 svTimesNZC
     | hasEIBit (iRFlags @c) NoZeroDivisors  = \c -> svMapNZFC (*. c)
-    | otherwise                             = \c -> svMapC isZero (*. c)
+    | otherwise                             = \c -> svMapC iIsZero (*. c)
 
 svTimesC        :: IRing c => c -> Op1 (SparseVector c)
-svTimesC c v    = if isZero c then svZero else svTimesNZC c v
+svTimesC c v    = if iIsZero c then svZero else svTimesNZC c v
 
 svSwap          :: Int -> Int -> Op1 (SparseVector c)
 -- ^ swaps two coefficients
@@ -128,7 +128,7 @@ scmPDiag cIsZero n c    = if cIsZero c then svZero else
     SV (IM.fromDistinctAscList [(i, SV (IM.singleton i c)) | i <- [0 .. n - 1]])
 
 scmCol          :: SparseColsMat c -> Int -> SparseVector c
-scmCol mat j    = IM.findWithDefault svZero j (unSV mat)
+scmCol mat j    = IM.findWithDefault svZero j mat.im
 
 scmTimesV       :: (IRing c, IAbelianGroup (SparseVector c)) =>
                     SparseColsMat c -> Op1 (SparseVector c)
@@ -136,7 +136,7 @@ scmTimesV       = svDotWith (flip svTimesNZC)
 
 scmRing         :: forall c. IRing c => Int -> Ring (SparseColsMat c)
 -- ^ ring of matrices. @one@ and @fromZ@ of @scmRing n@ will create @n x n@ matrices.
-scmRing maxN    = Ring ag matFlags (*~) one' fromZ' bDiv2'
+scmRing maxN    = Ring ag matFlags (*~) one fromZ bDiv
   where
     UnivL vAG (TgtArrsF _iCToV) _vUnivF = svAGUniv @c
     UnivL ag (TgtArrsF _jVToMat) _vvUnivF   = withAG vAG svAGUniv
@@ -145,13 +145,14 @@ scmRing maxN    = Ring ag matFlags (*~) one' fromZ' bDiv2'
         1   -> iRFlags @c
         _   -> eiBit NotZeroRing .&. (iRFlags @c)
     a *~ b          = svMapC svIsZero (withAG vAG scmTimesV a) b
-    one'            = scmPDiag isZero maxN one
-    fromZ' z        = scmPDiag isZero maxN (fromZ z)
-    bDiv2' _doFull y _t     = (svZero, y)   -- @@ improve (incl. solving linear equations in parallel)
+    one             = scmPDiag iIsZero maxN iOne
+    fromZ z       = scmPDiag iIsZero maxN (iFromZ z)
+    bDiv _doFull y _t       = (svZero, y)   -- @@ improve (incl. solving linear equations in parallel)
 
 scmTranspose    :: Op1 (SparseColsMat c)
 scmTranspose (SV cols)  = SV $ case IM.splitRoot cols of
     []      -> IM.empty
-    [_]     -> IM.foldrWithKey' (\j v t -> IM.union (IM.map (SV . IM.singleton j) (unSV v)) t)
+    [_]     -> IM.foldrWithKey' (\j v t -> IM.union (IM.map (SV . IM.singleton j) v.im) t)
                     IM.empty cols
-    colss   -> IM.unionsWith (SV .* (IM.union `on` unSV)) (map (unSV . scmTranspose . SV) colss)
+    colss   -> IM.unionsWith (SV .* (IM.union `on` (.im)))
+                (map ((.im) . scmTranspose . SV) colss)

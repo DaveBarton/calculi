@@ -1,4 +1,4 @@
-Math proposed initial directories & rough arXiv/MSC classifications:
+Math/ proposed initial directories & rough arXiv/MSC classifications:
 
 Logic                   -- math.LO; 03 Mathematical logic
 Algebra

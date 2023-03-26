@@ -43,4 +43,4 @@ testUPoly               = checkGroup "UPoly" props
                         ++ [("C -> T",
                                 property $ sameFun1PT zzShowGen (===) (zxToT . zToZX) id),
                             ("x ->", propertyOnce $ zxToT xZX === 12345),
-                            readsProp sg testEq (withRing zxRing polynomReads [("X", xZX)])]
+                            readsProp sg testEq (polynomReads zxRing [("X", xZX)])]

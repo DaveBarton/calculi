@@ -1,4 +1,4 @@
-{-# LANGUAGE NoFieldSelectors, Strict #-}
+{-# LANGUAGE Strict #-}
 
 {- |  An 'EPoly' is an \"Expanded\" or \"Exponent Vector\" Polynomial. That is, each term
     consists of a coefficient and an exponent vector ('ExponVec').
@@ -176,47 +176,47 @@ epTimesMonom nVars      = ssTimesMonom (evPlus nVars)
 epRingUniv      :: forall c. IRing c => Int -> Cmp ExponVec -> EPolyUniv c
 epRingUniv nVars evCmp  = UnivL epRing (RingTgtXs cToEp xs) epUnivF
   where
-    ssUniv@(UnivL ssAG (TgtArrsF dcToSS) ssUnivF)    = ssAGUniv evCmp
+    ssUniv@(UnivL ssAG (TgtArrsF dcToSS) ssUnivF)    = ssAGUniv iRing.ag evCmp
     ssTimesF    = ssTimes ssUniv (evPlus nVars)
     evZero      = evMake (replicate nVars 0)
     inds        = [0 .. nVars - 1]
-    xs          = [dcToSS (evMake [if i == j then 1 else 0 | j <- inds]) one | i <- inds]
+    xs          = [dcToSS (evMake [if i == j then 1 else 0 | j <- inds]) iOne | i <- inds]
     cToEp       = dcToSS evZero
     epFlags     = eiBits [NotZeroRing, IsCommutativeRing, NoZeroDivisors] .&. (iRFlags @c)
-    epRing      = Ring ssAG epFlags epTimes (cToEp one) (cToEp . fromZ) epDiv2
+    epRing      = Ring ssAG epFlags epTimes (cToEp iOne) (cToEp . iFromZ) epDiv
     epTimes p q
         | rIsOne epRing p   = q     -- for efficiency
         | rIsOne epRing q   = p     -- for efficiency
         | otherwise         = ssTimesF p q
-    ssLead'     = ssLead (isZero @c)
-    epDiv2 _doFull p0 p1
+    ssLead'     = ssLead (iIsZero @c)
+    epDiv _doFull p0 p1
         | rIsOne epRing p1              = (p0, SSZero)  -- for efficiency
-    epDiv2 _doFull p0 SSZero            = (SSZero, p0)
-    epDiv2  doFull p0 (SSNZ c1 ev1 ~t1) = {-# SCC epDiv2' #-} epDiv2' p0
+    epDiv _doFull p0 SSZero             = (SSZero, p0)
+    epDiv  doFull p0 (SSNZ c1 ev1 ~t1)  = {-# SCC epDiv' #-} epDiv' p0
       where
-        epDiv2' p@SSZero                    = (SSZero, p)
-        epDiv2' p
+        epDiv' p@SSZero                     = (SSZero, p)
+        epDiv' p
             | evCmp (ssDegNZ p) ev1 == LT   = (SSZero, p)
-        epDiv2' p@(SSNZ c ev ~t)            =
+        epDiv' p@(SSNZ c ev ~t)             =
             case evMinusMay nVars ev ev1 of
-                Nothing     -> -- {-# SCC "sub-top-epDiv2'" #-}
+                Nothing     -> -- {-# SCC "sub-top-epDiv'" #-}
                     if not doFull then (SSZero, p) else
-                    let (q2, r2) = epDiv2' t
+                    let (q2, r2) = epDiv' t
                     in (q2, SSNZ c ev r2)
-                Just qd     -> -- {-# SCC "top-etc-epDiv2'" #-}
-                    let (qc, rc)    = bDiv2 doFull c c1
+                Just qd     -> -- {-# SCC "top-etc-epDiv'" #-}
+                    let (qc, rc)    = iBDiv doFull c c1
                         -- want p = (c1*x^ev1 + t1) * (qc*x^qd + q2) + (rc*x^ev + r2):
-                        ~p'         = {-# SCC "epDiv2'-+-qM*" #-} agPlus ssAG !$ t
+                        ~p'         = {-# SCC "epDiv'-+-qM*" #-} agPlus ssAG !$ t
                                         !$ {-# SCC epTimesMonom #-}
-                                           epTimesMonom nVars t1 qd (neg qc)
-                        ~qr2    = if doFull || isZero rc then epDiv2' p'
+                                           epTimesMonom nVars t1 qd (iNeg qc)
+                        ~qr2    = if doFull || iIsZero rc then epDiv' p'
                                   else (SSZero, p')
                     in  (ssLead' qc qd (fst qr2), ssLead' rc ev (snd qr2))
     epUnivF     :: Ring t -> RingTgtXs c t -> EPoly c -> t
-    epUnivF tR (RingTgtXs cToT xTs)     = ssUnivF (rAG tR) (TgtArrsF dcToT)
+    epUnivF tR (RingTgtXs cToT xTs)     = ssUnivF tR.ag (TgtArrsF dcToT)
       where
         dcToT ev c  =
-            foldr1 (rTimes tR) (cToT c : zipWithExact (rExpt tR) xTs (exponsL nVars ev))
+            foldr1 tR.times (cToT c : zipWithExact (rExpt tR) xTs (exponsL nVars ev))
 
 
 epGBPOps        :: forall c. Cmp ExponVec -> Bool -> Ring c -> [String] -> ShowPrec c ->
@@ -244,8 +244,8 @@ epGBPOps evCmp isGraded cR varSs cShowPrec  = GBPolyOps { numTerms = length, .. 
     UnivL pR (RingTgtXs _cToP _xs) _pUnivF  = withRing cR epRingUniv nVars evCmp
     leadEvNZ            = sparseSum undefined (\_ ev _ -> ev)
     monicize            = withRing cR ssMonicize
-    extraSPairs         = \_ _ _ -> []
-    sPoly f g (SPair { m })     = withAG (rAG pR) (-.) (shift f) (shift g)
+    extraSPairs _ _ _   = []
+    sPoly f g (SPair { m })     = minus pR.ag (shift f) (shift g)
       where
         shift (SSNZ _ ev t) = ssShift (evPlus nVars (fromJust (evMinusMay nVars m ev))) t
         shift _             = undefined

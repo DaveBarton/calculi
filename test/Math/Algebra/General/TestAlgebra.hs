@@ -29,7 +29,7 @@ import Data.String (fromString)
 import Text.Show (showListWith)
 
 
-data ShowWith a     = ShowWith { _swShow :: a -> String, swVal :: a }
+data ShowWith a     = ShowWith { _swShow :: a -> String, val :: a }
 -- ^ for dynamically creating an instance of 'Show'
 
 instance Show (ShowWith a) where
@@ -51,7 +51,7 @@ type TestRel a      = a -> a -> PropertyIO ()
 
 diffWith            :: (a -> String) -> (a -> a -> Bool) -> TestRel a
 -- ^ @diffWith aShow rel a b@ checks @rel a b@, and shows a git-like diff if the test fails.
-diffWith aShow rel a b      = diff (ShowWith aShow a) (rel `on` swVal) (ShowWith aShow b)
+diffWith aShow rel a b      = diff (ShowWith aShow a) (rel `on` (.val)) (ShowWith aShow b)
 
 type TestOps a      = (ShowGen a, TestRel a)
 
@@ -156,46 +156,45 @@ totalOrderProps sg equal cmp    = cmpProps sg cmp ++ [("fine", fine)]
   where
     fine            = property $ sameFunAABPT sg (===) (cmpEq cmp) equal
 
-monoidProps             :: forall g. IGroup g => ShowGen g -> TestRel g -> MonoidFlags ->
+monoidProps             :: forall g. ShowGen g -> TestRel g -> MonoidFlags -> Group g ->
                             [(PropertyName, Property)]
-monoidProps sg@(gShow, _) testEq requiredFlags  =
+monoidProps sg@(gShow, _) testEq requiredFlags (Group { .. })   =
     [("required MonoidFlags", flagsOk)] ++
-        equalityProps sg (==:) ++
-        [associativeProp sg testEq (*:), identityProp sg testEq (*:) gId,
+        equalityProps sg eq ++
+        [associativeProp sg testEq op, identityProp sg testEq op ident,
             ("isIdentity", isIdentity),  ("identityIsIdentity", identityIsIdentity)] ++
-        [("inverse", inverse) | hasEIBit (gFlags @g) IsGroup] ++
-        [commutativeProp sg testEq (*:) | hasEIBit (gFlags @g) Abelian]
+        [("inverse", inverse) | hasEIBit monFlags IsGroup] ++
+        [commutativeProp sg testEq op | hasEIBit monFlags Abelian]
   where
     flagsOk         = propertyOnce $ do
-        annotateShow [gFlags @g, requiredFlags]
-        assert (hasEIBits (gFlags @g) requiredFlags)
+        annotateShow [monFlags, requiredFlags]
+        assert (hasEIBits monFlags requiredFlags)
     isIdentity      = property $ do
         a       <- genVis sg
-        gIsId a === (a ==: gId)
+        isIdent a === (a `eq` ident)
     identityIsIdentity  = propertyOnce $ do
-        annotate $ gShow gId
-        assert (gIsId @g gId)
+        annotate $ gShow ident
+        assert (isIdent ident)
     inverse         = property $ do
         a       <- genVis sg
-        let b   = gInv a
+        let b   = inv a
         annotate $ gShow b
-        testEq (a *: b) gId
-        testEq gId (a *: b)
+        testEq (a `op` b) ident
+        testEq ident (a `op` b)
 
-abelianGroupProps       :: forall g. IAbelianGroup g => ShowGen g -> TestRel g ->
+abelianGroupProps       :: ShowGen g -> TestRel g -> AbelianGroup g ->
                                 [(PropertyName, Property)]
-abelianGroupProps sg testEq     =
-    withGroup @g iAG monoidProps sg testEq agFlags
+abelianGroupProps sg testEq     = monoidProps sg testEq agFlags
 
 ringProps               :: forall r. IRing r => ShowGen r -> TestRel r -> RingFlags ->
                             [(PropertyName, Property)]
 ringProps sg@(rShow, _) testEq reqRingFlags     =
-    abelianGroupProps sg testEq ++
+    abelianGroupProps sg testEq iRing.ag ++
         [("required RingFlags", ringFlagsOk),
          ("left distributive", leftDistrib), ("right distributive", rightDistrib),
-         associativeProp sg testEq (*.), identityProp sg testEq (*.) one] ++
-        ringHomomProps zzShowGen zzRing testEq iRing fromZ ++
-        [("bDiv2 True", div2PT (bDiv2 True)), ("bDiv2 False", div2PT (bDiv2 False))] ++
+         associativeProp sg testEq (*.), identityProp sg testEq (*.) iOne] ++
+        ringHomomProps zzShowGen zzRing testEq iRing iFromZ ++
+        [("bDiv True", div2PT (iBDiv True)), ("bDiv False", div2PT (iBDiv False))] ++
         [("nonzero", nonzero) | hasEIBit rRFlags NotZeroRing] ++
         [commutativeProp sg testEq (*.) | hasEIBit rRFlags IsCommutativeRing] ++
         [("no zero divisors", noZeroDivs) | hasEIBit rRFlags NoZeroDivisors] ++
@@ -219,15 +218,15 @@ ringProps sg@(rShow, _) testEq reqRingFlags     =
         annotateShow $ map rShow [y, m, q, r]
         testEq y (m *. q +. r)
     nonzero         = propertyOnce $ do
-        annotate $ rShow one
-        assert (not (isZero @r one))
+        annotate $ rShow iOne
+        assert (not (iIsZero @r iOne))
     noZeroDivs      = property $ do
         a       <- rand
         b       <- rand
-        assert (isZero a || isZero b || not (isZero (a *. b)))
+        assert (iIsZero a || iIsZero b || not (iIsZero (a *. b)))
     inverses        = withDiscards 1000 $ property $ do
         m       <- rand
-        when (isZero m) discard
+        when (iIsZero m) discard
         y       <- rand
         assert (divides m y)
 
@@ -235,8 +234,8 @@ ringHomomProps          :: ShowGen a -> Ring a -> TestRel b -> Ring b ->
                                 (a -> b) -> [(PropertyName, Property)]
 ringHomomProps sga aR bTestEq bR f  =
     [("additive homomorphism", property $ homomPT sga (rPlus aR) bTestEq (rPlus bR) f),
-     ("multiplicative homomorphism", property $ homomPT sga (rTimes aR) bTestEq (rTimes bR) f),
-     ("one ↦ one", propertyOnce $ bTestEq (f (rOne aR)) (rOne bR))]
+     ("multiplicative homomorphism", property $ homomPT sga aR.times bTestEq bR.times f),
+     ("one ↦ one", propertyOnce $ bTestEq (f aR.one) bR.one)]
 
 fieldProps              :: IRing r => ShowGen r -> TestRel r -> [(PropertyName, Property)]
 fieldProps sg testEq    = ringProps sg testEq fieldFlags
@@ -244,7 +243,7 @@ fieldProps sg testEq    = ringProps sg testEq fieldFlags
 moduleProps             :: Bool -> ShowGen r -> Ring r -> ShowGen m -> TestRel m ->
                             Module r m -> [(PropertyName, Property)]
 moduleProps isLeftMod sgr rR sgm mTestEq (Module mAg scale)     =
-    withAG mAg abelianGroupProps sgm mTestEq ++
+    abelianGroupProps sgm mTestEq mAg ++
         [("endM", endM), ("distribM", distribM), ("identityM", identityM), ("assocM", assocM)]
   where
     endM            = property $ do
@@ -254,8 +253,8 @@ moduleProps isLeftMod sgr rR sgm mTestEq (Module mAg scale)     =
         m       <- genVis sgm
         homomPT sgr (rPlus rR) mTestEq (agPlus mAg) (`scale` m)
     identityM       = property $
-        sameFun1PT sgm mTestEq (scale (rOne rR)) id
-    (*~)            = (if isLeftMod then id else flip) (rTimes rR)
+        sameFun1PT sgm mTestEq (scale rR.one) id
+    (*~)            = (if isLeftMod then id else flip) rR.times
     assocM          = property $ do
         a       <- genVis sgr
         b       <- genVis sgr
@@ -271,11 +270,11 @@ modRProps               = moduleProps False
 
 rAlgProps               :: ShowGen r -> Ring r -> ShowGen a -> TestRel a -> RingFlags ->
                             RAlg r a -> [(PropertyName, Property)]
-rAlgProps sgr rR sga aTestEq reqAFlags (RAlg aR scale fromR)    =
+rAlgProps sgr rR sga aTestEq reqAFlags (RAlg { .. })    =
     withRing aR ringProps sga aTestEq reqAFlags ++ ringHomomProps sgr rR aTestEq aR fromR ++
         [("centerA", centerA), ("scaleA", scaleA)]
   where
-    (*~)            = rTimes aR
+    (*~)            = aR.times
     centerA         = property $ do
         r       <- genVis sgr
         let ra  = fromR r

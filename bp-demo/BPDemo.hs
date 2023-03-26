@@ -6,6 +6,7 @@ import Math.Algebra.General.Algebra
 import Math.Algebra.Commutative.GroebnerBasis
 import Math.Algebra.Commutative.BinPoly
 
+import Data.Foldable (toList)
 import Data.Word (Word64)
 
 import Control.Concurrent (forkOn, getNumCapabilities)
@@ -14,39 +15,47 @@ import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 -- import Debug.Trace
 
 
--- To run a demo, first set the "@@" lines below the way you want.
-
-demoOps         :: Int -> (GBPolyOps EV58 EV58 (BinPoly EV58), BPOtherOps EV58 Word64)
-demoOps nVars   = bp58Ops evCmp isGraded varSs
+demoOps             :: Int -> StdEvCmp ->
+                        (GBPolyOps EV58 EV58 (BinPoly EV58), BPOtherOps EV58 Word64)
+demoOps nVars sec   = bp58Ops evCmp isGraded varSs
   where
-    isGraded        = False     -- @@ True or False
-    evCmp           = if isGraded then grRevLexCmp58   -- @@ grLexCmp58 or grRevLexCmp58
-                      else lexCmp58
+    evCmp           = evCmp58 sec
+    isGraded        = secIsGraded sec
     xVarSs          = ['X' : show n | n <- [1 :: Int ..]]
     varSs           = take nVars (map (: []) ['a' .. 'z'] ++ xVarSs)
 
+-- To run a demo, first set the "@@" lines below the way you want.
+
 bpDemo                  :: Int -> Int -> IO ()
 bpDemo nCores gbTrace   = do
-    putStr $ name ++ " "
-    _           <- groebnerBasis gbpA gens nCores gbTrace
-    putChar '\n'
+    putStrLn $ name ++ " " ++ show sec
+    putStrLn $ show (bpCountZeros bpoA gens) ++ " zeros"
+    putStrLn $ showGens gbpA.pShow reducedGensL
+    putStrLn $ show (bpCountZeros bpoA reducedGensL) ++ " zeros"
   where
-    (gbpA, BPOtherOps { .. })   = demoOps (length vars)     -- 'a' is the most main variable
+    sec             = LexCmp   -- @@ LexCmp, GrLexCmp, or GrRevLexCmp
+    (gbpA, bpoA@(BPOtherOps { .. }))    = demoOps (length varPs) sec
     infixl 7 ∧          -- same as (.&.) and (*)
     infixr 5 ∨          -- same as (.|.) except infixr, note (`xor`) and (+) are infixl 6
+    SubmoduleOps { .. }         = gbiSmOps gbpA nCores gbTrace
+    gbIdeal         = fromGens gens
+    reducedGensSeq  = stdGens True gbIdeal
+    reducedGensL    = toList reducedGensSeq
+    -- @@ can compute (bMod doFullReduce p gbIdeal) where doFullReduce is True or False
     
-    -- @@ choose a name, vars & complements, and gens, commenting out the other examples:
+    -- @@ choose a name, varPs & complements, and gens, commenting out the other examples:
+    -- 'a' is the most main variable
     {- 
     name            = "logic0"
-    vars@[a, b, c, d]   = map bpVar [0 .. 3]
-    [a_, b_, c_, d_]    = map bpNot vars
+    varPs@[a, b, c, d]  = map bpVar [0 .. 3]
+    [a_, b_, c_, d_]    = map bpNot varPs
     gens            = [a ∨ b ∨ c_, a ∨ d]
     -}
     {- 
     name            = "logic3"
-    vars@[a, b, c, d, e, f, g, h, i, j]         = map bpVar [0 .. 9]
-    [a_, b_, c_, d_, e_, f_, g_, h_, i_, j_]    = map bpNot vars
-    gens            = [
+    varPs@[a, b, c, d, e, f, g, h, i, j]        = map bpVar [0 .. 9]
+    [a_, b_, c_, d_, e_, f_, g_, h_, i_, j_]    = map bpNot varPs
+    [poly1, poly2, poly3]   = [
         (e ∨ f_ ∨ j) ∧ (d ∨ e ∨ g) ∧ (b_ ∨ f ∨ i) ∧ (e_ ∨ g_ ∨ i_) ∧ (d_ ∨ h ∨ j)
             ∧ (c ∨ e_ ∨ g) ∧ (e_ ∨ f ∨ h) ∧ (f ∨ g ∨ i) ∧ (c ∨ i_ ∨ j) ∧ (e ∨ h_ ∨ j_)
             ∧ (c ∨ f_ ∨ i_) ∧ (c_ ∨ f_ ∨ g_) ∧ (a_ ∨ e ∨ f_) ∧ (f ∨ h ∨ i_) ∧ (a ∨ f_ ∨ i_)
@@ -66,12 +75,13 @@ bpDemo nCores gbTrace   = do
             ∧ (a_ ∨ f_ ∨ g_) ∧ (a ∨ c ∨ i_) ∧ (b_ ∨ i ∨ j_) ∧ (b ∨ d_ ∨ g) ∧ (c_ ∨ f_ ∨ g)
             ∧ (b_ ∨ c ∨ e) ∧ (c ∨ d_ ∨ e_) ∧ (a_ ∨ h ∨ i_) ∧ (g_ ∨ i ∨ j_) ∧ (d_ ∨ e_ ∨ j_),
         (e ∨ h ∨ i)]
+    gens = [bpNot poly1]
     -}
     {- -}
     name            = "logic5"
-    vars@[a, b, c, d, e, f, g, h, i, j, k, l, m, n, o]              = map bpVar [0 .. 14]
-    [a_, b_, c_, d_, e_, f_, g_, h_, i_, j_, k_, l_, m_, n_, o_]    = map bpNot vars
-    gens            = [
+    varPs@[a, b, c, d, e, f, g, h, i, j, k, l, m, n, o]             = map bpVar [0 .. 14]
+    [a_, b_, c_, d_, e_, f_, g_, h_, i_, j_, k_, l_, m_, n_, o_]    = map bpNot varPs
+    [poly1, poly2, poly3]   = [
         (l ∨ n_ ∨ o) ∧ (f ∨ l ∨ o_) ∧ (h ∨ j ∨ l) ∧ (e_ ∨ j_ ∨ n_) ∧ (a ∨ c ∨ l) ∧ (f ∨ g_ ∨
             j) ∧ (d ∨ j ∨ o_) ∧ (d_ ∨ f ∨ j) ∧ (a ∨ c ∨ o_) ∧ (g ∨ j ∨ l) ∧ (i ∨ m ∨ n) ∧ (c
             ∨ h_ ∨ i_) ∧ (c ∨ g_ ∨ i_) ∧ (a_ ∨ g_ ∨ h_) ∧ (a ∨ i ∨ j) ∧ (c ∨ d_ ∨ k) ∧ (i ∨ k
@@ -104,12 +114,19 @@ bpDemo nCores gbTrace   = do
             k_ ∨ n_) ∧ (k ∨ n ∨ o_) ∧ (f ∨ g ∨ m) ∧ (b_ ∨ k ∨ o_) ∧ (d ∨ f ∨ o_) ∧ (a_ ∨ e ∨
             h) ∧ (d_ ∨ j_ ∨ o_),
         (a_ ∨ b ∨ c ∨ e_ ∨ g ∨ h ∨ l_ ∨ n)]
+    -- gens = [bpNot poly1]  -- gives 19 gens like in logic5.out.txt, looks like the same ideal
+    gens = [bpNot poly2]    -- gives 41 gens with LexCmp (after 800 cpu seconds), 65 zeros
+    {- ⟨ o, ln+l+n+1, lm+l+m+1, kl+k, j, il+i, hl+h, hi+h, gl+g, gi+g, ghm+gh+gm+g, fl+f+l+1,
+        fk+f+k+1, fi+f+i+1, fhm+fh+fm+f+hm+h+m+1, fgm+fg+fm+f+gm+g+m+1, e+1, dn+n, dl+d+l+1,
+        dk+d+k+1, di+d+i+1, dgm+dg+dhm+dh+gm+g+hm+h, dgh+dh+gh+h, dfm+df+dm+d+fm+f+m+1, cl+c,
+        ck+k, cim+im, chn+hn, chm+hm, cg+g, cf+c+f+1, cd+c+d+1, bm+b, bl+b, bk+b, bi+b, bh,
+        bg, bf, bc+b, a+1 ⟩ -}
     
     {- 
     name            = "logic6"
-    vars@[a, b, c, d, e, f, g, h, i, j, k, l, m, n, o]              = map bpVar [0 .. 14]
-    [a_, b_, c_, d_, e_, f_, g_, h_, i_, j_, k_, l_, m_, n_, o_]    = map bpNot vars
-    gens            = [
+    varPs@[a, b, c, d, e, f, g, h, i, j, k, l, m, n, o]             = map bpVar [0 .. 14]
+    [a_, b_, c_, d_, e_, f_, g_, h_, i_, j_, k_, l_, m_, n_, o_]    = map bpNot varPs
+    [poly1, poly2, poly3]   = [
         (g_ ∨ h_ ∨ j_ ∨ k ∨ m) ∧ (a_ ∨ b_ ∨ f ∨ k_ ∨ o_) ∧ (a ∨ d_ ∨ f_ ∨ n ∨ o) ∧ (f ∨ h ∨ i
             ∨ j ∨ o_) ∧ (a_ ∨ g_ ∨ i_ ∨ k_ ∨ n_) ∧ (a_ ∨ c ∨ e ∨ l_ ∨ m) ∧ (b ∨ c_ ∨ e ∨ f ∨
             j) ∧ (b ∨ d_ ∨ e_ ∨ g_ ∨ i_) ∧ (c ∨ e ∨ h_ ∨ j ∨ k_) ∧ (b ∨ c_ ∨ d_ ∨ k_ ∨ n_) ∧
@@ -195,6 +212,7 @@ bpDemo nCores gbTrace   = do
             d ∨ f_ ∨ j ∨ o_) ∧ (a_ ∨ c_ ∨ e ∨ k ∨ n_) ∧ (a_ ∨ c ∨ i_ ∨ n_ ∨ o_) ∧ (b ∨ f ∨ j_
             ∨ n_ ∨ o) ∧ (d ∨ e ∨ h ∨ k ∨ o_),
         (b ∨ d_ ∨ g_ ∨ i ∨ j ∨ k_ ∨ l ∨ m_)]
+    gens = [bpNot poly1]
     -}
 
 
@@ -205,7 +223,8 @@ main    = do
     doneMVar    <- newEmptyMVar
     _           <- forkOn 0 $ do
         -- for gbTrace bits, see Math/Algebra/Commutative/GroebnerBasis.hs:
-        let gbTrace     = gbTSummary .|. gbTResults .|. gbTProgressInfo -- @@@
+        let gbTrace     = gbTSummary -- .|. gbTResults
+                .|. gbTProgressInfo -- .|. gbTQueues .|. gbTProgressDetails    -- @@
         bpDemo nCores gbTrace
         putMVar doneMVar ()
     takeMVar doneMVar

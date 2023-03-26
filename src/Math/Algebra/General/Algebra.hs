@@ -55,7 +55,7 @@ module Math.Algebra.General.Algebra (
     
     -- * Comparison
     -- ** Cmp
-    Cmp, ICmp(iCmp), withCmp,
+    Cmp,
     cmpEq,
     maxBy, minBy,
     lex2Cmp, liftCompare,
@@ -65,12 +65,12 @@ module Math.Algebra.General.Algebra (
     show0x, IntBits, (.&.), (.|.), zeroBits, eiBit, eiBits, hasEIBit, hasEIBits,
     MonoidFlag(Abelian, IsGroup), MonoidFlags, agFlags,
     -- ** Group
-    Group(..), IGroup(iGroup), gFlags, (==:), (*:), gId, gIsId, gInv, withGroup,
-    expt1, (^:), gpExpt, pairGp, pairGp2, gpModF, gpProductL', gpProductR,
+    Group(..), expt1, gpExpt, pairGp, gpModF, gpProductL', gpProductR,
     -- ** AbelianGroup
-    AbelianGroup, agPlus, agZero, agIsZero, agNeg,
-    IAbelianGroup(iAG), (==.), (+.), zero, isZero, neg, withAG,
-    (-.), sumL', sumR,
+    AbelianGroup(), pattern AbelianGroup,   -- @@@ fails: plus, zero, isZero, neg,
+    agPlus, agZero, agIsZero, agNeg,
+    IAbelianGroup(iAG), (==.), (+.), iZero, iIsZero, iNeg, withAG,
+    minus, sumL', sumR,
     
     -- * Rings and fields
     -- ** RingFlags
@@ -78,8 +78,8 @@ module Math.Algebra.General.Algebra (
     integralDomainFlags, divisionRingFlags, fieldFlags,
     -- ** Ring
     Ring(..), rEq, rPlus, rZero, rIsZero, rNeg,
-    IRing(iRing), iRFlags, (*.), one, fromZ, bDiv2, withRing,
-    rIsOne, (/.), nearQuo, smallRem, rInv, divides,
+    IRing(iRing), iRFlags, (*.), iOne, iFromZ, iBDiv, withRing,
+    rIsOne, (/.), exactQuo, nearQuo, smallRem, rInv, divides,
     (^.), rExpt, rSumL', rSumR, rProductL', rProductR,
     -- ** Field
     Field, divisionRing, field, fieldGcd,
@@ -95,12 +95,12 @@ module Math.Algebra.General.Algebra (
     -- * Basic numeric rings
     numAG,
     -- ** Integer
-    zzAG, zzDiv2, zzRing,
+    zzAG, zzDiv, zzRing,
     -- ** Double
     dblAG, dblRing,
     
     -- * Converting \<-> String
-    pairShows,
+    pairShows, showGens,
     plusS, timesS, quoS,
     Prec, applPrec, exptPrec, multPrec, addPrec, ShowPrec,
     trimStart,
@@ -135,10 +135,10 @@ withDict alg k  = unsafeCoerce (Gift k :: Gift cls r) alg
 newtype Gift cls r  = Gift (cls => r)
 #endif
 
-infixr 8    ^., ^:
-infixl 7    *., *:, /.
-infixl 6    +., -.
-infix  4    ==., ==:    -- @@ /=, <, <=, >=, >
+infixr 8    ^.
+infixl 7    *., /.
+infixl 6    +.
+infix  4    ==.     -- @@ /=, <, <=, >=, >
 
 
 -- * Common function types
@@ -200,7 +200,7 @@ pairEq aEq ~bEq (x, ~y) (u, ~v)     = aEq x u && bEq y v
 
 -- ** Cls
 
-newtype Cls a   = Cls { clsRep :: a } deriving (Eq, Show)
+newtype Cls a   = Cls { rep :: a }  deriving (Eq, Show)
 {- ^ A value @(Cls r)@ represents the class of elements \"equivalent\" to @r@ (according to a
     specified equivalence relation). Usually we require @r@ to be \"simple\" or \"normalized\"
     in some way. -}
@@ -218,14 +218,6 @@ type Cmp a      = a -> a -> Ordering
     
     Also, this @==@ is an equivalence relation. If @==@ agrees with abstract equality, then
     @cmp@ is a /total order/. -}
-
-{- | An @(ICmp a)@ is implicitly a 'Cmp', given by 'iCmp'. -}
-class ICmp a where
-    iCmp        :: Cmp a
-
-withCmp         :: forall a r. Cmp a -> (ICmp a => r) -> r
--- ^ Use a @(Cmp a)@ as an @(ICmp a)@.
-withCmp         = withDict @(ICmp a)
 
 cmpEq           :: Cmp a -> EqRel a
 -- ^ > cmpEq cmp x y = cmp x y == EQ
@@ -290,45 +282,18 @@ agFlags             = eiBits [Abelian, IsGroup]
 {- | A @(Group flags eq op ident isIdent inv)@ must satisfy the axioms below. This generalizes
     the notion of a set of composable symmetries (such as translation, rotation, reflection,
     scaling, etc.). -}
-data Group g    = Group {
-    gpFlags :: MonoidFlags,
-    gpEq    :: EqRel g,     -- ^ @eq x y@ must imply abstract equality @x = y@
-    gpOp    :: Op2 g,       -- ^ @op@ is well defined and associative
-    gpId    :: g,           -- ^ @(ident \`op\`) = (\`op\` ident) = id@
-    gpIsId  :: Pred g,      -- ^ @isIdent x = ident \`eq\` x@ for all @x@
-    gpInv   :: Op1 g        -- ^ @(inv x) \`op\` x = x \`op\` (inv x) = ident@ for all @x@;
+data Group g        = Group {
+    monFlags    :: MonoidFlags,
+    eq          :: EqRel g,     -- ^ @eq x y@ must imply abstract equality @x = y@
+    op          :: Op2 g,       -- ^ @op@ is well defined and associative
+    ident       :: g,           -- ^ @(ident \`op\`) = (\`op\` ident) = id@
+    isIdent     :: Pred g,      -- ^ @isIdent x = ident \`eq\` x@ for all @x@
+    inv         :: Op1 g        -- ^ @(inv x) \`op\` x = x \`op\` (inv x) = ident@ for all @x@;
         -- therefore @inv@ is well defined also
 }
 {- ^ A /homomorphism of groups/ is a well defined function @f :: G -> G'@ that satisfies
     @f (op x y) = op' (f x) (f y)@. This implies @f ident = ident'@, and
     @f (inv x) = inv' (f x)@. -}
-
-{- | An @(IGroup a)@ is implicitly a 'Group', given by 'iGroup'. -}
-class IGroup a where
-    iGroup      :: Group a
-
-gFlags          :: forall a. IGroup a => MonoidFlags
--- ^ @gFlags = gpFlags (iGroup @a)@
-gFlags          = gpFlags (iGroup @a)
-(==:)           :: IGroup a => EqRel a
--- ^ @(==:) = gpEq iGroup@
-(==:)           = gpEq iGroup
-(*:)            :: IGroup a => Op2 a
--- ^ @(*:) = gpOp iGroup@
-(*:)            = gpOp iGroup
-gId             :: IGroup a => a
--- ^ @gId = gpId iGroup@
-gId             = gpId iGroup
-gIsId           :: IGroup a => Pred a
--- ^ @gIsId = gpIsId iGroup@
-gIsId           = gpIsId iGroup
-gInv            :: IGroup a => Op1 a
--- ^ @gInv = gpInv iGroup@
-gInv            = gpInv iGroup
-
-withGroup       :: forall a r. Group a -> (IGroup a => r) -> r
--- ^ Use a @(Group a)@ as an @(IGroup a)@.
-withGroup       = withDict @(IGroup a)
 
 expt1           :: Integral b => Op2 a -> a -> b -> a
 -- ^ exponentiation to an integral power \>= 1
@@ -338,104 +303,101 @@ expt1 (*~) x n
     | otherwise = assert (n > 1) $ expt1 (*~) (x *~ x) (n `quot` 2)
 {-# SPECIALIZE expt1 :: Op2 a -> a -> Int -> a #-}
 
-(^:)            :: (IGroup a, Integral b) => a -> b -> a
--- ^ exponentiation to an integral power
-(^:) x n
-    | n > 0     = expt1 (*:) x n
-    | n == 0    = gId
-    | otherwise = gInv (x ^: (- n))
-{-# SPECIALIZE (^:) :: IGroup a => a -> Int -> a #-}
-
 gpExpt          :: Integral b => Group a -> a -> b -> a
--- ^ exponentiation to an integral power, using a 'Group' passed explicitly
-gpExpt gp       = withGroup gp (^:)
+-- ^ exponentiation to an integral power
+gpExpt (Group { .. }) x n
+    | n > 0     = expt1 op x n
+    | n == 0    = ident
+    | otherwise = inv (expt1 op x (- n))
+{-# SPECIALIZE gpExpt :: Group a -> a -> Int -> a #-}
 
-pairGp          :: forall a b. (IGroup a, IGroup b) => Group (a, b)
+pairGp          :: Group a -> Group b -> Group (a, b)
 -- ^ direct product of two groups
-pairGp          =
-    Group (gFlags @a .&. gFlags @b)
-          (pairEq (==:) (==:))
-          (pairOp2 (*:) (*:))
-          (gId, gId)
-          (\ (a, ~b) -> gIsId a && gIsId b)
-          (pairOp1 gInv gInv)
-
-pairGp2         :: Group a -> Group b -> Group (a, b)
--- ^ for passing explicit 'Group'(s) to 'pairGp'
-pairGp2 aGp bGp = withGroup aGp (withGroup bGp pairGp)
+pairGp aGp bGp  =
+    Group (aGp.monFlags .&. bGp.monFlags)
+          (pairEq aGp.eq bGp.eq)
+          (pairOp2 aGp.op bGp.op)
+          (aGp.ident, bGp.ident)
+          (\ (a, ~b) -> aGp.isIdent a && bGp.isIdent b)
+          (pairOp1 aGp.inv bGp.inv)
 
 gpModF          :: Group g -> Op1 g -> MonoidFlags -> Group (Cls g)
 -- ^ @gpModF gp reduce@ is @gp@ modulo a normal subgroup, using @reduce@ to produce @Cls@
 -- (coset) representatives.
-gpModF (Group flags eq op ident isIdent inv) reduce extraFlags  =
+gpModF (Group { .. }) reduce extraFlags     =
     let modF    = Cls . reduce
         redId   = reduce ident
-    in  Group (flags .|. extraFlags)
-            (eq `on` clsRep) (modF .* (op `on` clsRep)) (Cls redId)
-            ((if isIdent redId then isIdent else eq redId) . clsRep)
-            (modF . inv . clsRep)
+    in  Group (monFlags .|. extraFlags)
+            (eq `on` (.rep)) (modF .* (op `on` (.rep))) (Cls redId)
+            ((if isIdent redId then isIdent else eq redId) . (.rep))
+            (modF . inv . (.rep))
 
 gpProductL'     :: Group g -> [g] -> g
 -- ^ product using foldl'
-gpProductL' Group{ gpOp, gpId }     = foldl' gpOp gpId
+gpProductL' Group{ .. }     = foldl' op ident
 
 gpProductR      :: Group g -> [g] -> g
 -- ^ product using foldr
-gpProductR Group{ gpOp, gpId }      = foldr gpOp gpId
+gpProductR Group{ .. }      = foldr op ident
 
 -- ** AbelianGroup
 
 type AbelianGroup       = Group
 {- ^ @op@ must be commutative. We then usually use additive notation, as in the next few
     functions. -}
+pattern AbelianGroup    :: MonoidFlags -> EqRel a -> Op2 a -> a -> Pred a -> Op1 a -> Group a
+pattern AbelianGroup { monFlags, eq, plus, zero, isZero, neg }  =
+    Group { monFlags, eq, op = plus, ident = zero, isIdent = isZero, inv = neg }
+{-# COMPLETE AbelianGroup #-}
+
 agPlus          :: AbelianGroup a -> Op2 a
--- ^ 'agPlus' = 'gpOp'
-agPlus          = gpOp
+-- ^ @agPlus = (.op)@
+agPlus (AbelianGroup { .. })    = plus
 agZero          :: AbelianGroup a -> a
--- ^ 'agZero' = 'gpId'
-agZero          = gpId
+-- ^ @agZero = (.ident)@
+agZero          = (.ident)
 agIsZero        :: AbelianGroup a -> Pred a
--- ^ 'agIsZero' = 'gpIsId'
-agIsZero        = gpIsId
+-- ^ @agIsZero = (.isIdent)@
+agIsZero        = (.isIdent)
 agNeg           :: AbelianGroup a -> Op1 a
--- ^ 'agNeg' = 'gpInv'
-agNeg           = gpInv
+-- ^ @agNeg = (.inv)@
+agNeg           = (.inv)
 
 {- | An @(IAbelianGroup a)@ is implicitly an 'AbelianGroup', given by 'iAG'. -}
 class IAbelianGroup a where
     iAG         :: AbelianGroup a
 
 (==.)           :: IAbelianGroup a => EqRel a
--- ^ @(==.) = gpEq iAG@
-(==.)           = gpEq iAG
+-- ^ @(==.) = iAG.eq@
+(==.)           = iAG.eq
 (+.)            :: IAbelianGroup a => Op2 a
 -- ^ @(+.) = agPlus iAG@
 (+.)            = agPlus iAG
-zero            :: IAbelianGroup a => a
--- ^ @zero = agZero iAG@
-zero            = agZero iAG
-isZero          :: IAbelianGroup a => Pred a
--- ^ @isZero = agIsZero iAG@
-isZero          = agIsZero iAG
-neg             :: IAbelianGroup a => Op1 a
--- ^ @neg = agNeg iAG@
-neg             = agNeg iAG
+iZero           :: IAbelianGroup a => a
+-- ^ @iZero = agZero iAG@
+iZero           = agZero iAG
+iIsZero         :: IAbelianGroup a => Pred a
+-- ^ @iIsZero = agIsZero iAG@
+iIsZero         = agIsZero iAG
+iNeg            :: IAbelianGroup a => Op1 a
+-- ^ @iNeg = agNeg iAG@
+iNeg            = agNeg iAG
 
 withAG          :: forall a r. AbelianGroup a -> (IAbelianGroup a => r) -> r
 -- ^ Use an @(AbelianGroup a)@ as an @(IAbelianGroup a)@.
 withAG          = withDict @(IAbelianGroup a)
 
-(-.)            :: IAbelianGroup a => Op2 a
--- ^ @x -. y = x +. neg y@
-x -. y          = x +. neg y
+minus           :: AbelianGroup a -> Op2 a
+-- ^ @minus ag x y = x `plus` neg y@
+minus (AbelianGroup { .. }) x y  = x `plus` neg y
 
-sumL'           :: IAbelianGroup a => [a] -> a
+sumL'           :: AbelianGroup a -> [a] -> a
 -- ^ sum using foldl'
-sumL'           = gpProductL' iAG
+sumL'           = gpProductL'
 
-sumR            :: IAbelianGroup a => [a] -> a
+sumR            :: AbelianGroup a -> [a] -> a
 -- ^ sum using foldr
-sumR            = gpProductR iAG
+sumR            = gpProductR
 
 
 -- * Rings and fields
@@ -466,19 +428,19 @@ fieldFlags          = divisionRingFlags .|. eiBit IsCommutativeRing
 
 -- ** Ring
 
-{- | A @(Ring ag (*~) one' fromZ' bDiv2')@ must satisfy the axioms below. Examples include the
+{- | A @(Ring ag (*~) one fromZ bDiv)@ must satisfy the axioms below. Examples include the
     integers ℤ, and other rings of algebraic numbers, polynomials, n x n matrices, etc. -}
-data Ring a     = Ring {
-    rAG     :: AbelianGroup a,
-    rFlags  :: RingFlags,
-    rTimes  :: Op2 a,       -- ^ @(*.)@ is well defined, distributes over @plus@, and is
+data Ring a         = Ring {
+    ag          :: AbelianGroup a,
+    rFlags      :: RingFlags,
+    times       :: Op2 a,       -- ^ @(*.)@ is well defined, distributes over @plus@, and is
         -- normally associative
-    rOne    :: a,           -- ^ @(one *.) = (*. one) = id@
-    rFromZ  :: Integer -> a,    -- ^ the unique ring homomorphism from Z to this ring
-    rBDiv2  :: Bool -> a -> a -> (a, a)     {- ^ @bDiv2 doFull y m = (q, r) => y = m*q + r@ and
+    one     :: a,           -- ^ @(one *.) = (*. one) = id@
+    fromZ   :: Integer -> a,    -- ^ the unique ring homomorphism from Z to this ring
+    bDiv    :: Bool -> a -> a -> (a, a)     {- ^ @bDiv doFull y m = (q, r) => y = m*q + r@ and
         @r@'s \"size\" is (attempted to be) minimized. If @doFull@, then all of @r@ is
         minimized; else just its \"topmost\" nonzero \"term\" is. (Words such as \"size\" have
-        meanings that vary by context. Also in general, the results of @bDiv2@ may not be
+        meanings that vary by context. Also in general, the results of @bDiv@ may not be
         uniquely determined by these requirements.) -}
 }
 -- ^ A ring is /commutative/ if @*.@ is. A /unit/ is an element @x@ such that there exists a
@@ -488,77 +450,81 @@ data Ring a     = Ring {
 -- also satisfies @f (x *. y) = f x *. f y@ and @f one = one'@.
 
 rEq             :: Ring a -> EqRel a
--- ^ > rEq = gpEq . rAG
-rEq             = gpEq . rAG
+-- ^ > rEq = (.eq) . (.ag)
+rEq aR          = aR.ag.eq
 rPlus           :: Ring a -> Op2 a
--- ^ > rPlus = agPlus . rAG
-rPlus           = agPlus . rAG
+-- ^ > rPlus = agPlus . (.ag)
+rPlus           = agPlus . (.ag)
 rZero           :: Ring a -> a
--- ^ > rZero = agZero . rAG
-rZero           = agZero . rAG
+-- ^ > rZero = agZero . (.ag)
+rZero           = agZero . (.ag)
 rIsZero         :: Ring a -> Pred a
--- ^ > rIsZero = agIsZero . rAG
-rIsZero         = agIsZero . rAG
+-- ^ > rIsZero = agIsZero . (.ag)
+rIsZero         = agIsZero . (.ag)
 rNeg            :: Ring a -> Op1 a
--- ^ > rNeg = agNeg . rAG
-rNeg            = agNeg . rAG
+-- ^ > rNeg = agNeg . (.ag)
+rNeg            = agNeg . (.ag)
 
 {- | An @(IRing a)@ is implicitly a 'Ring', given by 'iRing'. -}
 class IRing a where
     iRing       :: Ring a
 instance {-# INCOHERENT #-} IRing a => IAbelianGroup a where
-    iAG         = rAG iRing
+    iAG         = iRing.ag
 
 iRFlags         :: forall a. IRing a => RingFlags
--- ^ @iRFlags  = rFlags (iRing @a)@
-iRFlags         = rFlags (iRing @a)
+-- ^ @iRFlags  = (iRing @a).rFlags@
+iRFlags         = (iRing @a).rFlags
 (*.)            :: IRing a => Op2 a
--- ^ @(*.) = rTimes iRing@
-(*.)            = rTimes iRing
-one             :: IRing a => a
--- ^ @one = rOne iRing@
-one             = rOne iRing
-fromZ           :: IRing a => Integer -> a
--- ^ @fromZ = rFromZ iRing@
-fromZ           = rFromZ iRing
-bDiv2           :: IRing a => Bool -> a -> a -> (a, a)
--- ^ @bDiv2 = rBDiv2 iRing@
-bDiv2           = rBDiv2 iRing
+-- ^ @(*.) = iRing.times@
+(*.)            = iRing.times
+iOne            :: IRing a => a
+-- ^ @iOne = iRing.one@
+iOne            = iRing.one
+iFromZ          :: IRing a => Integer -> a
+-- ^ @iFromZ = iRing.fromZ@
+iFromZ          = iRing.fromZ
+iBDiv           :: IRing a => Bool -> a -> a -> (a, a)
+-- ^ @iBDiv = iRing.bDiv@
+iBDiv           = iRing.bDiv
 
 withRing        :: forall a t. Ring a -> (IRing a => t) -> t
 -- ^ Use a @(Ring a)@ as an @(IRing a)@.
 withRing        = withDict @(IRing a)
 
 rIsOne          :: Ring a -> Pred a
--- ^ > rIsOne aR = rEq aR (rOne aR)
-rIsOne aR       = rEq aR (rOne aR)
+-- ^ > rIsOne aR = rEq aR aR.one
+rIsOne aR       = rEq aR aR.one
 
 (/.)            :: IRing a => Op2 a
--- ^ exact quotient, i.e. division (@bDiv2 False@) should have zero remainder
+-- ^ exact quotient, i.e. division (@bDiv False@) should have zero remainder
 y /. m          =
-    let (q, r)      = bDiv2 False y m
-    in  if isZero r then q else error "division is not exact"
+    let (q, r)      = iBDiv False y m
+    in  if iIsZero r then q else error "division is not exact"
+
+exactQuo        :: Ring a -> Op2 a
+-- ^ exact quotient, i.e. division (@bDiv False@) should have zero remainder
+exactQuo rR     = withRing rR (/.)
 
 nearQuo                 :: Ring a -> Bool -> Op2 a
--- ^ > nearQuo rR doFull y m = fst (rBDiv2 rR doFull y m)
-nearQuo rR doFull y m   = fst (rBDiv2 rR doFull y m)
+-- ^ > nearQuo rR doFull y m = fst (rR.bDiv doFull y m)
+nearQuo rR doFull y m   = fst (rR.bDiv doFull y m)
 smallRem                :: Ring a -> Bool -> Op2 a
--- ^ > smallRem rR doFull y m = snd (rBDiv2 rR doFull y m)
-smallRem rR doFull y m  = snd (rBDiv2 rR doFull y m)
+-- ^ > smallRem rR doFull y m = snd (rR.bDiv doFull y m)
+smallRem rR doFull y m  = snd (rR.bDiv doFull y m)
 
 rInv            :: IRing a => Op1 a
--- ^ > rInv = (one /.)
-rInv            = (one /.)
+-- ^ > rInv = (iOne /.)
+rInv            = (iOne /.)
 
 divides         :: IRing a => a -> a -> Bool
 -- ^ whether an element divides another element; note the arguments are reversed from division
-divides d y     = isZero (snd (bDiv2 False y d))
+divides d y     = iIsZero (snd (iBDiv False y d))
 
 (^.)            :: (IRing a, Integral b) => a -> b -> a
 -- ^ exponentiation to an integral power
 (^.) x n
     | n > 0     = expt1 (*.) x n
-    | n == 0    = one
+    | n == 0    = iOne
     | otherwise = rInv (x ^. (- n))
 {-# SPECIALIZE (^.) :: IRing a => a -> Int -> a #-}
 
@@ -568,19 +534,19 @@ rExpt aR        = withRing aR (^.)
 
 rSumL'          :: Ring a -> [a] -> a
 -- ^ sum using foldl'
-rSumL' aR       = withAG (rAG aR) sumL'
+rSumL' aR       = sumL' aR.ag
 
 rSumR           :: Ring a -> [a] -> a
 -- ^ sum using foldr
-rSumR aR        = withAG (rAG aR) sumR
+rSumR aR        = sumR aR.ag
 
 rProductL'      :: Ring g -> [g] -> g
 -- ^ product using foldl'
-rProductL' Ring{ rTimes, rOne }     = foldl' rTimes rOne
+rProductL' Ring{ .. }   = foldl' times one
 
 rProductR       :: Ring g -> [g] -> g
 -- ^ product using foldr
-rProductR Ring{ rTimes, rOne }      = foldr rTimes rOne
+rProductR Ring{ .. }    = foldr times one
 
 -- ** Field
 
@@ -590,19 +556,19 @@ type Field      = Ring
 
 divisionRing    :: AbelianGroup a -> RingFlags -> Op2 a -> a -> (Integer -> a) -> Op1 a ->
                     Ring a
--- ^ @divisionRing ag extraFlags (*~) one' fromZ' inv@ creates a division ring
-divisionRing ag extraFlags (*~) one' fromZ' inv     =
-    let zero'       = agZero ag
-        bDiv2' _ y m    = if agIsZero ag m then (zero', y) else (inv m *~ y, zero')
-    in  Ring ag (divisionRingFlags .|. extraFlags) (*~) one' fromZ' bDiv2'
+-- ^ @divisionRing ag extraFlags (*~) one fromZ inv@ creates a division ring
+divisionRing ag extraFlags (*~) one fromZ inv   =
+    let zero        = agZero ag
+        bDiv _ y m      = if agIsZero ag m then (zero, y) else (inv m *~ y, zero)
+    in  Ring ag (divisionRingFlags .|. extraFlags) (*~) one fromZ bDiv
 
 field           :: AbelianGroup a -> Op2 a -> a -> (Integer -> a) -> Op1 a -> Field a
--- ^ @field ag (*~) one' fromZ' inv@ creates a 'Field'
+-- ^ @field ag (*~) one fromZ inv@ creates a 'Field'
 field ag        = divisionRing ag fieldFlags
 
 fieldGcd        :: Field a -> Op2 a
 -- ^ creates a gcd (greatest common divisior) function for a 'Field'
-fieldGcd (Ring ag _ _ one' _ _) x y = if agIsZero ag x && agIsZero ag y then agZero ag else one'
+fieldGcd (Ring ag _ _ one _ _) x y  = if agIsZero ag x && agIsZero ag y then agZero ag else one
 
 
 -- * Modules and R-algebras
@@ -614,26 +580,25 @@ fieldGcd (Ring ag _ _ one' _ _) x y = if agIsZero ag x && agIsZero ag y then agZ
     Abelian group M together with a ring homomorphism R -> End(M). A /right module over R/
     has the same definition, but with function composition defined on the right, i.e. by
     @(flip .)@. A /module/ is either a left module or a right module. -}
-data Module r m = Module { mdAG :: AbelianGroup m, mdScale :: r -> Op1 m }
+data Module r m     = Module { ag :: AbelianGroup m, scale :: r -> Op1 m }
 {- ^ A /vector space/ is a module over a field.
 
     A /homomorphism of R-modules/ or /R-linear map/ @f :: M -> M'@ is an additive homomorphism
     that also satisfies @f (r \`scale\` m) = r \`scale\` f m@. -}
 
-type RMod       = Module
+type RMod           = Module
 -- ^ a left module over R
-type ModR       = Module
+type ModR           = Module
 -- ^ a right module over R
 
-pairMd          :: Module r a -> Module r b -> Module r (a, b)
+pairMd              :: Module r a -> Module r b -> Module r (a, b)
 -- ^ direct sum (or product) of two modules
-pairMd aMd bMd  =
-    Module (pairGp2 (mdAG aMd) (mdAG bMd)) (\r -> pairOp1 (mdScale aMd r) (mdScale bMd r))
+pairMd aMd bMd      = Module (pairGp aMd.ag bMd.ag) (\r -> pairOp1 (aMd.scale r) (bMd.scale r))
 
-mdModF          :: Module r a -> Op1 a -> Module r (Cls a)
+mdModF              :: Module r a -> Op1 a -> Module r (Cls a)
 {- ^ @mdModF md reduce@ is @md@ modulo a submodule, using @reduce@ to produce @Cls@ (coset)
     representatives. -}
-mdModF (Module ag scale) reduce     =
+mdModF (Module { .. }) reduce     =
     let modF    = Cls . reduce
     in  Module (gpModF ag reduce zeroBits) (\ r (Cls m) -> modF (scale r m))
 
@@ -642,15 +607,15 @@ mdModF (Module ag scale) reduce     =
 {- | Given a commutative ring @R@, an /R-algebra/ is a ring @A@ together with a ring
     homomorphism @R -> center(A)@. (The /center/ of a group or ring is the set of elements that
     commute with every element of the group or ring.) This makes @A@ into an @R-module@. -}
-data RAlg r a   = RAlg {
-    algRing     :: Ring a,
-    algScale    :: r -> Op1 a,
-    algFromR    :: r -> a
+data RAlg r a       = RAlg {
+    aR          :: Ring a,
+    scale       :: r -> Op1 a,
+    fromR       :: r -> a
 }
 
 algMd           :: RAlg r a -> Module r a
--- ^ > algMd (RAlg aRing scale _) = Module (rAG aRing) scale
-algMd (RAlg aRing scale _)      = Module (rAG aRing) scale
+-- ^ > algMd (RAlg { .. }) = Module aR.ag scale
+algMd (RAlg { .. })     = Module aR.ag scale
 
 
 -- * Basic numeric rings
@@ -665,17 +630,17 @@ zzAG            :: AbelianGroup Integer
 -- ^ the integers ℤ under addition
 zzAG            = numAG
 
-zzDiv2          :: Bool -> Integer -> Integer -> (Integer, Integer)
+zzDiv           :: Bool -> Integer -> Integer -> (Integer, Integer)
 -- ^ integer division, rounding toward 0
-zzDiv2 _ n d
+zzDiv _ n d
     | d == 0    = (0, n)
-    | d < 0     = let (q, r) = zzDiv2 False n (- d) in (- q, r)
+    | d < 0     = let (q, r) = zzDiv False n (- d) in (- q, r)
     | otherwise = let (q, r) = divMod n d
                   in  if 2*r < d then (q, r) else (q + 1, r - d)
 
 zzRing          :: Ring Integer
 -- ^ the ring of integers ℤ
-zzRing          = Ring zzAG integralDomainFlags (*) 1 id zzDiv2
+zzRing          = Ring zzAG integralDomainFlags (*) 1 id zzDiv
 
 instance IRing Integer where
     iRing       = zzRing
@@ -695,6 +660,10 @@ dblRing         = field dblAG (*) 1 fromInteger recip
 
 pairShows               :: (a -> ShowS) -> (b -> ShowS) -> (a, b) -> ShowS
 pairShows aShows bShows (a, b) t    = '(' : aShows a (',' : bShows b (')' : t))
+
+showGens                    :: (g -> String) -> [g] -> String
+showGens _gShow []          = "⟨ ⟩"
+showGens  gShow (g0 : gs)   = "⟨ " ++ gShow g0 ++ foldr (\g s -> ", " ++ gShow g ++ s) " ⟩" gs
 
 
 plusS           :: String -> String -> String
@@ -746,47 +715,47 @@ zzReads s       = case trimStart s of
     '-':t   -> [(- n, u) | (n, u) <- readDec (trimStart t)]
     t       -> readDec t
 
-agReads         :: forall g. IAbelianGroup g => ReadS g -> ReadS g
+agReads         :: forall g. AbelianGroup g -> ReadS g -> ReadS g
 -- ^ read a possible sum of terms or \"-\" terms, given a function to read a single term
-agReads termReads   =
+agReads (AbelianGroup { .. }) termReads     =
     let sumReads            :: Maybe g -> ReadS g   -- result is mg followed by s
         sumReads mg s       = case trimStart s of
                                 '-':t   -> reads1 mg neg t
                                 '+':t   -> reads1 mg id t
                                 _       -> maybe (reads1 mg id s) (\ g -> [(g, s)]) mg
         reads1              :: Maybe g -> Op1 g -> ReadS g  -- mg + (f(next term) + rest of s)
-        reads1 mg f s       = [(maybe y (y +.) mg, u)
+        reads1 mg f s       = [(maybe y (y `plus`) mg, u)
                               | (x, t) <- termReads s,
                                 (y, u) <- sumReads (Just (f x)) t]
     in  sumReads Nothing      -- right-associative sum for efficiency in common cases
 
-rngReads        :: forall r. IRing r => ReadS r -> ReadS r
+rngReads        :: forall r. Ring r -> ReadS r -> ReadS r
 {- ^ read a ring element as a sum of products or quotients of powers of \"atom\"s, given a
     function to read an \"atom\" -}
-rngReads atomReads  =
+rngReads rR@(Ring { .. }) atomReads     =
     let rReads, power       :: ReadS r
-        rReads      = agReads termReads
+        rReads      = agReads ag termReads
         power s     = do
             let t = trimStart s
             (base, u) <- case t of
                 '(':_   -> readParen True rReads t
                 _       -> atomReads t
             case trimStart u of
-                '^':v   -> [(base ^. e, w) | (e, w) <- zzReads v]
+                '^':v   -> [(rExpt rR base e, w) | (e, w) <- zzReads v]
                 v       -> [(base, v)]
         product2            :: (r, String) -> [(r, String)]
         product2 (r, s)     =
             case trimStart s of
-                '/':u   -> concatMap (\(d, v) -> product2 (r /. d, v)) (power u)
+                '/':u   -> concatMap (\(d, v) -> product2 (exactQuo rR r d, v)) (power u)
                 u       -> case power u of
                             []  -> [(r, u)]
-                            pvs -> concatMap (\(d, v) -> product2 (r *. d, v)) pvs
+                            pvs -> concatMap (\(d, v) -> product2 (r `times` d, v)) pvs
         termReads s = concatMap product2 (power s)
     in  rReads
 
-polynomReads    :: IRing p => [(String, p)] -> ReadS p
+polynomReads    :: Ring p -> [(String, p)] -> ReadS p
 -- ^ read a polynomial, given a list of variables. Each variable must have precedence > '^'.
-polynomReads varSRs     =
+polynomReads rR@(Ring { .. }) varSRs    =
     let digitsOrVarReads s  =
             let s' = trimStart s
             in  case s' of
@@ -795,4 +764,4 @@ polynomReads varSRs     =
                     | (varS, var) <- varSRs,
                       t <- maybeToList (stripPrefix varS s'),
                       null t || not (isDigit (head t))]
-    in  rngReads digitsOrVarReads
+    in  rngReads rR digitsOrVarReads

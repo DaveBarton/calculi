@@ -24,7 +24,7 @@ zpwTestOps              = ((zpShow, gen), testEq)
     (zpField, balRep)   = zzModPW @p
     zpShow          = show . balRep
     testEq          = diffWith zpShow (rEq zpField)
-    gen             = fmap (rFromZ zpField) (Gen.integral (Range.constantFrom 0 (- lim) lim))
+    gen             = fmap zpField.fromZ (Gen.integral (Range.constantFrom 0 (- lim) lim))
     p               = fromIntegral (natVal (Proxy :: Proxy p))
     lim             = p `quot` 2
 
@@ -34,20 +34,20 @@ test1 p                 = case someNatVal (fromInteger p) of
   where
     (zpField, balRep)   = zzModPW @p
     (sg, testEq)    = zpwTestOps @p
-    fromZ'          = rFromZ zpField
+    fromZ           = zpField.fromZ
     lim             = p `quot` 2
     props           = withRing zpField fieldProps sg testEq
                         ++ [("p0", p0),
                             ("balRepIsRep", balRepIsRep), ("balRepIsSmall", balRepIsSmall)]
         -- fieldProps checks zzRing -> zpField is a homomorphism, 0 /= 1
-    p0              = propertyOnce $ fromZ' p `testEq` rZero zpField
-    balRepIsRep     = property $ sameFun1PT sg testEq (fromZ' . balRep) id
+    p0              = propertyOnce $ fromZ p `testEq` rZero zpField
+    balRepIsRep     = property $ sameFun1PT sg testEq (fromZ . balRep) id
     balRepIsSmall   = property $ do
         x       <- genVis sg
         let n   = balRep x
         annotateShow n
         assert $ abs n <= lim
-        -- if p == 2, could also specify & check (balRep (rOne zpField)), i.e. 1 or -1
+        -- if p == 2, could also specify & check (balRep zpField.one), i.e. 1 or -1
 
 testZModP32             :: IO Bool
 testZModP32             = checkAll $ map test1 primes

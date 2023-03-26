@@ -33,19 +33,19 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
     (cSG@(cShow, cGen), cTestEq)    = zpwTestOps @2_000_003
     epru            = withRing cRing epRingUniv nVars gRevLex
     UnivL epRing (RingTgtXs cToEp varEps) epUnivF   = epru
-    nT              = rFromZ cRing
-    nextT b         = rPlus cRing (rTimes cRing (nT 1234) b) (nT 567)
+    nT              = cRing.fromZ
+    nextT b         = rPlus cRing (cRing.times (nT 1234) b) (nT 567)
     ts              = take nVars (unfoldr (\b -> Just (b, nextT b)) (nT 12345))
     epToT           = epUnivF cRing (RingTgtXs id ts)
     varSs           = map (: []) (take nVars ['a' .. 'z'])
     GBPolyOps { pShow }     = epGBPOps gRevLex True cRing varSs (const cShow)
     testEq          = diffWith pShow (rEq epRing)
-    varPowGen       = liftM2 (expt1 (rTimes epRing)) (Gen.element varEps)
+    varPowGen       = liftM2 (expt1 (epRing.times)) (Gen.element varEps)
                         (Gen.int (Range.exponential 1 200_000))
     monomGen        = do
         c       <- cGen
         varPows <- Gen.list (Range.linear 0 nVars) varPowGen
-        pure $ rTimes epRing (cToEp c) (rProductL' epRing varPows)
+        pure $ epRing.times (cToEp c) (rProductL' epRing varPows)
     epGen           = fmap (rSumL' epRing) (Gen.list (Range.linear 0 10) monomGen)
     sg              = (pShow, epGen)
     
@@ -56,8 +56,7 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
                         ++ [("C -> T", property $ sameFun1PT cSG cTestEq (epToT . cToEp) id),
                             ("xs ->",
                                 propertyOnce $ listTestEq cShow cTestEq (map epToT varEps) ts),
-                            readsProp sg testEq
-                                (withRing epRing polynomReads (zip varSs varEps))]
+                            readsProp sg testEq (polynomReads epRing (zip varSs varEps))]
 
 testEPoly               :: IO Bool
 testEPoly               = checkAll $ map test1 [1, 2, 3, 5, 9, 14, 20]

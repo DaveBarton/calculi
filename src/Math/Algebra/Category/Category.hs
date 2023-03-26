@@ -1,4 +1,4 @@
-{-# LANGUAGE NoMonoLocalBinds, Strict #-}
+{-# LANGUAGE FieldSelectors, NoMonoLocalBinds, Strict #-}
 
 {- |  This module defines the most common types of categories, functors and universal
     properties.

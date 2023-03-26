@@ -1,4 +1,4 @@
-{-# LANGUAGE NoFieldSelectors, Strict #-}
+{-# LANGUAGE Strict #-}
 
 {- |  A 'SparseSum' is a linear combination where zero terms are omitted.
     
@@ -137,25 +137,26 @@ ssFoldr f       = foldr (\(SSTerm c d) -> f c d)
 ssNumTerms      :: SparseSum c d -> Int
 ssNumTerms      = length
 
-ssAGUniv        :: forall c d. IAbelianGroup c => Cmp d -> SparseSumUniv d c
-ssAGUniv dCmp   = UnivL ssAG (TgtArrsF dcToSS) univF
+ssAGUniv        :: forall c d. AbelianGroup c -> Cmp d -> SparseSumUniv d c
+ssAGUniv (AbelianGroup _cFlags eq plus _zero isZero neg) dCmp   =
+    UnivL ssAG (TgtArrsF dcToSS) univF
   where
-    ssLead'     = ssLead (isZero @c)
+    ssLead'     = ssLead isZero
     -- {-# SCC ssPlus #-}
     ssPlus      :: Op2 (SparseSum c d)
     ssPlus s@(t@(SSTerm ~c d) :! ~r) s'@(t'@(SSTerm ~c' d') :! ~r') =   -- {-# SCC ssPlusNZ #-}
         case d `dCmp` d' of
             GT  -> t  :! (r `ssPlus` s')
             LT  -> t' :! (s `ssPlus` r')
-            EQ  -> ssLead' (c +. c') d (r `ssPlus` r')
+            EQ  -> ssLead' (c `plus` c') d (r `ssPlus` r')
     ssPlus s                         SL.Nil                         = s
     ssPlus SL.Nil                    t                              = t
-    ssNeg       = ssMapNZFC (neg @c)
+    ssNeg       = ssMapNZFC neg
     ssEq        :: EqRel (SparseSum c d)
     ssEq SSZero SSZero  = True
     ssEq SSZero _       = False
     ssEq _      SSZero  = False
-    ssEq (SSNZ c d ~r) (SSNZ c' d' ~r')     = dCmp d d' == EQ && c ==. c' && ssEq r r'
+    ssEq (SSNZ c d ~r) (SSNZ c' d' ~r')     = dCmp d d' == EQ && eq c c' && ssEq r r'
     ssAG        = Group agFlags ssEq ssPlus SSZero ssIsZero ssNeg
     dcToSS d c  = ssLead' c d SSZero
     univF (Group _ _ vPlus vZero _ _) (TgtArrsF dcToV)  = go
@@ -166,7 +167,7 @@ ssAGUniv dCmp   = UnivL ssAG (TgtArrsF dcToSS) univF
 ssDotWith       :: IAbelianGroup c2 => Cmp d -> (c -> c1 -> c2) ->
                         SparseSum c d -> SparseSum c1 d -> c2
 ssDotWith dCmp f    = dot where
-    dot s s'     = if ssIsZero s || ssIsZero s' then zero else
+    dot s s'     = if ssIsZero s || ssIsZero s' then iZero else
         let d = ssDegNZ s
             e = ssDegNZ s'
         in case d `dCmp` e of
@@ -178,10 +179,10 @@ ssNZCTimes      :: forall c d. IRing c => c -> Op1 (SparseSum c d)
 -- ^ the @c@ is nonzero
 ssNZCTimes
     | hasEIBit (iRFlags @c) NoZeroDivisors  = \c -> ssMapNZFC (c *.)
-    | otherwise                             = \c -> ssMapC isZero (c *.)
+    | otherwise                             = \c -> ssMapC iIsZero (c *.)
 
 ssCTimes        :: IRing c => c -> Op1 (SparseSum c d)
-ssCTimes c s    = if isZero c then SSZero else ssNZCTimes c s
+ssCTimes c s    = if iIsZero c then SSZero else ssNZCTimes c s
 
 ssMonicize      :: IRing c => Op1 (SparseSum c d)
 -- ^ @(ssMonicize s)@ requires that @s@ is nonzero, and its leading coefficient is a unit
@@ -193,20 +194,20 @@ ssTimesNZC      :: forall c d. IRing c => c -> Op1 (SparseSum c d)
 -- ^ the @c@ is nonzero
 ssTimesNZC
     | hasEIBit (iRFlags @c) NoZeroDivisors  = \c -> ssMapNZFC (*. c)
-    | otherwise                             = \c -> ssMapC isZero (*. c)
+    | otherwise                             = \c -> ssMapC iIsZero (*. c)
 
 ssTimesC        :: IRing c => c -> Op1 (SparseSum c d)
-ssTimesC c s    = if isZero c then SSZero else ssTimesNZC c s
+ssTimesC c s    = if iIsZero c then SSZero else ssTimesNZC c s
 
 ssTimesNZMonom  :: forall c d. IRing c => Op2 d -> SparseSum c d -> d -> c -> SparseSum c d
 -- ^ assumes the @Op2 d@ is order-preserving in each argument, and the @c@ is nonzero
 ssTimesNZMonom dOp2
     | hasEIBit (iRFlags @c) NoZeroDivisors  = \s d c -> ssShiftMapNZFC (`dOp2` d) (*. c) s
-    | otherwise                             = \s d c -> ssShiftMapC isZero (`dOp2` d) (*. c) s
+    | otherwise                             = \s d c -> ssShiftMapC iIsZero (`dOp2` d) (*. c) s
 
 ssTimesMonom    :: IRing c => Op2 d -> SparseSum c d -> d -> c -> SparseSum c d
 -- ^ assumes the @Op2 d@ is order-preserving in each argument
-ssTimesMonom dOp2 s d c     = if isZero c then SSZero else ssTimesNZMonom dOp2 s d c
+ssTimesMonom dOp2 s d c     = if iIsZero c then SSZero else ssTimesNZMonom dOp2 s d c
 
 ssTimes         :: IRing c => SparseSumUniv d c -> Op2 d -> Op2 (SparseSum c d)
 -- ^ assumes the @Op2 d@ is order-preserving in each argument

@@ -27,7 +27,7 @@ gbDemo          :: String -> Integer -> [String] -> [String] -> Int -> Int -> IO
 gbDemo name p varSs genSs nCores gbTrace    = case someNatVal (fromInteger p) of
  SomeNat (Proxy :: Proxy p)     -> do
     putStr $ name ++ " "
-    _           <- groebnerBasis gbpA gens nCores gbTrace
+    let _gbi    = fromGens gens
     putChar '\n'
   where
     (cField, cBalRep)   = zzModPW @p
@@ -35,8 +35,8 @@ gbDemo name p varSs genSs nCores gbTrace    = case someNatVal (fromInteger p) of
     nVars       = length varSs
     epru        = withRing cField epRingUniv nVars gRevLex
     UnivL epRing (RingTgtXs _cToEp varEps) _epUnivF     = epru
-    gens        = map ((\ [(x,"")] -> x) . withRing epRing polynomReads (zip varSs varEps))
-                    genSs
+    SubmoduleOps { .. }     = gbiSmOps gbpA nCores gbTrace
+    gens        = map ((\ [(x,"")] -> x) . polynomReads epRing (zip varSs varEps)) genSs
 
 simpleDemo, buchberger87, gerdt93, katsura5, katsura6, katsura7, katsura8, katsura10,
     hCyclic4, cyclic4, hCyclic5, cyclic5, hCyclic6, cyclic6, hCyclic7, cyclic7,
