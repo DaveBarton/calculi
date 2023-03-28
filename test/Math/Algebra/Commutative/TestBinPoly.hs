@@ -86,8 +86,9 @@ test1 nVars sec = checkGroup ("BinPoly " ++ show nVars ++ " " ++ show sec) props
     isGraded        = secIsGraded sec
     xVarSs          = ['X' : show n | n <- [1 :: Int ..]]
     varSs           = take nVars (map (: []) ['a' .. 'z'] ++ xVarSs)
+    useSugar        = False -- @@@ change to use Gen.bool
     bpA2@(gbpA@(GBPolyOps { evShow, pR, pShow }), BPOtherOps { bpVar, pAt })    =
-        bp58Ops evCmp isGraded varSs
+        bp58Ops evCmp isGraded varSs useSugar
     varPs           = map bpVar [0 .. nVars - 1]
     mask            = bit nVars - 1     :: Word64
     vals            = 0x6789abcdef012345 .&. mask

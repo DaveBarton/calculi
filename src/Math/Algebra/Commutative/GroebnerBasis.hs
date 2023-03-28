@@ -142,7 +142,7 @@ cpuElapsedStr cpuTime0 sysTime0 mStats0     = do
 
 
 data SPair ev       = SPair { i, j :: Int, h :: Word, m :: ev }
-    -- i, j, "sugar" (homog) degree, LCM of head evs of gens i and j
+    -- i, j, "sugar" (homog) degree if useSugar, LCM of head evs of gens i and j
 
 {- | 'GBPolyOps' are the operations on Exponent Vectors @ev@ and Polynomials @p@ that are needed
     by our (Buchberger) Groebner Basis algorithm. An Exponent Vector is abstractly a vector of
@@ -166,7 +166,8 @@ data GBPolyOps ev term p    = GBPolyOps {
     numTerms    :: p -> Int,
     cons        :: term -> p -> p,  -- ^ the first argument must be more main than the second
     unconsNZ    :: p -> (term, p),  -- ^ the argument must be nonzero
-    pShow       :: p -> String      -- ^ e.g. for debugging or logging
+    pShow       :: p -> String,     -- ^ e.g. for debugging or logging
+    useSugar    :: Bool             -- ^ use "sugar" (homogeneous degree) heuristic
 }
 
 
@@ -178,7 +179,7 @@ spCmp evCmp useSugar (SPair i1 j1 h1 ev1) (SPair i2 j2 h2 ev2)  =
     (if useSugar then (compare h1 h2 <>) else id)
         (evCmp ev1 ev2 <> compare j1 j2 <> compare i1 i2)
 
-type SortedSPairs ev    = SL.List (SPair ev)    -- sorted using (spCmp evCmp True)
+type SortedSPairs ev    = SL.List (SPair ev)    -- sorted using (spCmp evCmp useSugar)
 
 data EPolyHDeg p    = EPolyHDeg { p :: p, h :: Word }   -- poly and "sugar" homog degree
 
@@ -193,10 +194,10 @@ giNew (GBPolyOps { leadEvNZ, evTotDeg }) (EPolyHDeg p h)    =
 {-# SCC updatePairs #-}
 updatePairs     :: forall ev term p. GBPolyOps ev term p -> [Maybe (GBGenInfo ev)] ->
                     SortedSPairs ev -> GBGenInfo ev -> ([Int], SortedSPairs ev, SortedSPairs ev)
-updatePairs (GBPolyOps { evCmp, evDivides, evLCM, evTotDeg, extraSPairs }) gMGis ijcs tGi   =
-    (skipIs, skipIJCs, addITCs)
+updatePairs (GBPolyOps { evCmp, evDivides, evLCM, evTotDeg, extraSPairs, useSugar })
+    gMGis ijcs tGi      = (skipIs, skipIJCs, addITCs)
   where
-    hEvCmp          = spCmp evCmp True          :: Cmp (SPair ev)
+    hEvCmp          = spCmp evCmp useSugar      :: Cmp (SPair ev)
     lcmCmp          = evCmp `on` (.m)           :: Cmp (SPair ev)   -- note not a total order
     hCmp            = compare `on` (.h)         :: Cmp (SPair ev)
     giLcm gi1 gi2   = GBGenInfo (evLCM gi1.ev gi2.ev) (max gi1.dh gi2.dh)
@@ -228,13 +229,13 @@ updatePairs (GBPolyOps { evCmp, evDivides, evLCM, evTotDeg, extraSPairs }) gMGis
         noDivs c    = divEq (itcsToC (fromJust (firstDiv c))) c
     gMEvsA          = listArray (0, t - 1) (map (fmap (.ev)) gMGis)
                         :: Array Int (Maybe ev)
-    bestH           = minimumBy hCmp
+    bestH           = if useSugar then minimumBy hCmp else head
     itcs'           = mapMaybe (\gp -> if any buch2 gp then Nothing else Just (bestH gp)) itcss'
       where             -- criterion F_jk and Buchberger's 2nd criterion (gi and gt rel. prime)
         buch2 (SPair i j _ c)     = assert (j == t)
             (evTotDeg (fromJust (gMEvsA ! i)) + evTotDeg tEv == evTotDeg c)
     addITCs         = SL.fromList
-                        (sortBy hEvCmp (itcs' ++ extraSPairs tEv t (evTotDeg tEv + tGi.dh)))
+                        (sortBy hEvCmp (extraSPairs tEv t (evTotDeg tEv + tGi.dh) ++ itcs'))
 
 
 data SizedEPoly p   = SizedEPoly { n :: Int, p :: p }
@@ -312,7 +313,7 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
     gkgsInsert          :: EPolyHDeg p -> Op1 (GapsKerGens p)
     gkgsInsert (EPolyHDeg p hDeg)     = go    -- p /= 0, nEvGroups > 0
       where
-        gap                     = hDeg - evTotDeg (leadEvNZ p)
+        gap                     = if useSugar then hDeg - evTotDeg (leadEvNZ p) else 0
         go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
             if gap == gap0 then G1KGs gap (kgsInsert p kgs0) :! t
             else if maybe True ((gap <) . (.gap)) (SL.headMaybe t) then
@@ -341,7 +342,7 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
     gkgsDelete (EPolyHDeg p hDeg)     = go      -- p in gkgs (so p /= 0, nEvGroups > 0),
                                                 -- (leadEvNZ p) unique in gkgs
       where
-        gap                     = hDeg - evTotDeg (leadEvNZ p)
+        gap                     = if useSugar then hDeg - evTotDeg (leadEvNZ p) else 0
         go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
             if gap == gap0 then G1KGs gap (kgsDelete p kgs0) :! t
             else h :! go t
@@ -376,7 +377,7 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
     -- returns the best (least sugar gap, then shortest) top-reducer, if any
     gkgsFindReducer p gkgs  = listToMaybe (mapMaybe find1 (toList gkgs))
       where
-        find1 (G1KGs gap kgs)   =
+        find1 (G1KGs gap kgs)   =   -- if not useSugar, then h can be wrong:
             fmap (\g -> EPolyHDeg g (evTotDeg (leadEvNZ g) + gap)) (kgsFindReducer p kgs)
 
     gkgsReduce              :: GapsKerGens p -> Bool -> p -> (p, Int)
@@ -454,7 +455,7 @@ gbTSummary          = 0x01  -- ^ a short summary at the end of a run
 gbTProgressChars    = 0x02  -- ^ total degree for each s-poly reduction result
 gbTProgressInfo     = 0x04  -- ^ info when adding or removing a generator
 gbTResults          = 0x08  -- ^ output final generators
-gbTQueues           = 0x10  -- ^ info about threads and their queues ("cdprRsS", "rg")
+gbTQueues           = 0x10  -- ^ info about threads and their queues ("dprRsS", "rg")
 gbTProgressDetails  = 0x20  -- ^ details relating to selection strategy
 
 printThreadCapabilities     :: String -> [ThreadId] -> IO ()
@@ -497,7 +498,8 @@ groebnerBasis gbpA@(GBPolyOps { .. }) initGens nCores gbTrace   = do
             WithNGens (EPolyHDeg g1 h1) kN  <- topReduce gh
             g2                              <- reduce2 g1
             endReduce_n kN (EPolyHDeg g2 h1)
-        gap0NZ (EPolyHDeg g h)  = if h /= evTotDeg (leadEvNZ g) then Nothing else Just g
+        gap0NZ (EPolyHDeg g h)  =
+            if useSugar && h /= evTotDeg (leadEvNZ g) then Nothing else Just g
         endReduce_n kN gh       = do    -- result is reduced like by reduce_n
             ghs         <- readTVarIO genHsRef
             let kN'     = Seq.length ghs
@@ -531,11 +533,11 @@ groebnerBasis gbpA@(GBPolyOps { .. }) initGens nCores gbTrace   = do
     rNTraceRef      <- newIORef 0
     let rgsInsert   :: EPolyHDeg p -> Int -> [(p, Int)] -> IO [(p, Int)]
         rgsInsert (EPolyHDeg g _) i []                  = pure [(g, i)]
-        rgsInsert gh@(EPolyHDeg g gHDeg) i rgs@((h, j) : t)
-            | evCmp (leadEvNZ g) (leadEvNZ h) == GT       = pure ((g, i) : rgs)
-            | evDivides (leadEvNZ g) (leadEvNZ h)   = do
+        rgsInsert gh@(EPolyHDeg g gHDeg) i rgs@((g1, j) : t)
+            | evCmp (leadEvNZ g) (leadEvNZ g1) == GT    = pure ((g, i) : rgs)
+            | evDivides (leadEvNZ g) (leadEvNZ g1)  = do
                 when (gbTrace .&. gbTProgressInfo /= 0) $
-                    putStrLn $ " remove g" ++ show j ++ " (" ++ pShowEV h ++ ") by g" ++ show i
+                    putStrLn $ " remove g" ++ show j ++ " (" ++ pShowEV g1 ++ ") by g" ++ show i
                         ++ " (" ++ pShowEV g ++ ")"
                 ghs     <- readTVarIO genHsRef
                 let hh  = Seq.index ghs j
@@ -544,9 +546,9 @@ groebnerBasis gbpA@(GBPolyOps { .. }) initGens nCores gbTrace   = do
                 rgsInsert gh i t
             | otherwise                                 = do
                 t'          <- rgsInsert gh i t
-                if gHDeg /= evTotDeg (leadEvNZ g) then pure ((h, j) : t') else do
-                    let (q, r)  = pR.bDiv True h g
-                    if pIsZero q then pure ((h, j) : t') else do
+                if useSugar && gHDeg /= evTotDeg (leadEvNZ g) then pure ((g1, j) : t') else do
+                    let (q, r)  = pR.bDiv True g1 g
+                    if pIsZero q then pure ((g1, j) : t') else do
                         -- @@@ inc nRedStepsRef (numTerms q)
                         when (gbTrace .&. gbTQueues /= 0) $
                             if evTotDeg (leadEvNZ q) == 0 then inc rNTraceRef 1 else putChar 'R'
@@ -780,7 +782,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) initGens nCores gbTrace   = do
         | pIsZero p         = "0"
         | numTerms p < 10   = pShow (monicize p)
         | otherwise         = evShow (leadEvNZ p) ++ "+... (" ++ show (numTerms p) ++ " terms)"
-    hEvCmp          = spCmp evCmp True          :: Cmp (SPair ev)
+    hEvCmp          = spCmp evCmp useSugar      :: Cmp (SPair ev)
 
 
 gbiSmOps        :: GBPolyOps ev term p -> Int -> Int -> SubmoduleOps p p (GroebnerIdeal p)

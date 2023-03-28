@@ -219,11 +219,11 @@ epRingUniv nVars evCmp  = UnivL epRing (RingTgtXs cToEp xs) epUnivF
             foldr1 tR.times (cToT c : zipWithExact (rExpt tR) xTs (exponsL nVars ev))
 
 
-epGBPOps        :: forall c. Cmp ExponVec -> Bool -> Ring c -> [String] -> ShowPrec c ->
+epGBPOps        :: forall c. Cmp ExponVec -> Bool -> Ring c -> [String] -> ShowPrec c -> Bool ->
                     GBPolyOps ExponVec (SSTerm c ExponVec) (EPoly c)
-{- ^ In @ep58GBPOps evCmp isGraded cR varSs@, @varSs@ lists more main variables first,
-    and each @varS@ has precedence > '^'. -}
-epGBPOps evCmp isGraded cR varSs cShowPrec  = GBPolyOps { numTerms = length, .. }
+{- ^ In @ep58GBPOps evCmp isGraded cR varSs cShowPrec useSugar@, @varSs@ lists more main
+    variables first, and each @varS@ has precedence > '^'. -}
+epGBPOps evCmp isGraded cR varSs cShowPrec useSugar     = GBPolyOps { numTerms = length, .. }
   where
     nVars               = length varSs
     evDivides           = evDividesF nVars

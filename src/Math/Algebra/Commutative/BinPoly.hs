@@ -103,10 +103,10 @@ bpSortCancel evCmp evs  = cancelRev (sortBy evCmp (SL.toListReversed evs)) SL.Ni
     cancelRev [v] r         = v :! r
     cancelRev [] r          = r
 
-bp58Ops                         :: Cmp EV58 -> Bool -> [String] ->
+bp58Ops                         :: Cmp EV58 -> Bool -> [String] -> Bool ->
                                     (GBPolyOps EV58 EV58 (BinPoly EV58), BPOtherOps EV58 Word64)
--- ^ In @bp58Ops evCmp isGraded varSs@, @varSs@ lists more main variables first.
-bp58Ops evCmp isGraded varSs    = assert (nVars <= 58)
+-- ^ In @bp58Ops evCmp isGraded varSs useSugar@, @varSs@ lists more main variables first.
+bp58Ops evCmp isGraded varSs useSugar   = assert (nVars <= 58)
     (GBPolyOps { monicize = id, numTerms = length, .. }, BPOtherOps { .. })
   where
     nVars               = length varSs

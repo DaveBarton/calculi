@@ -31,7 +31,7 @@ gbDemo name p varSs genSs nCores gbTrace    = case someNatVal (fromInteger p) of
     putChar '\n'
   where
     (cField, cBalRep)   = zzModPW @p
-    gbpA        = epGBPOps gRevLex True cField varSs (const (show . cBalRep))
+    gbpA        = epGBPOps gRevLex True cField varSs (const (show . cBalRep)) True
     nVars       = length varSs
     epru        = withRing cField epRingUniv nVars gRevLex
     UnivL epRing (RingTgtXs _cToEp varEps) _epUnivF     = epru

@@ -39,7 +39,8 @@ instance Show (ShowWith a) where
 type ShowGen a      = (a -> String, Gen a)
 
 type PropertyIO     = PropertyT IO
--- ^ A @(PropertyIO a)@ produces an @a@ during a test. A @(PropertyIO ())@ runs a test.
+-- ^ A @(PropertyIO a)@ produces an @a@ during a test. A @(PropertyIO ())@ runs a (part of a)
+-- ^ test.
 
 genVis              :: ShowGen a -> PropertyIO a
 {- ^ Generate a visible (showable) random value for a property test. The value will be shown if

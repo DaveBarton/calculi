@@ -38,7 +38,7 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
     ts              = take nVars (unfoldr (\b -> Just (b, nextT b)) (nT 12345))
     epToT           = epUnivF cRing (RingTgtXs id ts)
     varSs           = map (: []) (take nVars ['a' .. 'z'])
-    GBPolyOps { pShow }     = epGBPOps gRevLex True cRing varSs (const cShow)
+    GBPolyOps { pShow }     = epGBPOps gRevLex True cRing varSs (const cShow) True
     testEq          = diffWith pShow (rEq epRing)
     varPowGen       = liftM2 (expt1 (epRing.times)) (Gen.element varEps)
                         (Gen.int (Range.exponential 1 200_000))

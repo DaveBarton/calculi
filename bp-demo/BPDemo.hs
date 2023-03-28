@@ -15,16 +15,17 @@ import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 -- import Debug.Trace
 
 
+-- To run a demo, first set the "@@" lines below the way you want.
+
 demoOps             :: Int -> StdEvCmp ->
                         (GBPolyOps EV58 EV58 (BinPoly EV58), BPOtherOps EV58 Word64)
-demoOps nVars sec   = bp58Ops evCmp isGraded varSs
+demoOps nVars sec   = bp58Ops evCmp isGraded varSs useSugar
   where
     evCmp           = evCmp58 sec
     isGraded        = secIsGraded sec
     xVarSs          = ['X' : show n | n <- [1 :: Int ..]]
     varSs           = take nVars (map (: []) ['a' .. 'z'] ++ xVarSs)
-
--- To run a demo, first set the "@@" lines below the way you want.
+    useSugar        = False     -- @@
 
 bpDemo                  :: Int -> Int -> IO ()
 bpDemo nCores gbTrace   = do
@@ -33,7 +34,7 @@ bpDemo nCores gbTrace   = do
     putStrLn $ showGens gbpA.pShow reducedGensL
     putStrLn $ show (bpCountZeros bpoA reducedGensL) ++ " zeros"
   where
-    sec             = LexCmp   -- @@ LexCmp, GrLexCmp, or GrRevLexCmp
+    sec             = GrRevLexCmp   -- @@ LexCmp, GrLexCmp, or GrRevLexCmp
     (gbpA, bpoA@(BPOtherOps { .. }))    = demoOps (length varPs) sec
     infixl 7 ∧          -- same as (.&.) and (*)
     infixr 5 ∨          -- same as (.|.) except infixr, note (`xor`) and (+) are infixl 6
@@ -77,7 +78,7 @@ bpDemo nCores gbTrace   = do
         (e ∨ h ∨ i)]
     gens = [bpNot poly1]
     -}
-    {- -}
+    {- 
     name            = "logic5"
     varPs@[a, b, c, d, e, f, g, h, i, j, k, l, m, n, o]             = map bpVar [0 .. 14]
     [a_, b_, c_, d_, e_, f_, g_, h_, i_, j_, k_, l_, m_, n_, o_]    = map bpNot varPs
@@ -115,14 +116,26 @@ bpDemo nCores gbTrace   = do
             h) ∧ (d_ ∨ j_ ∨ o_),
         (a_ ∨ b ∨ c ∨ e_ ∨ g ∨ h ∨ l_ ∨ n)]
     -- gens = [bpNot poly1]  -- gives 19 gens like in logic5.out.txt, looks like the same ideal
-    gens = [bpNot poly2]    -- gives 41 gens with LexCmp (after 800 cpu seconds), 65 zeros
+    gens = [bpNot poly2]    -- 65 zeros, 41 gens in all 3 monomial orders
+    -}
     {- ⟨ o, ln+l+n+1, lm+l+m+1, kl+k, j, il+i, hl+h, hi+h, gl+g, gi+g, ghm+gh+gm+g, fl+f+l+1,
         fk+f+k+1, fi+f+i+1, fhm+fh+fm+f+hm+h+m+1, fgm+fg+fm+f+gm+g+m+1, e+1, dn+n, dl+d+l+1,
         dk+d+k+1, di+d+i+1, dgm+dg+dhm+dh+gm+g+hm+h, dgh+dh+gh+h, dfm+df+dm+d+fm+f+m+1, cl+c,
         ck+k, cim+im, chn+hn, chm+hm, cg+g, cf+c+f+1, cd+c+d+1, bm+b, bl+b, bk+b, bi+b, bh,
-        bg, bf, bc+b, a+1 ⟩ -}
+        bg, bf, bc+b, a+1 ⟩ LexCmp: 0.35 or 800+ (sugar) cpu seconds
+    ⟨ o, j, e+1, a+1, ln+l+n+1, lm+l+m+1, kl+k, il+i, hl+h, hi+h, gl+g, gi+g, fl+f+l+1,
+        fk+f+k+1, fi+f+i+1, dn+n, dl+d+l+1, dk+d+k+1, di+d+i+1, cl+c, ck+k, cg+g, cf+c+f+1,
+        cd+c+d+1, bm+b, bl+b, bk+b, bi+b, bh, bg, bf, bc+b, ghm+gh+gm+g,
+        fhm+fh+fm+hm+f+h+m+1, fgm+fg+fm+gm+f+g+m+1, dgm+dhm+dg+dh+gm+hm+g+h, dgh+dh+gh+h,
+        dfm+df+dm+fm+d+f+m+1, cim+im, chn+hn, chm+hm ⟩ GrLexCmp: 0.4 or 3.8 (sugar) cpu seconds
+    ⟨ o, j, e+1, a+1, ln+l+n+1, dn+n, lm+l+m+1, bm+b, kl+k, il+i, hl+h, gl+g, fl+f+l+1,
+        dl+d+l+1, cl+c, bl+b, fk+f+k+1, dk+d+k+1, ck+k, bk+b, hi+h, gi+g, fi+f+i+1, di+d+i+1,
+        bi+b, bh, cg+g, bg, cf+c+f+1, bf, cd+c+d+1, bc+b, chn+hn, cim+im, ghm+gh+gm+g,
+        fhm+fh+fm+hm+f+h+m+1, chm+hm, fgm+fg+fm+gm+f+g+m+1, dgm+dhm+dg+dh+gm+hm+g+h,
+        dfm+df+dm+fm+d+f+m+1, dgh+dh+gh+h ⟩ GrRevLexCmp: 0.4 or 26.7 (sugar) cpu seconds
+    -}
     
-    {- 
+    {- -}
     name            = "logic6"
     varPs@[a, b, c, d, e, f, g, h, i, j, k, l, m, n, o]             = map bpVar [0 .. 14]
     [a_, b_, c_, d_, e_, f_, g_, h_, i_, j_, k_, l_, m_, n_, o_]    = map bpNot varPs
@@ -212,8 +225,9 @@ bpDemo nCores gbTrace   = do
             d ∨ f_ ∨ j ∨ o_) ∧ (a_ ∨ c_ ∨ e ∨ k ∨ n_) ∧ (a_ ∨ c ∨ i_ ∨ n_ ∨ o_) ∧ (b ∨ f ∨ j_
             ∨ n_ ∨ o) ∧ (d ∨ e ∨ h ∨ k ∨ o_),
         (b ∨ d_ ∨ g_ ∨ i ∨ j ∨ k_ ∨ l ∨ m_)]
-    gens = [bpNot poly1]
-    -}
+    gens = [bpNot poly1]    -- 471 zeros; GrLexCmp 8201s cpu, 807 gens, 
+            -- generated (redundant) basis has 9991 elements with 9794957 monomials
+    
 
 
 main    :: IO ()
@@ -224,7 +238,7 @@ main    = do
     _           <- forkOn 0 $ do
         -- for gbTrace bits, see Math/Algebra/Commutative/GroebnerBasis.hs:
         let gbTrace     = gbTSummary -- .|. gbTResults
-                .|. gbTProgressInfo -- .|. gbTQueues .|. gbTProgressDetails    -- @@
+                -- .|. gbTProgressInfo .|. gbTQueues .|. gbTProgressDetails     -- @@
         bpDemo nCores gbTrace
         putMVar doneMVar ()
     takeMVar doneMVar
