@@ -6,7 +6,9 @@ import Math.Algebra.General.Algebra
 import Math.Algebra.Commutative.GroebnerBasis
 import Math.Algebra.Commutative.BinPoly
 
+import Control.Monad (when)
 import Data.Foldable (toList)
+import qualified Data.Sequence as Seq
 import Data.Word (Word64)
 
 import Control.Concurrent (forkOn, getNumCapabilities)
@@ -31,10 +33,10 @@ bpDemo                  :: Int -> Int -> IO ()
 bpDemo nCores gbTrace   = do
     putStrLn $ name ++ " " ++ show sec
     putStrLn $ show (bpCountZeros bpoA gens) ++ " zeros"
-    putStrLn $ showGens gbpA.pShow reducedGensL
+    when (Seq.length reducedGensSeq < 250) $ putStrLn $ showGens gbpA.pShow reducedGensL
     putStrLn $ show (bpCountZeros bpoA reducedGensL) ++ " zeros"
   where
-    sec             = GrRevLexCmp   -- @@ LexCmp, GrLexCmp, or GrRevLexCmp
+    sec             = LexCmp   -- @@ LexCmp, GrLexCmp, or GrRevLexCmp
     (gbpA, bpoA@(BPOtherOps { .. }))    = demoOps (length varPs) sec
     infixl 7 ∧          -- same as (.&.) and (*)
     infixr 5 ∨          -- same as (.|.) except infixr, note (`xor`) and (+) are infixl 6
@@ -225,8 +227,51 @@ bpDemo nCores gbTrace   = do
             d ∨ f_ ∨ j ∨ o_) ∧ (a_ ∨ c_ ∨ e ∨ k ∨ n_) ∧ (a_ ∨ c ∨ i_ ∨ n_ ∨ o_) ∧ (b ∨ f ∨ j_
             ∨ n_ ∨ o) ∧ (d ∨ e ∨ h ∨ k ∨ o_),
         (b ∨ d_ ∨ g_ ∨ i ∨ j ∨ k_ ∨ l ∨ m_)]
-    gens = [bpNot poly1]    -- 471 zeros; GrLexCmp 8201s cpu, 807 gens, 
-            -- generated (redundant) basis has 9991 elements with 9794957 monomials
+    -- gens = [bpNot poly1]    -- 471 zeros; GrLexCmp, 807 gens, times vary:
+            -- 786s cpu: generated (redundant) basis has 5917 elements with 1876000 monomials
+            -- 3477s cpu: generated (redundant) basis has 6849 elements with 4039229 monomials
+            -- note g0: abcdefghijklmno+... (10235 terms) - init gen is long high degree (15)
+        -- with GrRevLexCmp, the generators seem to grow not shrink, so much slower
+        -- LexCmp, 414 gens, 326s cpu,
+            -- generated (redundant) basis has 4964 elements with 976490 monomials
+    varSs           = map (: []) ['a' .. 'o']
+    pRead           = (\ [(x,"")] -> x) . polynomReads gbpA.pR (zip varSs varPs)
+    gens = map pRead
+        ["ghj(k+1)(m+1)", "ab(f+1)ko", "(a+1)df(n+1)(o+1)", "(f+1)(h+1)(i+1)(j+1)o", "agikn",
+        "a(c+1)(e+1)l(m+1)", "(b+1)c(e+1)(f+1)(j+1)", "(b+1)degi", "(c+1)(e+1)h(j+1)k", "(b+1)cdkn",
+        "(b+1)c(g+1)jo", "(c+1)(f+1)(g+1)jm", "a(c+1)(d+1)(g+1)l", "(b+1)(e+1)(k+1)(m+1)n",
+        "(i+1)j(k+1)ln", "c(d+1)fh(l+1)", "e(i+1)k(l+1)n", "(a+1)(c+1)(d+1)(g+1)(m+1)",
+        "(b+1)(g+1)(j+1)kl", "(e+1)(i+1)(j+1)ko", "cf(g+1)mo", "ek(l+1)(m+1)o", "(f+1)jk(m+1)n",
+        "(a+1)(c+1)(d+1)fg", "(b+1)(i+1)(k+1)n(o+1)", "c(e+1)i(j+1)o", "c(i+1)(j+1)(n+1)o",
+        "(d+1)(f+1)(g+1)(l+1)o", "c(e+1)(j+1)(l+1)n", "f(h+1)mn(o+1)", "(e+1)(f+1)h(j+1)(n+1)",
+        "a(f+1)g(k+1)o", "b(e+1)(f+1)im", "b(c+1)(e+1)(l+1)n", "(b+1)cd(g+1)n", "(f+1)(g+1)h(j+1)(l+1)",
+        "(a+1)bjk(l+1)", "(a+1)(c+1)(h+1)m(n+1)", "(b+1)(g+1)im(n+1)", "(a+1)(d+1)f(i+1)k",
+        "(a+1)(d+1)(e+1)(h+1)n", "(b+1)cg(i+1)m", "(h+1)j(l+1)no", "(a+1)cd(g+1)(l+1)",
+        "(a+1)(h+1)(j+1)(k+1)l", "(a+1)(b+1)d(f+1)h", "(a+1)c(i+1)k(m+1)", "(a+1)b(f+1)(g+1)l",
+        "(b+1)(e+1)(f+1)l(n+1)", "a(c+1)(d+1)g(l+1)", "d(e+1)hmo", "(c+1)(e+1)(f+1)g(n+1)",
+        "(d+1)(e+1)(f+1)(k+1)(n+1)", "(a+1)ehi(n+1)", "d(f+1)gik", "ceik(m+1)", "ac(e+1)(h+1)k",
+        "d(f+1)(h+1)(i+1)n", "(a+1)e(i+1)(k+1)(o+1)", "ehij(o+1)", "ag(h+1)j(n+1)",
+        "(c+1)(d+1)(h+1)(j+1)(n+1)", "(a+1)(d+1)fgj", "(d+1)(h+1)j(m+1)(n+1)", "cghj(m+1)",
+        "c(e+1)(j+1)(k+1)(o+1)", "(b+1)(e+1)(h+1)k(n+1)", "ad(e+1)ij", "(b+1)(g+1)h(j+1)o", "b(e+1)gik",
+        "ae(i+1)(l+1)n", "abde(o+1)", "(b+1)de(h+1)i", "(b+1)(g+1)km(o+1)", "cilmo", "af(j+1)k(l+1)",
+        "bjk(m+1)(n+1)", "(b+1)(g+1)(h+1)(m+1)(n+1)", "c(l+1)mn(o+1)", "(e+1)(h+1)j(l+1)n",
+        "(a+1)(c+1)(l+1)m(n+1)", "c(g+1)(i+1)ko", "bdf(i+1)(j+1)", "(b+1)f(g+1)ik", "cd(f+1)h(n+1)",
+        "fhmno", "e(h+1)lmn", "c(d+1)(h+1)j(o+1)", "(a+1)(f+1)i(j+1)(m+1)", "bh(l+1)(n+1)o",
+        "d(e+1)f(k+1)l", "c(f+1)(g+1)kn", "b(e+1)(j+1)(l+1)n", "(b+1)(d+1)(f+1)i(k+1)",
+        "(c+1)(d+1)(g+1)(h+1)(o+1)", "cde(g+1)n", "b(f+1)(g+1)jo", "ac(e+1)(k+1)(m+1)", "c(h+1)lm(o+1)",
+        "ad(e+1)h(o+1)", "b(i+1)jn(o+1)", "ag(k+1)lo", "a(d+1)i(k+1)n", "(a+1)(b+1)kmn",
+        "(a+1)(f+1)g(h+1)j", "(b+1)cdk(l+1)", "(e+1)j(k+1)(l+1)m", "g(h+1)(k+1)(n+1)o", "(d+1)(e+1)ino",
+        "aimno", "(b+1)(d+1)(j+1)(l+1)n", "a(c+1)(h+1)(l+1)(m+1)", "(c+1)hk(n+1)(o+1)", "befk(l+1)",
+        "efgj(o+1)", "(g+1)(h+1)ijk", "bc(e+1)g(i+1)", "cf(g+1)(i+1)(k+1)", "de(i+1)j(k+1)", "a(c+1)dio",
+        "(c+1)(d+1)jlm", "(c+1)(d+1)fko", "cegin", "(b+1)g(i+1)(n+1)o", "bd(e+1)k(l+1)", "g(h+1)k(l+1)m",
+        "beg(k+1)(l+1)", "bd(f+1)l(o+1)", "(c+1)(i+1)(j+1)(k+1)m", "(b+1)cej(l+1)", "(a+1)h(k+1)lm",
+        "c(d+1)h(i+1)o", "abj(k+1)n", "a(c+1)(d+1)ef", "(e+1)fg(h+1)k", "b(c+1)(h+1)im",
+        "(b+1)(c+1)e(f+1)i", "(f+1)(i+1)jkn", "(b+1)(d+1)(h+1)(i+1)j", "b(e+1)g(h+1)(j+1)"]
+    -- 471 zeros;
+        -- LexCmp 414 gens, 66s cpu,
+            -- generated (redundant) basis has 3724 elements with 248171 monomials
+        -- GrLexCmp 807 gens, 365s cpu,
+            -- generated (redundant) basis has 4026 elements with 462290 monomials
     
 
 

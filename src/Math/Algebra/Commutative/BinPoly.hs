@@ -118,11 +118,13 @@ bp58Ops evCmp isGraded varSs useSugar   = assert (nVars <= 58)
     evMaybeQuo          :: EV58 -> EV58 -> Maybe EV58
     evMaybeQuo v w      = pureIf (evDivides w v) (fromBits58Only (v.w64 - w.w64))
     evTotDeg            = totDeg58
-    nEvGroups           = quot (nVars + 4) 5
-    evGroup v           = go nEvGroups (toBits58 v)
+    n4s                 = quot (nVars + 3) 4
+    nEvGroups           = n4s * (max (n4s - 1) 1)
+    evGroup v           = reverse [5 * pc4 i + pc4 j
+                            | i <- [0 .. n4s - 1], j <- [0 .. n4s - 1], i /= j || n4s == 1]
       where
-        go 0 bs     = assert (bs == 0) []
-        go n bs     = fromIntegral (popCount (bs .&. 0x1F)) : go (n - 1) (bs `unsafeShiftR` 5)
+        bs          = toBits58 v
+        pc4 k       = fromIntegral (popCount (bs .&. (0xF `unsafeShiftL` (4 * k))))
     isRev               = nVars > 1 && evCmp (fromBits58 1) (fromBits58 2) == GT
     varBitJsDesc        =   -- most main first
         (if isRev then id else reverse) [0 .. nVars - 1]
