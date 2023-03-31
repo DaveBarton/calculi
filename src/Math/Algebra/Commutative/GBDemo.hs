@@ -33,8 +33,8 @@ gbDemo name p varSs genSs nCores gbTrace    = case someNatVal (fromInteger p) of
     (cField, cBalRep)   = zzModPW @p
     gbpA        = epGBPOps gRevLex True cField varSs (const (show . cBalRep)) True
     nVars       = length varSs
-    epru        = withRing cField epRingUniv nVars gRevLex
-    UnivL epRing (RingTgtXs _cToEp varEps) _epUnivF     = epru
+    EPolyOps { epUniv }     = epOps cField nVars gRevLex
+    UnivL epRing (RingTgtXs _cToEp varEps) _epUnivF     = epUniv
     SubmoduleOps { .. }     = gbiSmOps gbpA nCores gbTrace
     gens        = map ((\ [(x,"")] -> x) . polynomReads epRing (zip varSs varEps)) genSs
 

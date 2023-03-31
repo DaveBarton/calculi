@@ -50,7 +50,7 @@ groebnerBasisProps pSG gbpA@(GBPolyOps { .. })  = [("GB Residues 0", residues0)]
             gbIdeal         = fromGens initGens
             gbGens          = stdGens doRedGens gbIdeal
             gbGensL         = toList gbGens
-            checkZeros ps   = allPT pShow (rIsZero pR) (map (\p -> bMod doFullMod p gbIdeal) ps)
+            checkZeros ps   = allPT pShow (rIsZero pR) (map (bModBy doFullMod gbIdeal) ps)
         annotate $ fst gsSG gbGensL
         checkZeros initGens
         mapM_ checkZeros
@@ -58,7 +58,7 @@ groebnerBasisProps pSG gbpA@(GBPolyOps { .. })  = [("GB Residues 0", residues0)]
                 | j <- [1 .. length gbGens - 1]]
 
 boolField       :: Field Bool   -- Z/2Z, where 1 is True
-boolField       = field (Group agFlags (==) (/=) False not id) (&&) True odd id
+boolField       = field (abelianGroup (==) (/=) False not id) (&&) True odd id
 
 type BP58       = BinPoly EV58
 type BP58Ops    = (GBPolyOps EV58 EV58 BP58, BPOtherOps EV58 Word64)
@@ -103,13 +103,13 @@ test1 nVars sec = checkGroup ("BinPoly " ++ show nVars ++ " " ++ show sec) props
                         groebnerBasisProps pSG gbpA ++ [gbCountZerosProp pSG bpA2]
     
     props           = totalOrderProps evSG (==) evCmp
-                        ++ withRing pR ringProps pSG pTestEq (eiBit IsCommutativeRing)
+                        ++ ringProps pSG pTestEq (eiBit IsCommutativeRing) pR
                         ++ ringHomomProps pSG pR (===) boolField pToT
                         ++ [readsProp pSG pTestEq (polynomReads pR (zip varSs varPs))]
                         ++ gbProps
 
 testBinPoly             :: IO Bool
 testBinPoly             =
-    checkAll $ checkGroup "boolField" (withRing boolField fieldProps (show, Gen.bool) (===))
+    checkAll $ checkGroup "boolField" (fieldProps (show, Gen.bool) (===) boolField)
         : [test1 nVars sec
             | nVars <- [1 .. 6] ++ [14, 25 .. 58], sec <- [LexCmp, GrLexCmp, GrRevLexCmp]]

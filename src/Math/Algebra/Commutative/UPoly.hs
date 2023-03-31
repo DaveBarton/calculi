@@ -7,8 +7,8 @@
 -}
 
 module Math.Algebra.Commutative.UPoly (
-    UPoly, RingTgtX(..), UPolyUniv,
-    upDeg, upTimesNZMonom, upTimesMonom, upRingUniv,
+    UPoly, RingTgtX(..), UPolyUniv, UPolyOps(..),
+    upDeg, upOps,
     upShowPrec
 ) where
 
@@ -27,31 +27,36 @@ type UPolyUniv c        = UnivL Ring (RingTgtX c) (->) (UPoly c)
 -- ^ a @Ring (UPoly c)@, @RingTgtX c (UPoly c)@, and a function for mapping to other 'Ring's
 -- that have a @RingTgtX c@
 
+data UPolyOps c     = UPolyOps {
+    upUniv              :: UPolyUniv c,
+    ssOROps             :: SSOverRingOps c Integer,
+    upTimesNZMonom      :: UPoly c -> Integer -> c -> UPoly c,      -- ^ the @c@ is nonzero
+    upTimesMonom        :: UPoly c -> Integer -> c -> UPoly c
+}
+
 
 upDeg           :: UPoly c -> Integer
 upDeg p         = if ssIsZero p then -1 else ssDegNZ p
 
-upTimesNZMonom  :: IRing c => UPoly c -> Integer -> c -> UPoly c
--- ^ the @c@ is nonzero
-upTimesNZMonom  = ssTimesNZMonom (+)
-
-upTimesMonom    :: IRing c => UPoly c -> Integer -> c -> UPoly c
-upTimesMonom    = ssTimesMonom (+)
-
-upRingUniv      :: forall c. IRing c => UPolyUniv c
-upRingUniv      = UnivL cxRing (RingTgtX cToCx x) cxUnivF
+upOps           :: forall c. Ring c -> UPolyOps c
+upOps cR        = UPolyOps { .. }
   where
-    ssUniv@(UnivL ssAG (TgtArrsF dcToSS) _ssUnivF)   = ssAGUniv iRing.ag compare
+    AbelianGroup _ _ _ _ cIsZero cNeg   = cR.ag
+    ssUniv@(UnivL ssAG (TgtArrsF dcToSS) _ssUnivF)   = ssAGUniv cR.ag compare
+    ssOROps@(SSOverRingOps { .. })  = ssOverRingOps cR
+    upTimesNZMonom  = ssTimesNZMonom (+)
+    upTimesMonom    = ssTimesMonom (+)
     ssTimesF    = ssTimes ssUniv (+)
-    x           = dcToSS 1 iOne
+    x           = dcToSS 1 cR.one
     cToCx       = dcToSS 0
-    cxFlags     = eiBits [NotZeroRing, IsCommutativeRing, NoZeroDivisors] .&. (iRFlags @c)
-    cxRing      = Ring ssAG cxFlags cxTimes (cToCx iOne) (cToCx . iFromZ) cxDiv
+    cxFlags     = eiBits [NotZeroRing, IsCommutativeRing, NoZeroDivisors] .&. cR.rFlags
+    cxRing      = Ring ssAG cxFlags cxTimes (cToCx cR.one) (cToCx . cR.fromZ) cxDiv
+    upUniv      = UnivL cxRing (RingTgtX cToCx x) cxUnivF
     cxTimes p q
         | rIsOne cxRing p   = q     -- for efficiency
         | rIsOne cxRing q   = p     -- for efficiency
         | otherwise         = ssTimesF p q
-    ssLead'     = ssLead (iIsZero @c)
+    ssLead'     = ssLead cIsZero
     cxDiv _doFull p0 p1
         | rIsOne cxRing p1  = (p0, SSZero)  -- for efficiency
         | ssIsZero p1       = (SSZero, p0)
@@ -64,10 +69,10 @@ upRingUniv      = UnivL cxRing (RingTgtX cToCx x) cxUnivF
             if ssIsZero p || ssDegNZ p < d1 then (SSZero, p) else
             let d   = ssDegNZ p
                 qd  = d - d1
-                (qc, rc)    = iBDiv doFull (ssHeadCoef p) c1
+                (qc, rc)    = cR.bDiv doFull (ssHeadCoef p) c1
                 -- want p = (c1*x^d1 + t1) * (qc*x^qd + q2) + (rc*x^d + r2):
-                ~p' = agPlus ssAG !$ ssTail p !$ upTimesMonom t1 qd (iNeg qc)
-                ~qr2    = if doFull || iIsZero rc then cxDiv' p' else (SSZero, p')
+                ~p' = agPlus ssAG !$ ssTail p !$ upTimesMonom t1 qd (cNeg qc)
+                ~qr2    = if doFull || cIsZero rc then cxDiv' p' else (SSZero, p')
             in  (ssLead' qc qd (fst qr2), ssLead' rc d (snd qr2))
     cxUnivF     :: Ring t -> RingTgtX c t -> UPoly c -> t
     cxUnivF tR (RingTgtX cToT xT) p     = case p of     -- uses Horner's rule

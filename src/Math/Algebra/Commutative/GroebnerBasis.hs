@@ -51,7 +51,7 @@ data SubmoduleOps r m sm    = SubmoduleOps {
     fromGens    :: [m] -> sm,           -- ^ from any generators
     stdGens     :: Bool -> sm -> Seq.Seq m,     -- ^ \"standard\" generators,
                     -- ^ @stdGens doFullReduce sm@
-    bMod        :: Bool -> m -> sm -> m -- ^ @bMod doFullReduce m sm@
+    bModBy      :: Bool -> sm -> Op1 m  -- ^ @bModBy doFullReduce sm m@
 }
 
 
@@ -792,4 +792,4 @@ gbiSmOps gbpA nCores gbTrace    = SubmoduleOps { .. }
     fromGens initGens           = unsafePerformIO $ groebnerBasis gbpA initGens nCores gbTrace
     stdGens doFullReduce gbi    = if doFullReduce then gbi.redGbGens else gbi.gbGens
     KGsOps { gkgsReduce }       = kgsOps gbpA
-    bMod doFullReduce p gbi     = fst (gkgsReduce gbi.gkgs doFullReduce p)
+    bModBy doFullReduce gbi p   = fst (gkgsReduce gbi.gkgs doFullReduce p)

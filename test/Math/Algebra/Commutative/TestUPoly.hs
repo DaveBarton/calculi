@@ -23,8 +23,8 @@ testUPoly               = checkGroup "UPoly" props
   where
     -- should change to a noncommutative coef ring C with zero divisors, and check X commutes
     -- with it in C[X]:
-    zxru            = withRing zzRing upRingUniv
-    UnivL zxRing (RingTgtX zToZX xZX) zxUnivF   = zxru
+    UPolyOps { upUniv }     = upOps zzRing
+    UnivL zxRing (RingTgtX zToZX xZX) zxUnivF   = upUniv
     zxToT           = zxUnivF zzRing (RingTgtX id 12345)
     zxShow          = upShowPrec "X" (const show) 0
     -- zxShow p        = show (ssNumTerms p) ++ "t:" ++ upShowPrec "X" (const show) 0 p
@@ -36,7 +36,7 @@ testUPoly               = checkGroup "UPoly" props
     zxGen           = fmap (rSumL' zxRing) monomsGen
         -- polys of degree up to 10
     sg              = (zxShow, zxGen)
-    props           = withRing zxRing ringProps sg testEq zeroBits
+    props           = ringProps sg testEq zeroBits zxRing
                         ++ ringHomomProps zzShowGen zzRing testEq zxRing zToZX
                         ++ [("x", propertyOnce $ testEq xZX (monom 1 1))]
                         ++ ringHomomProps sg zxRing (===) zzRing zxToT

@@ -11,15 +11,16 @@ module Math.Algebra.Linear.SparseVector (
     -- * SparseVector
     SparseVector(..), SparseVectorUniv,
     svZero, pICToSV, svIsZero, svSize, svMapC, svMapNZFC, svFoldr',
-    svAGUniv, svDotWith, svNZCTimes, svCTimes, svMonicize, svTimesNZC, svTimesC, svSwap,
+    svAGUniv, svDotWith, SVOverRingOps(..), svOverRingOps, svSwap,
     svShowPrec,
     
     -- * SparseMatrix
-    SparseColsMat, scmPDiag, scmCol, scmTimesV, scmRing, scmTranspose
+    SparseColsMat, scmPDiag, scmCol, SCMOps(..), scmOps, scmTranspose
 ) where
 
 import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
+import Math.Algebra.General.SparseSum (SparseSumUniv)
 
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
@@ -33,7 +34,7 @@ newtype SparseVector c  = SV { im :: IntMap c }
 {- ^ a finite sequence of coordinates (basis coefficients), indexed starting at 0. Coordinates
     which are zero must be omitted. -}
 
-type SparseVectorUniv c     = UnivL AbelianGroup (TgtArrsF (->) c Int) (->) (SparseVector c)
+type SparseVectorUniv c     = SparseSumUniv Int c (SparseVector c)
 {- ^ an @AbelianGroup (SparseVector c)@, @iCToSV@ function, and a function for mapping to
     other 'AbelianGroup's @t@ that have an @Int -> Hom_AG(c, t)@; \(⊕↙i C_i\) where each \(C_i\)
     is a copy of \(C\). -}
@@ -62,43 +63,45 @@ svMapNZFC f (SV m)  = SV (IM.map f m)
 svFoldr'        :: Op2 t -> t -> (Int -> c -> t) -> SparseVector c -> t
 svFoldr' tPlus tZero iCToT (SV m)   = IM.foldrWithKey' (\i c -> tPlus $! iCToT i c) tZero m
 
-svAGUniv        :: forall c. IAbelianGroup c => SparseVectorUniv c
-svAGUniv        = UnivL svAG (TgtArrsF iCToSV) univF
+svAGUniv        :: forall c. AbelianGroup c -> SparseVectorUniv c
+svAGUniv (AbelianGroup _cFlags eq plus _zero isZero neg)    = UnivL svAG (TgtArrsF iCToSV) univF
   where
     maybePlus       :: Int -> c -> c -> Maybe c
-    maybePlus _ a b     = let c = a +. b in if iIsZero c then Nothing else Just c
+    maybePlus _ a b     = let c = a `plus` b in if isZero c then Nothing else Just c
     svPlus (SV m) (SV m')   = SV (IM.mergeWithKey maybePlus id id m m')
-    svNeg (SV m)    = SV (IM.map (iNeg @c) m)
-    svEq            = liftEq ((==.) @c) `on` (.im)
-    svAG            = Group agFlags svEq svPlus svZero svIsZero svNeg
-    iCToSV          = pICToSV (iIsZero @c)
-    univF (Group _ _ tPlus tZero _ _) (TgtArrsF iCToT)  = svFoldr' tPlus tZero iCToT
+    svNeg (SV m)    = SV (IM.map neg m)
+    svEq            = liftEq eq `on` (.im)
+    svAG            = abelianGroup svEq svPlus svZero svIsZero svNeg
+    iCToSV          = pICToSV isZero
+    univF (AbelianGroup _ _ tPlus tZero _ _) (TgtArrsF iCToT)   = svFoldr' tPlus tZero iCToT
 
-svDotWith       :: IAbelianGroup c2 => (c -> c1 -> c2) ->
-                    SparseVector c -> SparseVector c1 -> c2
-svDotWith f (SV m) (SV m')   = IM.foldr' (+.) iZero (IM.intersectionWith f m m')
+svDotWith       :: (c -> c1 -> c2) -> AbelianGroup c2 -> SparseVector c -> SparseVector c1 -> c2
+svDotWith f (AbelianGroup _ _ plus zero _ _) (SV m) (SV m')     =
+    IM.foldr' plus zero (IM.intersectionWith f m m')
 
-svNZCTimes      :: forall c. IRing c => c -> Op1 (SparseVector c)
--- ^ the @c@ is nonzero
-svNZCTimes
-    | hasEIBit (iRFlags @c) NoZeroDivisors  = \c -> svMapNZFC (c *.)
-    | otherwise                             = \c -> svMapC iIsZero (c *.)
-
-svCTimes        :: IRing c => c -> Op1 (SparseVector c)
-svCTimes c v    = if iIsZero c then svZero else svNZCTimes c v
-
-svMonicize      :: IRing c => Int -> Op1 (SparseVector c)
--- ^ @(svMonicize i v)@ requires that the @i@'th coefficient of @v@ is a unit
-svMonicize i (SV m)     = SV (IM.map (rInv (m IM.! i) *.) m)
-
-svTimesNZC      :: forall c. IRing c => c -> Op1 (SparseVector c)
--- ^ the @c@ is nonzero
-svTimesNZC
-    | hasEIBit (iRFlags @c) NoZeroDivisors  = \c -> svMapNZFC (*. c)
-    | otherwise                             = \c -> svMapC iIsZero (*. c)
-
-svTimesC        :: IRing c => c -> Op1 (SparseVector c)
-svTimesC c v    = if iIsZero c then svZero else svTimesNZC c v
+data SVOverRingOps c    = SVOverRingOps {
+    nzcTimes        :: c -> Op1 (SparseVector c),   -- ^ the @c@ is nonzero
+    cTimes          :: c -> Op1 (SparseVector c),
+    monicize        :: Int -> Op1 (SparseVector c),
+        -- ^ @(monicize i v)@ requires that the @i@'th coefficient of @v@ is a unit
+    timesNZC        :: c -> Op1 (SparseVector c),   -- ^ the @c@ is nonzero
+    timesC          :: c -> Op1 (SparseVector c)
+}
+svOverRingOps                   :: forall c. Ring c -> SVOverRingOps c
+svOverRingOps cR@(Ring { .. })  = SVOverRingOps { .. }
+  where
+    isZero      = ag.isIdent
+    nzcTimes
+        | hasEIBit rFlags NoZeroDivisors    = \c -> svMapNZFC (c `times`)
+        | otherwise                         = \c -> svMapC isZero (c `times`)
+    cTimes c v  = if isZero c then svZero else nzcTimes c v
+    monicize i v@(SV m)     =
+        let c       = m IM.! i  -- check for c = 1 for speed
+        in  if rIsOne cR c then v else svMapNZFC (rInv cR c `times`) v
+    timesNZC
+        | hasEIBit rFlags NoZeroDivisors    = \c -> svMapNZFC (`times` c)
+        | otherwise                         = \c -> svMapC isZero (`times` c)
+    timesC c v    = if isZero c then svZero else timesNZC c v
 
 svSwap          :: Int -> Int -> Op1 (SparseVector c)
 -- ^ swaps two coefficients
@@ -130,23 +133,29 @@ scmPDiag cIsZero n c    = if cIsZero c then svZero else
 scmCol          :: SparseColsMat c -> Int -> SparseVector c
 scmCol mat j    = IM.findWithDefault svZero j mat.im
 
-scmTimesV       :: (IRing c, IAbelianGroup (SparseVector c)) =>
-                    SparseColsMat c -> Op1 (SparseVector c)
-scmTimesV       = svDotWith (flip svTimesNZC)
-
-scmRing         :: forall c. IRing c => Int -> Ring (SparseColsMat c)
--- ^ ring of matrices. @one@ and @fromZ@ of @scmRing n@ will create @n x n@ matrices.
-scmRing maxN    = Ring ag matFlags (*~) one fromZ bDiv
+data SCMOps c   = SCMOps {
+    vModR           :: ModR c (SparseVector c),
+    scmTimesV       :: SparseColsMat c -> Op1 (SparseVector c),
+    scmRing         :: Ring (SparseColsMat c)
+}
+scmOps          :: forall c. Ring c -> Int -> SCMOps c
+-- ^ ring of matrices. @one@ and @fromZ@ of @scmOps cR n@ will create @n x n@ matrices.
+scmOps cR maxN  = SCMOps { .. }
   where
-    UnivL vAG (TgtArrsF _iCToV) _vUnivF = svAGUniv @c
-    UnivL ag (TgtArrsF _jVToMat) _vvUnivF   = withAG vAG svAGUniv
+    cIsZero         = rIsZero cR
+    UnivL vAG (TgtArrsF _iCToV) _vUnivF     = svAGUniv cR.ag
+    vOverCRingA     = svOverRingOps cR
+    vModR           = Module vAG vOverCRingA.timesC
+    UnivL ag (TgtArrsF _jVToMat) _vvUnivF   = svAGUniv vAG
+    scmTimesV       = svDotWith (flip vOverCRingA.timesNZC) vAG
     matFlags        = case maxN of
         0   -> eiBits [IsCommutativeRing, NoZeroDivisors, IsInversesRing]
-        1   -> iRFlags @c
-        _   -> eiBit NotZeroRing .&. (iRFlags @c)
-    a *~ b          = svMapC svIsZero (withAG vAG scmTimesV a) b
-    one             = scmPDiag iIsZero maxN iOne
-    fromZ z       = scmPDiag iIsZero maxN (iFromZ z)
+        1   -> cR.rFlags
+        _   -> eiBit NotZeroRing .&. cR.rFlags
+    a *~ b          = svMapC svIsZero (scmTimesV a) b
+    one             = scmPDiag cIsZero maxN cR.one
+    fromZ z         = scmPDiag cIsZero maxN (cR.fromZ z)
+    scmRing         = Ring ag matFlags (*~) one fromZ bDiv
     bDiv _doFull y _t       = (svZero, y)   -- @@ improve (incl. solving linear equations in parallel)
 
 scmTranspose    :: Op1 (SparseColsMat c)

@@ -1,4 +1,4 @@
-{-# LANGUAGE AllowAmbiguousTypes, CPP, Strict, UndecidableInstances #-}
+{-# LANGUAGE Strict #-}
 
 {- |  This module defines the most common types of algebras, and simple functions using them.
     
@@ -9,8 +9,8 @@
     by using other algebras. We implement an algebra using a first-class data value rather than
     a type class, because a single type may admit more than one structure as a given type of
     algebra. (For example, consider quotient algebras such as @ℤ/pℤ@ or @R[X, Y]/(f, g)@ for
-    various @p@, @f@, and @g@.) If there are default or standard algebra(s) for a certain data
-    type, then one could also provide implicit access to them via type classes.
+    various @p@, @f@, and @g@.) Also, treating algebras as first-class values allows us to
+    construct them at arbitrary times in arbitrary ways.
     
     Note that a set of constructive (e.g. Haskell) values is an attempt to represent a set of
     abstract (mathematical) values. The abstract values have an implicit notion of (abstract)
@@ -68,8 +68,7 @@ module Math.Algebra.General.Algebra (
     Group(..), expt1, gpExpt, pairGp, gpModF, gpProductL', gpProductR,
     -- ** AbelianGroup
     AbelianGroup(), pattern AbelianGroup,   -- @@@ fails: plus, zero, isZero, neg,
-    agPlus, agZero, agIsZero, agNeg,
-    IAbelianGroup(iAG), (==.), (+.), iZero, iIsZero, iNeg, withAG,
+    agPlus, agZero, agIsZero, agNeg, abelianGroup,
     minus, sumL', sumR,
     
     -- * Rings and fields
@@ -78,9 +77,8 @@ module Math.Algebra.General.Algebra (
     integralDomainFlags, divisionRingFlags, fieldFlags,
     -- ** Ring
     Ring(..), rEq, rPlus, rZero, rIsZero, rNeg,
-    IRing(iRing), iRFlags, (*.), iOne, iFromZ, iBDiv, withRing,
-    rIsOne, (/.), exactQuo, nearQuo, smallRem, rInv, divides,
-    (^.), rExpt, rSumL', rSumR, rProductL', rProductR,
+    rIsOne, exactQuo, nearQuo, smallRem, rInv, divides,
+    rExpt, rSumL', rSumR, rProductL', rProductR,
     -- ** Field
     Field, divisionRing, field, fieldGcd,
     
@@ -117,28 +115,6 @@ import Data.List.Extra (trimStart)
 import Data.Maybe (maybeToList)
 import Numeric (readDec, showHex)
 import Text.ParserCombinators.ReadPrec (Prec)
-
--- import Data.Constraint {- @@ (...) -} hiding (withDict)
-#if __GLASGOW_HASKELL__ >= 904
-import GHC.Exts (withDict)
-#else
-import Unsafe.Coerce (unsafeCoerce)
-#endif
-
-
-#if __GLASGOW_HASKELL__ < 904
-withDict        :: forall cls meth r. {- WithDict cls meth => -} meth -> (cls => r) -> r
--- @cls@ must have no superclasses, and exactly one method of type @meth@.
-withDict alg k  = unsafeCoerce (Gift k :: Gift cls r) alg
-
--- | for using an algebra as a typeclass dictionary
-newtype Gift cls r  = Gift (cls => r)
-#endif
-
-infixr 8    ^.
-infixl 7    *., /.
-infixl 6    +.
-infix  4    ==.     -- @@ /=, <, <=, >=, >
 
 
 -- * Common function types
@@ -363,29 +339,9 @@ agNeg           :: AbelianGroup a -> Op1 a
 -- ^ @agNeg = (.inv)@
 agNeg           = (.inv)
 
-{- | An @(IAbelianGroup a)@ is implicitly an 'AbelianGroup', given by 'iAG'. -}
-class IAbelianGroup a where
-    iAG         :: AbelianGroup a
-
-(==.)           :: IAbelianGroup a => EqRel a
--- ^ @(==.) = iAG.eq@
-(==.)           = iAG.eq
-(+.)            :: IAbelianGroup a => Op2 a
--- ^ @(+.) = agPlus iAG@
-(+.)            = agPlus iAG
-iZero           :: IAbelianGroup a => a
--- ^ @iZero = agZero iAG@
-iZero           = agZero iAG
-iIsZero         :: IAbelianGroup a => Pred a
--- ^ @iIsZero = agIsZero iAG@
-iIsZero         = agIsZero iAG
-iNeg            :: IAbelianGroup a => Op1 a
--- ^ @iNeg = agNeg iAG@
-iNeg            = agNeg iAG
-
-withAG          :: forall a r. AbelianGroup a -> (IAbelianGroup a => r) -> r
--- ^ Use an @(AbelianGroup a)@ as an @(IAbelianGroup a)@.
-withAG          = withDict @(IAbelianGroup a)
+abelianGroup    :: EqRel a -> Op2 a -> a -> Pred a -> Op1 a -> AbelianGroup a
+-- ^ @abelianGroup eq plus zero isZero neg@ creates an 'AbelianGroup'
+abelianGroup    = AbelianGroup agFlags
 
 minus           :: AbelianGroup a -> Op2 a
 -- ^ @minus ag x y = x `plus` neg y@
@@ -465,45 +421,15 @@ rNeg            :: Ring a -> Op1 a
 -- ^ > rNeg = agNeg . (.ag)
 rNeg            = agNeg . (.ag)
 
-{- | An @(IRing a)@ is implicitly a 'Ring', given by 'iRing'. -}
-class IRing a where
-    iRing       :: Ring a
-instance {-# INCOHERENT #-} IRing a => IAbelianGroup a where
-    iAG         = iRing.ag
-
-iRFlags         :: forall a. IRing a => RingFlags
--- ^ @iRFlags  = (iRing @a).rFlags@
-iRFlags         = (iRing @a).rFlags
-(*.)            :: IRing a => Op2 a
--- ^ @(*.) = iRing.times@
-(*.)            = iRing.times
-iOne            :: IRing a => a
--- ^ @iOne = iRing.one@
-iOne            = iRing.one
-iFromZ          :: IRing a => Integer -> a
--- ^ @iFromZ = iRing.fromZ@
-iFromZ          = iRing.fromZ
-iBDiv           :: IRing a => Bool -> a -> a -> (a, a)
--- ^ @iBDiv = iRing.bDiv@
-iBDiv           = iRing.bDiv
-
-withRing        :: forall a t. Ring a -> (IRing a => t) -> t
--- ^ Use a @(Ring a)@ as an @(IRing a)@.
-withRing        = withDict @(IRing a)
-
 rIsOne          :: Ring a -> Pred a
 -- ^ > rIsOne aR = rEq aR aR.one
 rIsOne aR       = rEq aR aR.one
 
-(/.)            :: IRing a => Op2 a
--- ^ exact quotient, i.e. division (@bDiv False@) should have zero remainder
-y /. m          =
-    let (q, r)      = iBDiv False y m
-    in  if iIsZero r then q else error "division is not exact"
-
 exactQuo        :: Ring a -> Op2 a
 -- ^ exact quotient, i.e. division (@bDiv False@) should have zero remainder
-exactQuo rR     = withRing rR (/.)
+exactQuo rR y m =
+    let (q, r)      = rR.bDiv False y m
+    in  if rIsZero rR r then q else error "division is not exact"
 
 nearQuo                 :: Ring a -> Bool -> Op2 a
 -- ^ > nearQuo rR doFull y m = fst (rR.bDiv doFull y m)
@@ -512,25 +438,21 @@ smallRem                :: Ring a -> Bool -> Op2 a
 -- ^ > smallRem rR doFull y m = snd (rR.bDiv doFull y m)
 smallRem rR doFull y m  = snd (rR.bDiv doFull y m)
 
-rInv            :: IRing a => Op1 a
--- ^ > rInv = (iOne /.)
-rInv            = (iOne /.)
+rInv            :: Ring a -> Op1 a
+-- ^ > rInv rR = exactQuo rR rR.one
+rInv rR         = exactQuo rR rR.one
 
-divides         :: IRing a => a -> a -> Bool
+divides         :: Ring a -> a -> a -> Bool
 -- ^ whether an element divides another element; note the arguments are reversed from division
-divides d y     = iIsZero (snd (iBDiv False y d))
-
-(^.)            :: (IRing a, Integral b) => a -> b -> a
--- ^ exponentiation to an integral power
-(^.) x n
-    | n > 0     = expt1 (*.) x n
-    | n == 0    = iOne
-    | otherwise = rInv (x ^. (- n))
-{-# SPECIALIZE (^.) :: IRing a => a -> Int -> a #-}
+divides rR d y  = rIsZero rR (snd (rR.bDiv False y d))
 
 rExpt           :: Integral b => Ring a -> a -> b -> a
--- ^ exponentiation to an integral power, using a 'Ring' passed explicitly
-rExpt aR        = withRing aR (^.)
+-- ^ exponentiation to an integral power
+rExpt rR x n
+    | n > 0     = expt1 rR.times x n
+    | n == 0    = rR.one
+    | otherwise = rInv rR (rExpt rR x (- n))
+{-# SPECIALIZE rExpt :: Ring a -> a -> Int -> a #-}
 
 rSumL'          :: Ring a -> [a] -> a
 -- ^ sum using foldl'
@@ -622,7 +544,7 @@ algMd (RAlg { .. })     = Module aR.ag scale
 
 numAG           :: (Eq n, Num n) => AbelianGroup n
 -- ^ @n@ under addition
-numAG           = Group agFlags (==) (+) 0 (== 0) negate
+numAG           = abelianGroup (==) (+) 0 (== 0) negate
 
 -- ** Integer
 
@@ -641,9 +563,6 @@ zzDiv _ n d
 zzRing          :: Ring Integer
 -- ^ the ring of integers ℤ
 zzRing          = Ring zzAG integralDomainFlags (*) 1 id zzDiv
-
-instance IRing Integer where
-    iRing       = zzRing
 
 -- ** Double
 

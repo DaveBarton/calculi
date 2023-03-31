@@ -31,8 +31,8 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
     -- commute with it:
     (cRing, _)      = zzModPW @2_000_003
     (cSG@(cShow, cGen), cTestEq)    = zpwTestOps @2_000_003
-    epru            = withRing cRing epRingUniv nVars gRevLex
-    UnivL epRing (RingTgtXs cToEp varEps) epUnivF   = epru
+    EPolyOps { epUniv }     = epOps cRing nVars gRevLex
+    UnivL epRing (RingTgtXs cToEp varEps) epUnivF   = epUniv
     nT              = cRing.fromZ
     nextT b         = rPlus cRing (cRing.times (nT 1234) b) (nT 567)
     ts              = take nVars (unfoldr (\b -> Just (b, nextT b)) (nT 12345))
@@ -49,7 +49,7 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
     epGen           = fmap (rSumL' epRing) (Gen.list (Range.linear 0 10) monomGen)
     sg              = (pShow, epGen)
     
-    props           = withRing epRing ringProps sg testEq (eiBit IsCommutativeRing)
+    props           = ringProps sg testEq (eiBit IsCommutativeRing) epRing
                         ++ ringHomomProps cSG cRing testEq epRing cToEp
                         ++ [("xs", propertyOnce $ zipWithM_ (===) (map pShow varEps) varSs)]
                         ++ ringHomomProps sg epRing cTestEq cRing epToT

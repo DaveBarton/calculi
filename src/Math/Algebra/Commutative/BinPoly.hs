@@ -91,7 +91,8 @@ data BPOtherOps ev vals     = BPOtherOps {
     bpNot           :: Op1 (BinPoly ev),    -- ^ @bpNot x == x + 1@
     (∧)             :: Op2 (BinPoly ev),    -- ^ \"and\", same as multiplication
     (∨)             :: Op2 (BinPoly ev),    -- ^ \"or\", @x ∨ y = x + y + xy = (x+1)(y+1) + 1@
-    pAt             :: BinPoly ev -> vals -> Bool
+    pAt             :: BinPoly ev -> vals -> Bool,
+    pRead           :: String -> BinPoly ev
 }
 
 bpSortCancel            :: Cmp ev -> SL.List ev -> BinPoly ev
@@ -119,7 +120,7 @@ bp58Ops evCmp isGraded varSs useSugar   = assert (nVars <= 58)
     evMaybeQuo v w      = pureIf (evDivides w v) (fromBits58Only (v.w64 - w.w64))
     evTotDeg            = totDeg58
     n4s                 = quot (nVars + 3) 4
-    nEvGroups           = n4s * (max (n4s - 1) 1)
+    nEvGroups           = n4s * max (n4s - 1) 1
     evGroup v           = reverse [5 * pc4 i + pc4 j
                             | i <- [0 .. n4s - 1], j <- [0 .. n4s - 1], i /= j || n4s == 1]
       where
@@ -141,7 +142,7 @@ bp58Ops evCmp isGraded varSs useSugar   = assert (nVars <= 58)
                 EQ  -> go r        t  u
         go r xs           SL.Nil        = SL.prependReversed r xs
         go r SL.Nil       ys            = SL.prependReversed r ys
-    bpAG                = Group agFlags (==) bpPlus SL.Nil null id
+    bpAG                = abelianGroup (==) bpPlus SL.Nil null id
     bpRFlags            = eiBits [NotZeroRing, IsCommutativeRing]
     bpFromZ n           = if even (n :: Integer) then SL.Nil else SL.singleton evOne
     bpTimesEv bp ev     = if ev == evOne then bp else   -- for speed
@@ -185,6 +186,8 @@ bp58Ops evCmp isGraded varSs useSugar   = assert (nVars <= 58)
     (∧)                 = pR.times
     x ∨ y               = bpNot (bpNot x ∧ bpNot y)
     pAt p bs            = foldl' (\b v -> b /= evAt v bs) False p
+    varPs               = map bpVar [0 .. nVars - 1]
+    pRead               = (\ [(x,"")] -> x) . polynomReads pR (zip varSs varPs) -- @@@ improve
 
 bpCountZeros        :: BPOtherOps EV58 Word64 -> [BinPoly EV58] -> Int
 -- ^ @1 <= nVars <= 58@

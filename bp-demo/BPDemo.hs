@@ -17,8 +17,6 @@ import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 -- import Debug.Trace
 
 
--- To run a demo, first set the "@@" lines below the way you want.
-
 demoOps             :: Int -> StdEvCmp ->
                         (GBPolyOps EV58 EV58 (BinPoly EV58), BPOtherOps EV58 Word64)
 demoOps nVars sec   = bp58Ops evCmp isGraded varSs useSugar
@@ -27,100 +25,94 @@ demoOps nVars sec   = bp58Ops evCmp isGraded varSs useSugar
     isGraded        = secIsGraded sec
     xVarSs          = ['X' : show n | n <- [1 :: Int ..]]
     varSs           = take nVars (map (: []) ['a' .. 'z'] ++ xVarSs)
-    useSugar        = False     -- @@
+    useSugar        = False
 
 bpDemo                  :: Int -> Int -> IO ()
 bpDemo nCores gbTrace   = do
     putStrLn $ name ++ " " ++ show sec
-    putStrLn $ show (bpCountZeros bpoA gens) ++ " zeros"
-    when (Seq.length reducedGensSeq < 250) $ putStrLn $ showGens gbpA.pShow reducedGensL
-    putStrLn $ show (bpCountZeros bpoA reducedGensL) ++ " zeros"
+    -- when (Seq.length reducedGBGensSeq < 250) $ putStrLn $ showGens gbpA.pShow reducedGBGensL
+    putStrLn $ show (bpCountZeros bpoA reducedGBGensL) ++ " receiver zeros"
+    putStrLn $ show (bpCountZeros bpoA reducedBigGBGensL) ++ " common zeros"
+    putStrLn $ show (length newReducedGensL) ++ " generators to send:"
+    mapM_ (putStrLn . gbpA.pShow) newReducedGensL
   where
+    -- To run a demo, first set the "@@" lines below the way you want.
+
     sec             = LexCmp   -- @@ LexCmp, GrLexCmp, or GrRevLexCmp
-    (gbpA, bpoA@(BPOtherOps { .. }))    = demoOps (length varPs) sec
-    infixl 7 ∧          -- same as (.&.) and (*)
-    infixr 5 ∨          -- same as (.|.) except infixr, note (`xor`) and (+) are infixl 6
+    (gbpA, bpoA@(BPOtherOps { pRead }))     = demoOps nVars sec
     SubmoduleOps { .. }         = gbiSmOps gbpA nCores gbTrace
-    gbIdeal         = fromGens gens
-    reducedGensSeq  = stdGens True gbIdeal
-    reducedGensL    = toList reducedGensSeq
-    -- @@ can compute (bMod doFullReduce p gbIdeal) where doFullReduce is True or False
     
-    -- @@ choose a name, varPs & complements, and gens, commenting out the other examples:
+    initGensL       = map (map pRead) initGenSsL
+    gbIdeal         = fromGens (initGensL !! 1)     -- @@ 0-based indexing into initGensL
+    reducedGBGensSeq    = stdGens True gbIdeal
+    reducedGBGensL      = toList reducedGBGensSeq
+    toReduce        = initGensL !! 0                -- @@ more 0-based indexing, sender
+    gbIdeal'        = fromGens (reducedGBGensL ++ toReduce)
+    reducedBigGBGensL   = toList (stdGens True gbIdeal')
+    newReducedGensL     = filter (not . rIsZero gbpA.pR)
+        (map (bModBy True gbIdeal) reducedBigGBGensL)
+    
+    -- @@ choose a name, nVars, and gens, commenting out the other examples:
     -- 'a' is the most main variable
     {- 
-    name            = "logic0"
-    varPs@[a, b, c, d]  = map bpVar [0 .. 3]
-    [a_, b_, c_, d_]    = map bpNot varPs
-    gens            = [a ∨ b ∨ c_, a ∨ d]
-    -}
-    {- 
     name            = "logic3"
-    varPs@[a, b, c, d, e, f, g, h, i, j]        = map bpVar [0 .. 9]
-    [a_, b_, c_, d_, e_, f_, g_, h_, i_, j_]    = map bpNot varPs
-    [poly1, poly2, poly3]   = [
-        (e ∨ f_ ∨ j) ∧ (d ∨ e ∨ g) ∧ (b_ ∨ f ∨ i) ∧ (e_ ∨ g_ ∨ i_) ∧ (d_ ∨ h ∨ j)
-            ∧ (c ∨ e_ ∨ g) ∧ (e_ ∨ f ∨ h) ∧ (f ∨ g ∨ i) ∧ (c ∨ i_ ∨ j) ∧ (e ∨ h_ ∨ j_)
-            ∧ (c ∨ f_ ∨ i_) ∧ (c_ ∨ f_ ∨ g_) ∧ (a_ ∨ e ∨ f_) ∧ (f ∨ h ∨ i_) ∧ (a ∨ f_ ∨ i_)
-            ∧ (a_ ∨ d ∨ f) ∧ (a_ ∨ c_ ∨ j) ∧ (b_ ∨ e ∨ i_) ∧ (b_ ∨ g ∨ h) ∧ (a_ ∨ h ∨ i_)
-            ∧ (d ∨ f_ ∨ i) ∧ (a_ ∨ f_ ∨ j_) ∧ (e_ ∨ f ∨ j) ∧ (g ∨ i ∨ j_) ∧ (e_ ∨ f_ ∨ h_)
-            ∧ (b ∨ e_ ∨ f_) ∧ (b_ ∨ c_ ∨ g_) ∧ (c ∨ g ∨ i) ∧ (b ∨ f ∨ j_) ∧ (e_ ∨ h ∨ j)
-            ∧ (a_ ∨ c_ ∨ g) ∧ (c_ ∨ f ∨ g_) ∧ (d_ ∨ g ∨ i_) ∧ (a ∨ d ∨ i) ∧ (e_ ∨ h_ ∨ j_)
-            ∧ (a ∨ b_ ∨ g_) ∧ (d_ ∨ i ∨ j_) ∧ (c ∨ g ∨ h) ∧ (b_ ∨ h ∨ j_) ∧ (a_ ∨ i_ ∨ j_)
-            ∧ (c_ ∨ d ∨ h_) ∧ (b_ ∨ d_ ∨ h_) ∧ (a_ ∨ b ∨ c) ∧ (b ∨ d ∨ g) ∧ (a ∨ g_ ∨ h)
-            ∧ (b_ ∨ c ∨ d_) ∧ (b_ ∨ e ∨ i) ∧ (a_ ∨ c ∨ h) ∧ (d_ ∨ f_ ∨ i) ∧ (a_ ∨ e_ ∨ g_),
-        (d ∨ e ∨ i) ∧ (b_ ∨ c_ ∨ d) ∧ (d_ ∨ g ∨ i_) ∧ (a_ ∨ b ∨ c) ∧ (b ∨ g ∨ i)
-            ∧ (f ∨ i_ ∨ j_) ∧ (e ∨ f_ ∨ g) ∧ (a_ ∨ b_ ∨ d) ∧ (b_ ∨ e_ ∨ i_) ∧ (a ∨ f_ ∨ j_)
-            ∧ (d_ ∨ f ∨ i_) ∧ (c_ ∨ d_ ∨ g) ∧ (b_ ∨ e_ ∨ i) ∧ (b_ ∨ c_ ∨ e) ∧ (a_ ∨ d ∨ h)
-            ∧ (d ∨ h ∨ j_) ∧ (c_ ∨ f ∨ i) ∧ (e_ ∨ f ∨ h_) ∧ (b ∨ f ∨ j_) ∧ (d ∨ g ∨ j_)
-            ∧ (a ∨ b ∨ c_) ∧ (b ∨ h ∨ j_) ∧ (a_ ∨ f_ ∨ i_) ∧ (c_ ∨ e_ ∨ g_) ∧ (b ∨ c_ ∨ d_)
-            ∧ (f_ ∨ g ∨ h_) ∧ (e ∨ g ∨ i) ∧ (b ∨ c_ ∨ i) ∧ (c_ ∨ f ∨ h_) ∧ (a_ ∨ e ∨ i_)
-            ∧ (a_ ∨ f_ ∨ g_) ∧ (a ∨ c ∨ i_) ∧ (b_ ∨ i ∨ j_) ∧ (b ∨ d_ ∨ g) ∧ (c_ ∨ f_ ∨ g)
-            ∧ (b_ ∨ c ∨ e) ∧ (c ∨ d_ ∨ e_) ∧ (a_ ∨ h ∨ i_) ∧ (g_ ∨ i ∨ j_) ∧ (d_ ∨ e_ ∨ j_),
-        (e ∨ h ∨ i)]
-    gens = [bpNot poly1]
+    nVars           = 10
+    initGenSsL      = [
+        ["(e+1)f(j+1)", "(d+1)(e+1)(g+1)", "b(f+1)(i+1)", "egi", "d(h+1)(j+1)",
+            "(c+1)e(g+1)", "e(f+1)(h+1)", "(f+1)(g+1)(i+1)", "(c+1)i(j+1)", "(e+1)hj",
+            "(c+1)fi", "cfg", "a(e+1)f", "(f+1)(h+1)i", "(a+1)fi", "a(d+1)(f+1)", "ac(j+1)",
+            "b(e+1)i", "b(g+1)(h+1)", "a(h+1)i", "(d+1)f(i+1)", "afj", "e(f+1)(j+1)",
+            "(g+1)(i+1)j", "efh", "(b+1)ef", "bcg", "(c+1)(g+1)(i+1)", "(b+1)(f+1)j",
+            "e(h+1)(j+1)", "ac(g+1)", "c(f+1)g", "d(g+1)i", "(a+1)(d+1)(i+1)", "ehj",
+            "(a+1)bg", "d(i+1)j", "(c+1)(g+1)(h+1)", "b(h+1)j", "aij", "c(d+1)h", "bdh",
+            "a(b+1)(c+1)", "(b+1)(d+1)(g+1)", "(a+1)g(h+1)", "b(c+1)d", "b(e+1)(i+1)",
+            "a(c+1)(h+1)", "df(i+1)", "aeg"],
+        ["(d+1)(e+1)(i+1)", "bc(d+1)", "d(g+1)i", "a(b+1)(c+1)", "(b+1)(g+1)(i+1)",
+            "(f+1)ij", "(e+1)f(g+1)", "ab(d+1)", "bei", "(a+1)fj", "d(f+1)i", "cd(g+1)",
+            "be(i+1)", "bc(e+1)", "a(d+1)(h+1)", "(d+1)(h+1)j", "c(f+1)(i+1)", "e(f+1)h",
+            "(b+1)(f+1)j", "(d+1)(g+1)j", "(a+1)(b+1)c", "(b+1)(h+1)j", "afi", "ceg",
+            "(b+1)cd", "f(g+1)h", "(e+1)(g+1)(i+1)", "(b+1)c(i+1)", "c(f+1)h", "a(e+1)i",
+            "afg", "(a+1)(c+1)i", "b(i+1)j", "(b+1)d(g+1)", "cf(g+1)", "b(c+1)(e+1)",
+            "(c+1)de", "a(h+1)i", "g(i+1)j", "dej"],
+        ["(e+1)(h+1)(i+1)"]]
     -}
     {- 
     name            = "logic5"
-    varPs@[a, b, c, d, e, f, g, h, i, j, k, l, m, n, o]             = map bpVar [0 .. 14]
-    [a_, b_, c_, d_, e_, f_, g_, h_, i_, j_, k_, l_, m_, n_, o_]    = map bpNot varPs
-    [poly1, poly2, poly3]   = [
-        (l ∨ n_ ∨ o) ∧ (f ∨ l ∨ o_) ∧ (h ∨ j ∨ l) ∧ (e_ ∨ j_ ∨ n_) ∧ (a ∨ c ∨ l) ∧ (f ∨ g_ ∨
-            j) ∧ (d ∨ j ∨ o_) ∧ (d_ ∨ f ∨ j) ∧ (a ∨ c ∨ o_) ∧ (g ∨ j ∨ l) ∧ (i ∨ m ∨ n) ∧ (c
-            ∨ h_ ∨ i_) ∧ (c ∨ g_ ∨ i_) ∧ (a_ ∨ g_ ∨ h_) ∧ (a ∨ i ∨ j) ∧ (c ∨ d_ ∨ k) ∧ (i ∨ k
-            ∨ l) ∧ (f ∨ l ∨ m_) ∧ (d ∨ j ∨ n_) ∧ (c ∨ g ∨ l) ∧ (e ∨ m ∨ o_) ∧ (e_ ∨ j_ ∨ m_)
-            ∧ (c ∨ h_ ∨ l_) ∧ (e_ ∨ j_ ∨ k) ∧ (a_ ∨ e_ ∨ j_) ∧ (c_ ∨ e ∨ f) ∧ (e_ ∨ i ∨ j_) ∧
-            (a ∨ e ∨ k_) ∧ (b ∨ h_ ∨ i) ∧ (a ∨ k_ ∨ m_) ∧ (a ∨ c_ ∨ g_) ∧ (b_ ∨ e ∨ n_) ∧ (b
-            ∨ k_ ∨ o_) ∧ (e ∨ g_ ∨ l_) ∧ (a_ ∨ d ∨ g_) ∧ (a ∨ h_ ∨ o_) ∧ (d_ ∨ j ∨ o_) ∧ (e ∨
-            f ∨ h) ∧ (c_ ∨ i_ ∨ l) ∧ (f ∨ l_ ∨ m) ∧ (f ∨ i_ ∨ l_) ∧ (h ∨ i_ ∨ k_) ∧ (c ∨ i ∨
-            j) ∧ (j_ ∨ l_ ∨ n_) ∧ (e ∨ i ∨ k) ∧ (e_ ∨ h ∨ m) ∧ (d ∨ j_ ∨ k_) ∧ (a ∨ f ∨ o) ∧
-            (b ∨ k_ ∨ n) ∧ (d ∨ e ∨ i_) ∧ (d ∨ e_ ∨ g) ∧ (c ∨ m ∨ n) ∧ (e_ ∨ f ∨ j) ∧ (a_ ∨ l
-            ∨ o_) ∧ (j_ ∨ l ∨ o_) ∧ (b_ ∨ g ∨ k_) ∧ (d ∨ e ∨ o_) ∧ (f ∨ h ∨ m_) ∧ (c ∨ h ∨
-            n_) ∧ (f ∨ h_ ∨ o) ∧ (e_ ∨ g_ ∨ i) ∧ (a_ ∨ d ∨ f_) ∧ (b ∨ c ∨ l_) ∧ (b_ ∨ i ∨ k_)
-            ∧ (e ∨ j ∨ o) ∧ (b ∨ d ∨ o) ∧ (i_ ∨ k ∨ o_) ∧ (a ∨ k ∨ o_) ∧ (a_ ∨ e ∨ m_) ∧ (e ∨
-            g ∨ l_) ∧ (i ∨ k ∨ n_) ∧ (a ∨ c ∨ e) ∧ (a_ ∨ c ∨ l_) ∧ (d ∨ f ∨ l_) ∧ (c ∨ h ∨ n)
-            ∧ (e_ ∨ j_ ∨ l_) ∧ (b_ ∨ d_ ∨ k) ∧ (a ∨ c_ ∨ l_) ∧ (f_ ∨ j_ ∨ m_) ∧ (h_ ∨ j_ ∨
-            o),
-        (d ∨ g ∨ h_) ∧ (a ∨ f_ ∨ k_) ∧ (a ∨ k_ ∨ l_) ∧ (c ∨ g_ ∨ o_) ∧ (a ∨ b ∨ h) ∧ (a ∨ c_
-            ∨ f) ∧ (c ∨ e ∨ g) ∧ (d ∨ l_ ∨ o_) ∧ (b_ ∨ f_ ∨ k_) ∧ (f_ ∨ h_ ∨ i) ∧ (c ∨ d ∨
-            e_) ∧ (e ∨ k_ ∨ m) ∧ (e_ ∨ i_ ∨ l) ∧ (b_ ∨ f ∨ l) ∧ (f ∨ h ∨ k) ∧ (f_ ∨ j_ ∨ k_)
-            ∧ (c ∨ h_ ∨ n_) ∧ (b ∨ f_ ∨ j_) ∧ (c ∨ k_ ∨ l_) ∧ (e ∨ f ∨ j_) ∧ (e ∨ l_ ∨ n_) ∧
-            (b_ ∨ f_ ∨ k) ∧ (d_ ∨ m_ ∨ o_) ∧ (b_ ∨ c_ ∨ h_) ∧ (a ∨ g ∨ h) ∧ (a ∨ k_ ∨ l) ∧
-            (b_ ∨ g ∨ j_) ∧ (c ∨ g_ ∨ k) ∧ (b_ ∨ h ∨ i) ∧ (c ∨ l_ ∨ o_) ∧ (c ∨ i_ ∨ j_) ∧ (f
-            ∨ k ∨ o) ∧ (a_ ∨ m ∨ o_) ∧ (a ∨ d_ ∨ h_) ∧ (c_ ∨ e ∨ o) ∧ (d_ ∨ e ∨ f) ∧ (e ∨ i ∨
-            l_) ∧ (f ∨ i ∨ o) ∧ (e ∨ f_ ∨ h_) ∧ (c_ ∨ l ∨ m_) ∧ (c ∨ f ∨ g_) ∧ (e ∨ h ∨ l) ∧
-            (d ∨ f ∨ m) ∧ (g ∨ j_ ∨ n_) ∧ (c ∨ g ∨ j_) ∧ (j ∨ l ∨ m) ∧ (b ∨ d ∨ i) ∧ (g_ ∨ h
-            ∨ m) ∧ (c ∨ g_ ∨ n) ∧ (f ∨ j_ ∨ o_) ∧ (c ∨ k_ ∨ m_) ∧ (b_ ∨ f ∨ g_) ∧ (e_ ∨ n_ ∨
-            o_) ∧ (c_ ∨ d ∨ k) ∧ (e_ ∨ f ∨ j_) ∧ (c ∨ f ∨ n) ∧ (c ∨ i_ ∨ m_) ∧ (c_ ∨ d_ ∨ l)
-            ∧ (g_ ∨ i ∨ j) ∧ (e ∨ f_ ∨ i) ∧ (c ∨ e ∨ l) ∧ (b_ ∨ h_ ∨ n_) ∧ (g ∨ l ∨ n) ∧ (g_
-            ∨ i ∨ m_) ∧ (b ∨ e ∨ m_) ∧ (a_ ∨ i ∨ o_) ∧ (j_ ∨ k_ ∨ m_) ∧ (b ∨ g_ ∨ o_) ∧ (d ∨
-            k_ ∨ n_) ∧ (k ∨ n ∨ o_) ∧ (f ∨ g ∨ m) ∧ (b_ ∨ k ∨ o_) ∧ (d ∨ f ∨ o_) ∧ (a_ ∨ e ∨
-            h) ∧ (d_ ∨ j_ ∨ o_),
-        (a_ ∨ b ∨ c ∨ e_ ∨ g ∨ h ∨ l_ ∨ n)]
-    -- gens = [bpNot poly1]  -- gives 19 gens like in logic5.out.txt, looks like the same ideal
-    gens = [bpNot poly2]    -- 65 zeros, 41 gens in all 3 monomial orders
-    -}
-    {- ⟨ o, ln+l+n+1, lm+l+m+1, kl+k, j, il+i, hl+h, hi+h, gl+g, gi+g, ghm+gh+gm+g, fl+f+l+1,
+    nVars           = 15
+    initGenSsL      = [
+        ["(l+1)n(o+1)", "(f+1)(l+1)o", "(h+1)(j+1)(l+1)", "ejn", "(a+1)(c+1)(l+1)",
+            "(f+1)g(j+1)", "(d+1)(j+1)o", "d(f+1)(j+1)", "(a+1)(c+1)o", "(g+1)(j+1)(l+1)",
+            "(i+1)(m+1)(n+1)", "(c+1)hi", "(c+1)gi", "agh", "(a+1)(i+1)(j+1)", "(c+1)d(k+1)",
+            "(i+1)(k+1)(l+1)", "(f+1)(l+1)m", "(d+1)(j+1)n", "(c+1)(g+1)(l+1)",
+            "(e+1)(m+1)o", "ejm", "(c+1)hl", "ej(k+1)", "aej", "c(e+1)(f+1)", "e(i+1)j",
+            "(a+1)(e+1)k", "(b+1)h(i+1)", "(a+1)km", "(a+1)cg", "b(e+1)n", "(b+1)ko",
+            "(e+1)gl", "a(d+1)g", "(a+1)ho", "d(j+1)o", "(e+1)(f+1)(h+1)", "ci(l+1)",
+            "(f+1)l(m+1)", "(f+1)il", "(h+1)ik", "(c+1)(i+1)(j+1)", "jln", "(e+1)(i+1)(k+1)",
+            "e(h+1)(m+1)", "(d+1)jk", "(a+1)(f+1)(o+1)", "(b+1)k(n+1)", "(d+1)(e+1)i",
+            "(d+1)e(g+1)", "(c+1)(m+1)(n+1)", "e(f+1)(j+1)", "a(l+1)o", "j(l+1)o", "b(g+1)k",
+            "(d+1)(e+1)o", "(f+1)(h+1)m", "(c+1)(h+1)n", "(f+1)h(o+1)", "eg(i+1)", "a(d+1)f",
+            "(b+1)(c+1)l", "b(i+1)k", "(e+1)(j+1)(o+1)", "(b+1)(d+1)(o+1)", "i(k+1)o",
+            "(a+1)(k+1)o", "a(e+1)m", "(e+1)(g+1)l", "(i+1)(k+1)n", "(a+1)(c+1)(e+1)",
+            "a(c+1)l", "(d+1)(f+1)l", "(c+1)(h+1)(n+1)", "ejl", "bd(k+1)", "(a+1)cl", "fjm",
+            "hj(o+1)"],
+        ["(d+1)(g+1)h", "(a+1)fk", "(a+1)kl", "(c+1)go", "(a+1)(b+1)(h+1)", "(a+1)c(f+1)",
+            "(c+1)(e+1)(g+1)", "(d+1)lo", "bfk", "fh(i+1)", "(c+1)(d+1)e", "(e+1)k(m+1)",
+            "ei(l+1)", "b(f+1)(l+1)", "(f+1)(h+1)(k+1)", "fjk", "(c+1)hn", "(b+1)fj",
+            "(c+1)kl", "(e+1)(f+1)j", "(e+1)ln", "bf(k+1)", "dmo", "bch", "(a+1)(g+1)(h+1)",
+            "(a+1)k(l+1)", "b(g+1)j", "(c+1)g(k+1)", "b(h+1)(i+1)", "(c+1)lo", "(c+1)ij",
+            "(f+1)(k+1)(o+1)", "a(m+1)o", "(a+1)dh", "c(e+1)(o+1)", "d(e+1)(f+1)",
+            "(e+1)(i+1)l", "(f+1)(i+1)(o+1)", "(e+1)fh", "c(l+1)m", "(c+1)(f+1)g",
+            "(e+1)(h+1)(l+1)", "(d+1)(f+1)(m+1)", "(g+1)jn", "(c+1)(g+1)j",
+            "(j+1)(l+1)(m+1)", "(b+1)(d+1)(i+1)", "g(h+1)(m+1)", "(c+1)g(n+1)", "(f+1)jo",
+            "(c+1)km", "b(f+1)g", "eno", "c(d+1)(k+1)", "e(f+1)j", "(c+1)(f+1)(n+1)",
+            "(c+1)im", "cd(l+1)", "g(i+1)(j+1)", "(e+1)f(i+1)", "(c+1)(e+1)(l+1)", "bhn",
+            "(g+1)(l+1)(n+1)", "g(i+1)m", "(b+1)(e+1)m", "a(i+1)o", "jkm", "(b+1)go",
+            "(d+1)kn", "(k+1)(n+1)o", "(f+1)(g+1)(m+1)", "b(k+1)o", "(d+1)(f+1)o",
+            "a(e+1)(h+1)", "djo"],
+        ["a(b+1)(c+1)e(g+1)(h+1)l(n+1)"]]
+    -- gens = [bpNot poly1] -- gives 19 gens like in logic5.out.txt, looks like the same ideal
+    -- gens = [bpNot poly2] -- 65 zeros, 41 gens in all 3 monomial orders:
+    ⟨ o, ln+l+n+1, lm+l+m+1, kl+k, j, il+i, hl+h, hi+h, gl+g, gi+g, ghm+gh+gm+g, fl+f+l+1,
         fk+f+k+1, fi+f+i+1, fhm+fh+fm+f+hm+h+m+1, fgm+fg+fm+f+gm+g+m+1, e+1, dn+n, dl+d+l+1,
         dk+d+k+1, di+d+i+1, dgm+dg+dhm+dh+gm+g+hm+h, dgh+dh+gh+h, dfm+df+dm+d+fm+f+m+1, cl+c,
         ck+k, cim+im, chn+hn, chm+hm, cg+g, cf+c+f+1, cd+c+d+1, bm+b, bl+b, bk+b, bi+b, bh,
@@ -136,97 +128,84 @@ bpDemo nCores gbTrace   = do
         fhm+fh+fm+hm+f+h+m+1, chm+hm, fgm+fg+fm+gm+f+g+m+1, dgm+dhm+dg+dh+gm+hm+g+h,
         dfm+df+dm+fm+d+f+m+1, dgh+dh+gh+h ⟩ GrRevLexCmp: 0.4 or 26.7 (sugar) cpu seconds
     -}
-    
     {- -}
     name            = "logic6"
-    varPs@[a, b, c, d, e, f, g, h, i, j, k, l, m, n, o]             = map bpVar [0 .. 14]
-    [a_, b_, c_, d_, e_, f_, g_, h_, i_, j_, k_, l_, m_, n_, o_]    = map bpNot varPs
-    [poly1, poly2, poly3]   = [
-        (g_ ∨ h_ ∨ j_ ∨ k ∨ m) ∧ (a_ ∨ b_ ∨ f ∨ k_ ∨ o_) ∧ (a ∨ d_ ∨ f_ ∨ n ∨ o) ∧ (f ∨ h ∨ i
-            ∨ j ∨ o_) ∧ (a_ ∨ g_ ∨ i_ ∨ k_ ∨ n_) ∧ (a_ ∨ c ∨ e ∨ l_ ∨ m) ∧ (b ∨ c_ ∨ e ∨ f ∨
-            j) ∧ (b ∨ d_ ∨ e_ ∨ g_ ∨ i_) ∧ (c ∨ e ∨ h_ ∨ j ∨ k_) ∧ (b ∨ c_ ∨ d_ ∨ k_ ∨ n_) ∧
-            (b ∨ c_ ∨ g ∨ j_ ∨ o_) ∧ (c ∨ f ∨ g ∨ j_ ∨ m_) ∧ (a_ ∨ c ∨ d ∨ g ∨ l_) ∧ (b ∨ e ∨
-            k ∨ m ∨ n_) ∧ (i ∨ j_ ∨ k ∨ l_ ∨ n_) ∧ (c_ ∨ d ∨ f_ ∨ h_ ∨ l) ∧ (e_ ∨ i ∨ k_ ∨ l
-            ∨ n_) ∧ (a ∨ c ∨ d ∨ g ∨ m) ∧ (b ∨ g ∨ j ∨ k_ ∨ l_) ∧ (e ∨ i ∨ j ∨ k_ ∨ o_) ∧ (c_
-            ∨ f_ ∨ g ∨ m_ ∨ o_) ∧ (e_ ∨ k_ ∨ l ∨ m ∨ o_) ∧ (f ∨ j_ ∨ k_ ∨ m ∨ n_) ∧ (a ∨ c ∨
-            d ∨ f_ ∨ g_) ∧ (b ∨ i ∨ k ∨ n_ ∨ o) ∧ (c_ ∨ e ∨ i_ ∨ j ∨ o_) ∧ (c_ ∨ i ∨ j ∨ n ∨
-            o_) ∧ (d ∨ f ∨ g ∨ l ∨ o_) ∧ (c_ ∨ e ∨ j ∨ l ∨ n_) ∧ (f_ ∨ h ∨ m_ ∨ n_ ∨ o) ∧ (e
-            ∨ f ∨ h_ ∨ j ∨ n) ∧ (a_ ∨ f ∨ g_ ∨ k ∨ o_) ∧ (b_ ∨ e ∨ f ∨ i_ ∨ m_) ∧ (b_ ∨ c ∨ e
-            ∨ l ∨ n_) ∧ (b ∨ c_ ∨ d_ ∨ g ∨ n_) ∧ (f ∨ g ∨ h_ ∨ j ∨ l) ∧ (a ∨ b_ ∨ j_ ∨ k_ ∨
-            l) ∧ (a ∨ c ∨ h ∨ m_ ∨ n) ∧ (b ∨ g ∨ i_ ∨ m_ ∨ n) ∧ (a ∨ d ∨ f_ ∨ i ∨ k_) ∧ (a ∨
-            d ∨ e ∨ h ∨ n_) ∧ (b ∨ c_ ∨ g_ ∨ i ∨ m_) ∧ (h ∨ j_ ∨ l ∨ n_ ∨ o_) ∧ (a ∨ c_ ∨ d_
-            ∨ g ∨ l) ∧ (a ∨ h ∨ j ∨ k ∨ l_) ∧ (a ∨ b ∨ d_ ∨ f ∨ h_) ∧ (a ∨ c_ ∨ i ∨ k_ ∨ m) ∧
-            (a ∨ b_ ∨ f ∨ g ∨ l_) ∧ (b ∨ e ∨ f ∨ l_ ∨ n) ∧ (a_ ∨ c ∨ d ∨ g_ ∨ l) ∧ (d_ ∨ e ∨
-            h_ ∨ m_ ∨ o_) ∧ (c ∨ e ∨ f ∨ g_ ∨ n) ∧ (d ∨ e ∨ f ∨ k ∨ n) ∧ (a ∨ e_ ∨ h_ ∨ i_ ∨
-            n) ∧ (d_ ∨ f ∨ g_ ∨ i_ ∨ k_) ∧ (c_ ∨ e_ ∨ i_ ∨ k_ ∨ m) ∧ (a_ ∨ c_ ∨ e ∨ h ∨ k_) ∧
-            (d_ ∨ f ∨ h ∨ i ∨ n_) ∧ (a ∨ e_ ∨ i ∨ k ∨ o) ∧ (e_ ∨ h_ ∨ i_ ∨ j_ ∨ o) ∧ (a_ ∨ g_
-            ∨ h ∨ j_ ∨ n) ∧ (c ∨ d ∨ h ∨ j ∨ n) ∧ (a ∨ d ∨ f_ ∨ g_ ∨ j_) ∧ (d ∨ h ∨ j_ ∨ m ∨
-            n) ∧ (c_ ∨ g_ ∨ h_ ∨ j_ ∨ m) ∧ (c_ ∨ e ∨ j ∨ k ∨ o) ∧ (b ∨ e ∨ h ∨ k_ ∨ n) ∧ (a_
-            ∨ d_ ∨ e ∨ i_ ∨ j_) ∧ (b ∨ g ∨ h_ ∨ j ∨ o_) ∧ (b_ ∨ e ∨ g_ ∨ i_ ∨ k_) ∧ (a_ ∨ e_
-            ∨ i ∨ l ∨ n_) ∧ (a_ ∨ b_ ∨ d_ ∨ e_ ∨ o) ∧ (b ∨ d_ ∨ e_ ∨ h ∨ i_) ∧ (b ∨ g ∨ k_ ∨
-            m_ ∨ o) ∧ (c_ ∨ i_ ∨ l_ ∨ m_ ∨ o_) ∧ (a_ ∨ f_ ∨ j ∨ k_ ∨ l) ∧ (b_ ∨ j_ ∨ k_ ∨ m ∨
-            n) ∧ (b ∨ g ∨ h ∨ m ∨ n) ∧ (c_ ∨ l ∨ m_ ∨ n_ ∨ o) ∧ (e ∨ h ∨ j_ ∨ l ∨ n_) ∧ (a ∨
-            c ∨ l ∨ m_ ∨ n) ∧ (c_ ∨ g ∨ i ∨ k_ ∨ o_) ∧ (b_ ∨ d_ ∨ f_ ∨ i ∨ j) ∧ (b ∨ f_ ∨ g ∨
-            i_ ∨ k_) ∧ (c_ ∨ d_ ∨ f ∨ h_ ∨ n) ∧ (f_ ∨ h_ ∨ m_ ∨ n_ ∨ o_) ∧ (e_ ∨ h ∨ l_ ∨ m_
-            ∨ n_) ∧ (c_ ∨ d ∨ h ∨ j_ ∨ o) ∧ (a ∨ f ∨ i_ ∨ j ∨ m) ∧ (b_ ∨ h_ ∨ l ∨ n ∨ o_) ∧
-            (d_ ∨ e ∨ f_ ∨ k ∨ l_) ∧ (c_ ∨ f ∨ g ∨ k_ ∨ n_) ∧ (b_ ∨ e ∨ j ∨ l ∨ n_) ∧ (b ∨ d
-            ∨ f ∨ i_ ∨ k) ∧ (c ∨ d ∨ g ∨ h ∨ o) ∧ (c_ ∨ d_ ∨ e_ ∨ g ∨ n_) ∧ (b_ ∨ f ∨ g ∨ j_
-            ∨ o_) ∧ (a_ ∨ c_ ∨ e ∨ k ∨ m) ∧ (c_ ∨ h ∨ l_ ∨ m_ ∨ o) ∧ (a_ ∨ d_ ∨ e ∨ h_ ∨ o) ∧
-            (b_ ∨ i ∨ j_ ∨ n_ ∨ o) ∧ (a_ ∨ g_ ∨ k ∨ l_ ∨ o_) ∧ (a_ ∨ d ∨ i_ ∨ k ∨ n_) ∧ (a ∨
-            b ∨ k_ ∨ m_ ∨ n_) ∧ (a ∨ f ∨ g_ ∨ h ∨ j_) ∧ (b ∨ c_ ∨ d_ ∨ k_ ∨ l) ∧ (e ∨ j_ ∨ k
-            ∨ l ∨ m_) ∧ (g_ ∨ h ∨ k ∨ n ∨ o_) ∧ (d ∨ e ∨ i_ ∨ n_ ∨ o_) ∧ (a_ ∨ i_ ∨ m_ ∨ n_ ∨
-            o_) ∧ (b ∨ d ∨ j ∨ l ∨ n_) ∧ (a_ ∨ c ∨ h ∨ l ∨ m) ∧ (c ∨ h_ ∨ k_ ∨ n ∨ o) ∧ (b_ ∨
-            e_ ∨ f_ ∨ k_ ∨ l) ∧ (e_ ∨ f_ ∨ g_ ∨ j_ ∨ o) ∧ (g ∨ h ∨ i_ ∨ j_ ∨ k_) ∧ (b_ ∨ c_ ∨
-            e ∨ g_ ∨ i) ∧ (c_ ∨ f_ ∨ g ∨ i ∨ k) ∧ (d_ ∨ e_ ∨ i ∨ j_ ∨ k) ∧ (a_ ∨ c ∨ d_ ∨ i_
-            ∨ o_) ∧ (c ∨ d ∨ j_ ∨ l_ ∨ m_) ∧ (c ∨ d ∨ f_ ∨ k_ ∨ o_) ∧ (c_ ∨ e_ ∨ g_ ∨ i_ ∨
-            n_) ∧ (b ∨ g_ ∨ i ∨ n ∨ o_) ∧ (b_ ∨ d_ ∨ e ∨ k_ ∨ l) ∧ (g_ ∨ h ∨ k_ ∨ l ∨ m_) ∧
-            (b_ ∨ e_ ∨ g_ ∨ k ∨ l) ∧ (b_ ∨ d_ ∨ f ∨ l_ ∨ o) ∧ (c ∨ i ∨ j ∨ k ∨ m_) ∧ (b ∨ c_
-            ∨ e_ ∨ j_ ∨ l) ∧ (a ∨ h_ ∨ k ∨ l_ ∨ m_) ∧ (c_ ∨ d ∨ h_ ∨ i ∨ o_) ∧ (a_ ∨ b_ ∨ j_
-            ∨ k ∨ n_) ∧ (a_ ∨ c ∨ d ∨ e_ ∨ f_) ∧ (e ∨ f_ ∨ g_ ∨ h ∨ k_) ∧ (b_ ∨ c ∨ h ∨ i_ ∨
-            m_) ∧ (b ∨ c ∨ e_ ∨ f ∨ i_) ∧ (f ∨ i ∨ j_ ∨ k_ ∨ n_) ∧ (b ∨ d ∨ h ∨ i ∨ j_) ∧ (b_
-            ∨ e ∨ g_ ∨ h ∨ j),
-        (c ∨ d ∨ g ∨ h ∨ n) ∧ (a ∨ d ∨ f_ ∨ i ∨ k_) ∧ (g_ ∨ h ∨ j_ ∨ l ∨ o) ∧ (a ∨ g_ ∨ j_ ∨
-            k ∨ o) ∧ (a_ ∨ c ∨ e_ ∨ h ∨ i_) ∧ (d ∨ e_ ∨ i_ ∨ k_ ∨ m) ∧ (a ∨ f_ ∨ i ∨ n ∨ o) ∧
-            (c ∨ d ∨ h ∨ m ∨ n) ∧ (b ∨ c_ ∨ e ∨ m ∨ o_) ∧ (a_ ∨ f ∨ j_ ∨ k ∨ n_) ∧ (c ∨ e ∨ f
-            ∨ h_ ∨ m_) ∧ (c_ ∨ i ∨ j_ ∨ m_ ∨ n_) ∧ (e ∨ h ∨ k ∨ m ∨ n_) ∧ (c ∨ i_ ∨ k_ ∨ n ∨
-            o) ∧ (d_ ∨ g_ ∨ h_ ∨ j_ ∨ k) ∧ (h_ ∨ k ∨ l_ ∨ m_ ∨ o_) ∧ (a ∨ c_ ∨ d_ ∨ f ∨ j_) ∧
-            (e ∨ f ∨ g_ ∨ k ∨ n) ∧ (d_ ∨ e ∨ f ∨ j_ ∨ m_) ∧ (b_ ∨ c_ ∨ i ∨ l ∨ o_) ∧ (a_ ∨ e_
-            ∨ f ∨ i_ ∨ n_) ∧ (c_ ∨ e ∨ h_ ∨ i ∨ k) ∧ (a ∨ e ∨ i ∨ k ∨ m_) ∧ (c_ ∨ f ∨ l ∨ n_
-            ∨ o_) ∧ (b ∨ c_ ∨ g ∨ k ∨ o_) ∧ (b ∨ c_ ∨ f ∨ i_ ∨ n_) ∧ (f_ ∨ h ∨ i ∨ k ∨ m_) ∧
-            (b ∨ c ∨ d ∨ h ∨ l) ∧ (b ∨ g ∨ h_ ∨ j ∨ o_) ∧ (c ∨ d ∨ e ∨ i_ ∨ n_) ∧ (d_ ∨ i ∨
-            j_ ∨ k ∨ l_) ∧ (a ∨ b ∨ h ∨ k ∨ l_) ∧ (b ∨ d ∨ g ∨ k_ ∨ o_) ∧ (c_ ∨ e ∨ f ∨ l_ ∨
-            o_) ∧ (c_ ∨ e ∨ i ∨ k_ ∨ o_) ∧ (b ∨ c_ ∨ d ∨ g ∨ o_) ∧ (c_ ∨ e ∨ i ∨ l ∨ o_) ∧ (h
-            ∨ i_ ∨ k_ ∨ l ∨ o_) ∧ (a_ ∨ f ∨ h ∨ j_ ∨ k_) ∧ (a_ ∨ f ∨ j_ ∨ n_ ∨ o_) ∧ (a ∨ b ∨
-            h ∨ i ∨ m_) ∧ (a ∨ f ∨ g ∨ j ∨ l_) ∧ (a_ ∨ c_ ∨ e ∨ j ∨ o_) ∧ (c_ ∨ e ∨ i_ ∨ j ∨
-            k) ∧ (b_ ∨ g_ ∨ h ∨ l ∨ o_) ∧ (c ∨ f ∨ j_ ∨ k_ ∨ o) ∧ (b_ ∨ c ∨ d ∨ e ∨ k_) ∧ (c_
-            ∨ e ∨ g_ ∨ h ∨ n_) ∧ (d ∨ f ∨ h ∨ i ∨ o_) ∧ (d_ ∨ f ∨ g_ ∨ j_ ∨ l) ∧ (b_ ∨ f ∨ i
-            ∨ l ∨ o_) ∧ (b_ ∨ d_ ∨ i ∨ l ∨ m_) ∧ (a_ ∨ f ∨ j_ ∨ l ∨ n_) ∧ (a_ ∨ b_ ∨ d_ ∨ g_
-            ∨ i_) ∧ (g_ ∨ h ∨ j_ ∨ k ∨ n) ∧ (a_ ∨ b ∨ g ∨ j ∨ k_) ∧ (g_ ∨ h_ ∨ j_ ∨ k ∨ m) ∧
-            (b_ ∨ f ∨ h ∨ l_ ∨ m_) ∧ (e ∨ f ∨ l_ ∨ m_ ∨ o_) ∧ (e ∨ f_ ∨ i ∨ l ∨ m_) ∧ (f ∨ i_
-            ∨ k_ ∨ l_ ∨ m) ∧ (b ∨ d ∨ h ∨ k ∨ o_) ∧ (c_ ∨ f_ ∨ j_ ∨ l ∨ m_) ∧ (c_ ∨ d_ ∨ e ∨
-            g_ ∨ j) ∧ (a ∨ b ∨ h ∨ n ∨ o_) ∧ (b ∨ c_ ∨ l_ ∨ m_ ∨ n_) ∧ (c_ ∨ e ∨ f_ ∨ l ∨ n_)
-            ∧ (d ∨ e ∨ f ∨ i_ ∨ l_) ∧ (a ∨ b ∨ c_ ∨ m_ ∨ n_) ∧ (b ∨ c_ ∨ g ∨ l ∨ n_) ∧ (c_ ∨
-            d_ ∨ e ∨ f ∨ m_) ∧ (i ∨ j_ ∨ k ∨ n_ ∨ o) ∧ (a ∨ c_ ∨ e ∨ i ∨ j_) ∧ (b ∨ c ∨ d ∨
-            e_ ∨ i_) ∧ (a ∨ h ∨ j_ ∨ k_ ∨ l) ∧ (b ∨ f ∨ h_ ∨ i_ ∨ n_) ∧ (b ∨ c_ ∨ e ∨ i ∨ m_)
-            ∧ (b_ ∨ g_ ∨ h ∨ l ∨ m_) ∧ (a ∨ d ∨ f_ ∨ i ∨ m) ∧ (f ∨ g_ ∨ h ∨ k_ ∨ o_) ∧ (e_ ∨
-            f ∨ g_ ∨ h ∨ j_) ∧ (e ∨ i ∨ l ∨ m_ ∨ o_) ∧ (a ∨ b_ ∨ f ∨ g ∨ l_) ∧ (d_ ∨ i ∨ j_ ∨
-            k ∨ m_) ∧ (c ∨ f ∨ j_ ∨ l_ ∨ o) ∧ (c_ ∨ k_ ∨ l ∨ m ∨ n_) ∧ (d_ ∨ e ∨ f ∨ j_ ∨ l_)
-            ∧ (f ∨ h ∨ i ∨ k_ ∨ o_) ∧ (a ∨ b ∨ c_ ∨ g ∨ i) ∧ (d ∨ e_ ∨ h ∨ l_ ∨ m_) ∧ (b ∨ f
-            ∨ i_ ∨ m ∨ o_) ∧ (b ∨ f ∨ h ∨ j_ ∨ k) ∧ (a ∨ c ∨ d ∨ e ∨ h) ∧ (a_ ∨ e ∨ f ∨ h ∨
-            m) ∧ (f ∨ g ∨ k_ ∨ m_ ∨ o_) ∧ (a_ ∨ c_ ∨ e ∨ k ∨ m) ∧ (b ∨ e ∨ i ∨ m_ ∨ n) ∧ (b ∨
-            d ∨ g ∨ m_ ∨ n_) ∧ (b ∨ c_ ∨ e ∨ f ∨ l_) ∧ (c ∨ d ∨ f_ ∨ h ∨ l) ∧ (f_ ∨ h ∨ k ∨
-            l_ ∨ m_) ∧ (d ∨ f ∨ h ∨ j_ ∨ o_) ∧ (f ∨ g_ ∨ h ∨ i ∨ o_) ∧ (a ∨ b_ ∨ k ∨ l_ ∨ m_)
-            ∧ (a_ ∨ g_ ∨ i_ ∨ k ∨ o_) ∧ (a ∨ b ∨ c ∨ d ∨ n) ∧ (c_ ∨ e ∨ h ∨ i_ ∨ k) ∧ (b ∨ e
-            ∨ i ∨ l ∨ m_) ∧ (b ∨ c_ ∨ f ∨ k ∨ o_) ∧ (a ∨ f ∨ i_ ∨ k ∨ l_) ∧ (c_ ∨ e ∨ i ∨ k ∨
-            m_) ∧ (a ∨ c_ ∨ d_ ∨ f ∨ h) ∧ (c_ ∨ g_ ∨ h ∨ j_ ∨ o) ∧ (a_ ∨ i_ ∨ j_ ∨ l ∨ n_) ∧
-            (a_ ∨ c_ ∨ e ∨ g ∨ o_) ∧ (b ∨ e_ ∨ i_ ∨ j_ ∨ k_) ∧ (c_ ∨ d_ ∨ f ∨ h_ ∨ j_) ∧ (e ∨
-            h ∨ j_ ∨ l ∨ n_) ∧ (e_ ∨ f ∨ g ∨ k_ ∨ n_) ∧ (a_ ∨ c ∨ f ∨ h ∨ j_) ∧ (a_ ∨ c ∨ f ∨
-            i_ ∨ o_) ∧ (a_ ∨ i_ ∨ j ∨ n_ ∨ o_) ∧ (a_ ∨ f_ ∨ h ∨ i_ ∨ k_) ∧ (b_ ∨ f_ ∨ i_ ∨ m_
-            ∨ o_) ∧ (c_ ∨ i ∨ l ∨ m_ ∨ n_) ∧ (b ∨ d ∨ j_ ∨ l_ ∨ o_) ∧ (a_ ∨ c_ ∨ e ∨ f_ ∨ l)
-            ∧ (b_ ∨ h ∨ k ∨ m_ ∨ n_) ∧ (c_ ∨ d_ ∨ f ∨ j_ ∨ n_) ∧ (a ∨ h ∨ j ∨ l_ ∨ m_) ∧ (c ∨
-            d ∨ f_ ∨ j ∨ o_) ∧ (a_ ∨ c_ ∨ e ∨ k ∨ n_) ∧ (a_ ∨ c ∨ i_ ∨ n_ ∨ o_) ∧ (b ∨ f ∨ j_
-            ∨ n_ ∨ o) ∧ (d ∨ e ∨ h ∨ k ∨ o_),
-        (b ∨ d_ ∨ g_ ∨ i ∨ j ∨ k_ ∨ l ∨ m_)]
+    nVars           = 15
+    initGenSsL      = [
+        ["ghj(k+1)(m+1)", "ab(f+1)ko", "(a+1)df(n+1)(o+1)", "(f+1)(h+1)(i+1)(j+1)o", "agikn",
+            "a(c+1)(e+1)l(m+1)", "(b+1)c(e+1)(f+1)(j+1)", "(b+1)degi", "(c+1)(e+1)h(j+1)k",
+            "(b+1)cdkn", "(b+1)c(g+1)jo", "(c+1)(f+1)(g+1)jm", "a(c+1)(d+1)(g+1)l",
+            "(b+1)(e+1)(k+1)(m+1)n", "(i+1)j(k+1)ln", "c(d+1)fh(l+1)", "e(i+1)k(l+1)n",
+            "(a+1)(c+1)(d+1)(g+1)(m+1)", "(b+1)(g+1)(j+1)kl", "(e+1)(i+1)(j+1)ko",
+            "cf(g+1)mo", "ek(l+1)(m+1)o", "(f+1)jk(m+1)n", "(a+1)(c+1)(d+1)fg",
+            "(b+1)(i+1)(k+1)n(o+1)", "c(e+1)i(j+1)o", "c(i+1)(j+1)(n+1)o",
+            "(d+1)(f+1)(g+1)(l+1)o", "c(e+1)(j+1)(l+1)n", "f(h+1)mn(o+1)",
+            "(e+1)(f+1)h(j+1)(n+1)", "a(f+1)g(k+1)o", "b(e+1)(f+1)im", "b(c+1)(e+1)(l+1)n",
+            "(b+1)cd(g+1)n", "(f+1)(g+1)h(j+1)(l+1)", "(a+1)bjk(l+1)",
+            "(a+1)(c+1)(h+1)m(n+1)", "(b+1)(g+1)im(n+1)", "(a+1)(d+1)f(i+1)k",
+            "(a+1)(d+1)(e+1)(h+1)n", "(b+1)cg(i+1)m", "(h+1)j(l+1)no", "(a+1)cd(g+1)(l+1)",
+            "(a+1)(h+1)(j+1)(k+1)l", "(a+1)(b+1)d(f+1)h", "(a+1)c(i+1)k(m+1)",
+            "(a+1)b(f+1)(g+1)l", "(b+1)(e+1)(f+1)l(n+1)", "a(c+1)(d+1)g(l+1)", "d(e+1)hmo",
+            "(c+1)(e+1)(f+1)g(n+1)", "(d+1)(e+1)(f+1)(k+1)(n+1)", "(a+1)ehi(n+1)",
+            "d(f+1)gik", "ceik(m+1)", "ac(e+1)(h+1)k", "d(f+1)(h+1)(i+1)n",
+            "(a+1)e(i+1)(k+1)(o+1)", "ehij(o+1)", "ag(h+1)j(n+1)",
+            "(c+1)(d+1)(h+1)(j+1)(n+1)", "(a+1)(d+1)fgj", "(d+1)(h+1)j(m+1)(n+1)",
+            "cghj(m+1)", "c(e+1)(j+1)(k+1)(o+1)", "(b+1)(e+1)(h+1)k(n+1)", "ad(e+1)ij",
+            "(b+1)(g+1)h(j+1)o", "b(e+1)gik", "ae(i+1)(l+1)n", "abde(o+1)", "(b+1)de(h+1)i",
+            "(b+1)(g+1)km(o+1)", "cilmo", "af(j+1)k(l+1)", "bjk(m+1)(n+1)",
+            "(b+1)(g+1)(h+1)(m+1)(n+1)", "c(l+1)mn(o+1)", "(e+1)(h+1)j(l+1)n",
+            "(a+1)(c+1)(l+1)m(n+1)", "c(g+1)(i+1)ko", "bdf(i+1)(j+1)", "(b+1)f(g+1)ik",
+            "cd(f+1)h(n+1)", "fhmno", "e(h+1)lmn", "c(d+1)(h+1)j(o+1)",
+            "(a+1)(f+1)i(j+1)(m+1)", "bh(l+1)(n+1)o", "d(e+1)f(k+1)l", "c(f+1)(g+1)kn",
+            "b(e+1)(j+1)(l+1)n", "(b+1)(d+1)(f+1)i(k+1)", "(c+1)(d+1)(g+1)(h+1)(o+1)",
+            "cde(g+1)n", "b(f+1)(g+1)jo", "ac(e+1)(k+1)(m+1)", "c(h+1)lm(o+1)",
+            "ad(e+1)h(o+1)", "b(i+1)jn(o+1)", "ag(k+1)lo", "a(d+1)i(k+1)n", "(a+1)(b+1)kmn",
+            "(a+1)(f+1)g(h+1)j", "(b+1)cdk(l+1)", "(e+1)j(k+1)(l+1)m", "g(h+1)(k+1)(n+1)o",
+            "(d+1)(e+1)ino", "aimno", "(b+1)(d+1)(j+1)(l+1)n", "a(c+1)(h+1)(l+1)(m+1)",
+            "(c+1)hk(n+1)(o+1)", "befk(l+1)", "efgj(o+1)", "(g+1)(h+1)ijk", "bc(e+1)g(i+1)",
+            "cf(g+1)(i+1)(k+1)", "de(i+1)j(k+1)", "a(c+1)dio", "(c+1)(d+1)jlm",
+            "(c+1)(d+1)fko", "cegin", "(b+1)g(i+1)(n+1)o", "bd(e+1)k(l+1)", "g(h+1)k(l+1)m",
+            "beg(k+1)(l+1)", "bd(f+1)l(o+1)", "(c+1)(i+1)(j+1)(k+1)m", "(b+1)cej(l+1)",
+            "(a+1)h(k+1)lm", "c(d+1)h(i+1)o", "abj(k+1)n", "a(c+1)(d+1)ef", "(e+1)fg(h+1)k",
+            "b(c+1)(h+1)im", "(b+1)(c+1)e(f+1)i", "(f+1)(i+1)jkn", "(b+1)(d+1)(h+1)(i+1)j",
+            "b(e+1)g(h+1)(j+1)"],
+        ["(c+1)(d+1)(g+1)(h+1)(n+1)", "(a+1)(d+1)f(i+1)k", "g(h+1)j(l+1)(o+1)",
+            "(a+1)gj(k+1)(o+1)", "a(c+1)e(h+1)i", "(d+1)eik(m+1)", "(a+1)f(i+1)(n+1)(o+1)",
+            "(c+1)(d+1)(h+1)(m+1)(n+1)", "(b+1)c(e+1)(m+1)o", "a(f+1)j(k+1)n",
+            "(c+1)(e+1)(f+1)hm", "c(i+1)jmn", "(e+1)(h+1)(k+1)(m+1)n", "(c+1)ik(n+1)(o+1)",
+            "dghj(k+1)", "h(k+1)lmo", "(a+1)cd(f+1)j", "(e+1)(f+1)g(k+1)(n+1)",
+            "d(e+1)(f+1)jm", "bc(i+1)(l+1)o", "ae(f+1)in", "c(e+1)h(i+1)(k+1)",
+            "(a+1)(e+1)(i+1)(k+1)m", "c(f+1)(l+1)no", "(b+1)c(g+1)(k+1)o", "(b+1)c(f+1)in",
+            "f(h+1)(i+1)(k+1)m", "(b+1)(c+1)(d+1)(h+1)(l+1)", "(b+1)(g+1)h(j+1)o",
+            "(c+1)(d+1)(e+1)in", "d(i+1)j(k+1)l", "(a+1)(b+1)(h+1)(k+1)l",
+            "(b+1)(d+1)(g+1)ko", "c(e+1)(f+1)lo", "c(e+1)(i+1)ko", "(b+1)c(d+1)(g+1)o",
+            "c(e+1)(i+1)(l+1)o", "(h+1)ik(l+1)o", "a(f+1)(h+1)jk", "a(f+1)jno",
+            "(a+1)(b+1)(h+1)(i+1)m", "(a+1)(f+1)(g+1)(j+1)l", "ac(e+1)(j+1)o",
+            "c(e+1)i(j+1)(k+1)", "bg(h+1)(l+1)o", "(c+1)(f+1)jk(o+1)", "b(c+1)(d+1)(e+1)k",
+            "c(e+1)g(h+1)n", "(d+1)(f+1)(h+1)(i+1)o", "d(f+1)gj(l+1)", "b(f+1)(i+1)(l+1)o",
+            "bd(i+1)(l+1)m", "a(f+1)j(l+1)n", "abdgi", "g(h+1)j(k+1)(n+1)",
+            "a(b+1)(g+1)(j+1)k", "ghj(k+1)(m+1)", "b(f+1)(h+1)lm", "(e+1)(f+1)lmo",
+            "(e+1)f(i+1)(l+1)m", "(f+1)ikl(m+1)", "(b+1)(d+1)(h+1)(k+1)o", "cfj(l+1)m",
+            "cd(e+1)g(j+1)", "(a+1)(b+1)(h+1)(n+1)o", "(b+1)clmn", "c(e+1)f(l+1)n",
+            "(d+1)(e+1)(f+1)il", "(a+1)(b+1)cmn", "(b+1)c(g+1)(l+1)n", "cd(e+1)(f+1)m",
+            "(i+1)j(k+1)n(o+1)", "(a+1)c(e+1)(i+1)j", "(b+1)(c+1)(d+1)ei",
+            "(a+1)(h+1)jk(l+1)", "(b+1)(f+1)hin", "(b+1)c(e+1)(i+1)m", "bg(h+1)(l+1)m",
+            "(a+1)(d+1)f(i+1)(m+1)", "(f+1)g(h+1)ko", "e(f+1)g(h+1)j", "(e+1)(i+1)(l+1)mo",
+            "(a+1)b(f+1)(g+1)l", "d(i+1)j(k+1)m", "(c+1)(f+1)jl(o+1)", "ck(l+1)(m+1)n",
+            "d(e+1)(f+1)jl", "(f+1)(h+1)(i+1)ko", "(a+1)(b+1)c(g+1)(i+1)", "(d+1)e(h+1)lm",
+            "(b+1)(f+1)i(m+1)o", "(b+1)(f+1)(h+1)j(k+1)", "(a+1)(c+1)(d+1)(e+1)(h+1)",
+            "a(e+1)(f+1)(h+1)(m+1)", "(f+1)(g+1)kmo", "ac(e+1)(k+1)(m+1)",
+            "(b+1)(e+1)(i+1)m(n+1)", "(b+1)(d+1)(g+1)mn", "(b+1)c(e+1)(f+1)l",
+            "(c+1)(d+1)f(h+1)(l+1)", "f(h+1)(k+1)lm", "(d+1)(f+1)(h+1)jo",
+            "(f+1)g(h+1)(i+1)o", "(a+1)b(k+1)lm", "agi(k+1)o", "(a+1)(b+1)(c+1)(d+1)(n+1)",
+            "c(e+1)(h+1)i(k+1)", "(b+1)(e+1)(i+1)(l+1)m", "(b+1)c(f+1)(k+1)o",
+            "(a+1)(f+1)i(k+1)l", "c(e+1)(i+1)(k+1)m", "(a+1)cd(f+1)(h+1)", "cg(h+1)j(o+1)",
+            "aij(l+1)n", "ac(e+1)(g+1)o", "(b+1)eijk", "cd(f+1)hj", "(e+1)(h+1)j(l+1)n",
+            "e(f+1)(g+1)kn", "a(c+1)(f+1)(h+1)j", "a(c+1)(f+1)io", "ai(j+1)no", "af(h+1)ik",
+            "bfimo", "c(i+1)(l+1)mn", "(b+1)(d+1)jlo", "ac(e+1)f(l+1)", "b(h+1)(k+1)mn",
+            "cd(f+1)jn", "(a+1)(h+1)(j+1)lm", "(c+1)(d+1)f(j+1)o", "ac(e+1)(k+1)n",
+            "a(c+1)ino", "(b+1)(f+1)jn(o+1)", "(d+1)(e+1)(h+1)(k+1)o"],
+        ["(b+1)dg(i+1)(j+1)k(l+1)m"]]
     -- gens = [bpNot poly1]    -- 471 zeros; GrLexCmp, 807 gens, times vary:
             -- 786s cpu: generated (redundant) basis has 5917 elements with 1876000 monomials
             -- 3477s cpu: generated (redundant) basis has 6849 elements with 4039229 monomials
@@ -234,45 +213,121 @@ bpDemo nCores gbTrace   = do
         -- with GrRevLexCmp, the generators seem to grow not shrink, so much slower
         -- LexCmp, 414 gens, 326s cpu,
             -- generated (redundant) basis has 4964 elements with 976490 monomials
-    varSs           = map (: []) ['a' .. 'o']
-    pRead           = (\ [(x,"")] -> x) . polynomReads gbpA.pR (zip varSs varPs)
-    gens = map pRead
-        ["ghj(k+1)(m+1)", "ab(f+1)ko", "(a+1)df(n+1)(o+1)", "(f+1)(h+1)(i+1)(j+1)o", "agikn",
-        "a(c+1)(e+1)l(m+1)", "(b+1)c(e+1)(f+1)(j+1)", "(b+1)degi", "(c+1)(e+1)h(j+1)k", "(b+1)cdkn",
-        "(b+1)c(g+1)jo", "(c+1)(f+1)(g+1)jm", "a(c+1)(d+1)(g+1)l", "(b+1)(e+1)(k+1)(m+1)n",
-        "(i+1)j(k+1)ln", "c(d+1)fh(l+1)", "e(i+1)k(l+1)n", "(a+1)(c+1)(d+1)(g+1)(m+1)",
-        "(b+1)(g+1)(j+1)kl", "(e+1)(i+1)(j+1)ko", "cf(g+1)mo", "ek(l+1)(m+1)o", "(f+1)jk(m+1)n",
-        "(a+1)(c+1)(d+1)fg", "(b+1)(i+1)(k+1)n(o+1)", "c(e+1)i(j+1)o", "c(i+1)(j+1)(n+1)o",
-        "(d+1)(f+1)(g+1)(l+1)o", "c(e+1)(j+1)(l+1)n", "f(h+1)mn(o+1)", "(e+1)(f+1)h(j+1)(n+1)",
-        "a(f+1)g(k+1)o", "b(e+1)(f+1)im", "b(c+1)(e+1)(l+1)n", "(b+1)cd(g+1)n", "(f+1)(g+1)h(j+1)(l+1)",
-        "(a+1)bjk(l+1)", "(a+1)(c+1)(h+1)m(n+1)", "(b+1)(g+1)im(n+1)", "(a+1)(d+1)f(i+1)k",
-        "(a+1)(d+1)(e+1)(h+1)n", "(b+1)cg(i+1)m", "(h+1)j(l+1)no", "(a+1)cd(g+1)(l+1)",
-        "(a+1)(h+1)(j+1)(k+1)l", "(a+1)(b+1)d(f+1)h", "(a+1)c(i+1)k(m+1)", "(a+1)b(f+1)(g+1)l",
-        "(b+1)(e+1)(f+1)l(n+1)", "a(c+1)(d+1)g(l+1)", "d(e+1)hmo", "(c+1)(e+1)(f+1)g(n+1)",
-        "(d+1)(e+1)(f+1)(k+1)(n+1)", "(a+1)ehi(n+1)", "d(f+1)gik", "ceik(m+1)", "ac(e+1)(h+1)k",
-        "d(f+1)(h+1)(i+1)n", "(a+1)e(i+1)(k+1)(o+1)", "ehij(o+1)", "ag(h+1)j(n+1)",
-        "(c+1)(d+1)(h+1)(j+1)(n+1)", "(a+1)(d+1)fgj", "(d+1)(h+1)j(m+1)(n+1)", "cghj(m+1)",
-        "c(e+1)(j+1)(k+1)(o+1)", "(b+1)(e+1)(h+1)k(n+1)", "ad(e+1)ij", "(b+1)(g+1)h(j+1)o", "b(e+1)gik",
-        "ae(i+1)(l+1)n", "abde(o+1)", "(b+1)de(h+1)i", "(b+1)(g+1)km(o+1)", "cilmo", "af(j+1)k(l+1)",
-        "bjk(m+1)(n+1)", "(b+1)(g+1)(h+1)(m+1)(n+1)", "c(l+1)mn(o+1)", "(e+1)(h+1)j(l+1)n",
-        "(a+1)(c+1)(l+1)m(n+1)", "c(g+1)(i+1)ko", "bdf(i+1)(j+1)", "(b+1)f(g+1)ik", "cd(f+1)h(n+1)",
-        "fhmno", "e(h+1)lmn", "c(d+1)(h+1)j(o+1)", "(a+1)(f+1)i(j+1)(m+1)", "bh(l+1)(n+1)o",
-        "d(e+1)f(k+1)l", "c(f+1)(g+1)kn", "b(e+1)(j+1)(l+1)n", "(b+1)(d+1)(f+1)i(k+1)",
-        "(c+1)(d+1)(g+1)(h+1)(o+1)", "cde(g+1)n", "b(f+1)(g+1)jo", "ac(e+1)(k+1)(m+1)", "c(h+1)lm(o+1)",
-        "ad(e+1)h(o+1)", "b(i+1)jn(o+1)", "ag(k+1)lo", "a(d+1)i(k+1)n", "(a+1)(b+1)kmn",
-        "(a+1)(f+1)g(h+1)j", "(b+1)cdk(l+1)", "(e+1)j(k+1)(l+1)m", "g(h+1)(k+1)(n+1)o", "(d+1)(e+1)ino",
-        "aimno", "(b+1)(d+1)(j+1)(l+1)n", "a(c+1)(h+1)(l+1)(m+1)", "(c+1)hk(n+1)(o+1)", "befk(l+1)",
-        "efgj(o+1)", "(g+1)(h+1)ijk", "bc(e+1)g(i+1)", "cf(g+1)(i+1)(k+1)", "de(i+1)j(k+1)", "a(c+1)dio",
-        "(c+1)(d+1)jlm", "(c+1)(d+1)fko", "cegin", "(b+1)g(i+1)(n+1)o", "bd(e+1)k(l+1)", "g(h+1)k(l+1)m",
-        "beg(k+1)(l+1)", "bd(f+1)l(o+1)", "(c+1)(i+1)(j+1)(k+1)m", "(b+1)cej(l+1)", "(a+1)h(k+1)lm",
-        "c(d+1)h(i+1)o", "abj(k+1)n", "a(c+1)(d+1)ef", "(e+1)fg(h+1)k", "b(c+1)(h+1)im",
-        "(b+1)(c+1)e(f+1)i", "(f+1)(i+1)jkn", "(b+1)(d+1)(h+1)(i+1)j", "b(e+1)g(h+1)(j+1)"]
-    -- 471 zeros;
+    -- faster method, 471 zeros;
         -- LexCmp 414 gens, 66s cpu,
             -- generated (redundant) basis has 3724 elements with 248171 monomials
         -- GrLexCmp 807 gens, 365s cpu,
             -- generated (redundant) basis has 4026 elements with 462290 monomials
+    -- receiver starts with 4080 zeros, GB LexCmp has 1270 gens, 
     
+    {- 
+    name            = "logic7"
+    nVars           = 15
+    initGenSsL      = [
+        ["(b+1)(f+1)j", "(g+1)(k+1)(m+1)", "(a+1)cd(i+1)(m+1)(o+1)",
+            "a(e+1)(j+1)k(l+1)(m+1)(n+1)", "b(c+1)(d+1)gh(m+1)", "(c+1)(k+1)(l+1)n",
+            "ab(f+1)ln", "(b+1)(c+1)(g+1)ij(k+1)(n+1)(o+1)", "bg(n+1)",
+            "(a+1)(b+1)c(i+1)(j+1)(k+1)l(n+1)", "(b+1)(k+1)lo", "(a+1)befi(k+1)(m+1)",
+            "(c+1)df(h+1)i(k+1)(l+1)(o+1)", "c(f+1)g(m+1)", "(b+1)h(j+1)n", "ah(j+1)kn",
+            "(b+1)(g+1)j(l+1)(m+1)(n+1)(o+1)", "acfh(i+1)(l+1)(n+1)", "cdgjl(o+1)",
+            "(b+1)d(e+1)hl", "(d+1)(f+1)(h+1)kn", "c(e+1)(f+1)(h+1)(j+1)(m+1)",
+            "a(e+1)fg(j+1)kl", "(a+1)em(n+1)", "(b+1)ceim(n+1)", "d(j+1)n",
+            "c(e+1)(j+1)k(o+1)", "cef(g+1)(h+1)il(n+1)", "f(i+1)(o+1)",
+            "bd(e+1)(g+1)(i+1)j(l+1)(o+1)", "(b+1)(d+1)(e+1)(f+1)ho", "ag(h+1)im(n+1)o",
+            "(a+1)c(d+1)f(g+1)lo", "(d+1)(h+1)ik(l+1)", "(f+1)g(o+1)", "abe(h+1)ij",
+            "e(g+1)(j+1)k(o+1)", "a(f+1)(j+1)(l+1)", "bcejkln(o+1)", "(j+1)lm",
+            "g(h+1)(i+1)(o+1)", "(d+1)e(i+1)j(k+1)", "bce", "b(l+1)(o+1)", "(a+1)(d+1)fgjl",
+            "bcef(g+1)(n+1)", "abl", "(b+1)de(g+1)", "(d+1)(f+1)(m+1)(n+1)", "ce(h+1)o",
+            "(a+1)(c+1)(e+1)f(h+1)", "(b+1)cf(i+1)(j+1)l(m+1)", "ad(g+1)(k+1)n",
+            "df(g+1)h(l+1)(n+1)o", "(c+1)(f+1)h(j+1)(l+1)(o+1)", "be(f+1)h(n+1)",
+            "abch(i+1)(j+1)", "(a+1)fhil(o+1)", "ad(e+1)i(m+1)", "(d+1)(f+1)(h+1)(o+1)",
+            "(a+1)ei", "(f+1)jln", "(a+1)(f+1)(i+1)", "ab(c+1)f(h+1)(l+1)m(n+1)", "(b+1)ko",
+            "fh(m+1)", "(b+1)cd(e+1)(f+1)(g+1)(k+1)(m+1)", "(f+1)(g+1)(j+1)(l+1)o",
+            "e(j+1)l", "(b+1)(c+1)hj(l+1)mo", "b(e+1)lm(n+1)", "bcdefh", "(e+1)k(o+1)",
+            "(c+1)ik(n+1)o", "bdfg(h+1)i(l+1)(m+1)", "b(c+1)d(e+1)(i+1)lno", "(h+1)(i+1)l",
+            "(a+1)(k+1)(l+1)(n+1)(o+1)", "b(e+1)jkn(o+1)", "abc(d+1)fh(j+1)m",
+            "(a+1)d(e+1)i(m+1)o", "adef(h+1)(i+1)(k+1)(n+1)", "(e+1)i(k+1)l(o+1)",
+            "(b+1)e(i+1)(k+1)(n+1)", "(f+1)hjkn(o+1)", "ab(e+1)(g+1)k(m+1)o", "c(f+1)l",
+            "(a+1)e(g+1)h(k+1)l(n+1)", "(g+1)j(k+1)l", "(a+1)b(d+1)eg(h+1)l",
+            "cf(g+1)l(m+1)", "bk(m+1)", "a(b+1)(d+1)ei(l+1)m", "(a+1)(b+1)ef(m+1)n",
+            "(b+1)eg", "b(f+1)g(h+1)(i+1)lno", "d(f+1)(i+1)(j+1)(k+1)(n+1)o",
+            "ace(l+1)(n+1)", "(d+1)(e+1)jn", "b(d+1)(e+1)ghm", "(a+1)gh(i+1)(m+1)(n+1)(o+1)",
+            "(a+1)bde(g+1)", "(a+1)(c+1)(d+1)(i+1)(j+1)l(m+1)(o+1)", "df(h+1)(l+1)n",
+            "(b+1)(c+1)de(i+1)(k+1)", "(b+1)c(d+1)(e+1)hi(m+1)(n+1)", "fikl(m+1)",
+            "(a+1)bcde(f+1)gj", "(a+1)(b+1)de(i+1)(m+1)(n+1)", "ae(i+1)(j+1)l(o+1)",
+            "bcde(h+1)(l+1)", "(a+1)(c+1)dfg(k+1)", "b(e+1)i(j+1)(k+1)(m+1)n(o+1)",
+            "bc(e+1)(f+1)g(h+1)(j+1)", "(a+1)dg", "(a+1)bk", "af(h+1)i(k+1)n",
+            "c(d+1)(e+1)ij(m+1)(o+1)", "b(g+1)n", "(a+1)c(l+1)(m+1)o", "(a+1)(e+1)(m+1)",
+            "(i+1)(j+1)kl(m+1)o", "d(f+1)(k+1)m", "(b+1)def(g+1)i(m+1)(o+1)", "ghjm(n+1)o",
+            "fi(j+1)(m+1)(o+1)", "acf(i+1)n(o+1)", "(c+1)(d+1)(e+1)fh(k+1)m(o+1)",
+            "(g+1)(h+1)(m+1)", "(a+1)(b+1)dfh", "bdef(g+1)h(m+1)o", "(a+1)ch(i+1)klmn",
+            "(a+1)(e+1)m(n+1)", "a(e+1)h", "agil", "ac(e+1)k(l+1)(m+1)", "dfgi(j+1)lmn",
+            "ab(h+1)(i+1)n", "a(c+1)e(i+1)jmn(o+1)", "d(f+1)(j+1)(l+1)", "(a+1)bklo",
+            "a(h+1)j(k+1)l(o+1)", "(e+1)h(i+1)(j+1)(l+1)(o+1)",
+            "(d+1)(e+1)f(h+1)il(m+1)(n+1)", "d(e+1)(f+1)(g+1)mo", "b(f+1)(g+1)jkl(m+1)n",
+            "(e+1)(g+1)(j+1)(o+1)", "(c+1)(d+1)(e+1)f(g+1)(o+1)", "(b+1)(d+1)fhj(n+1)(o+1)",
+            "bcd(e+1)(l+1)(o+1)", "(a+1)(b+1)e(h+1)(k+1)", "abh(i+1)(l+1)(m+1)", "ac(m+1)",
+            "(g+1)i(l+1)", "bc(d+1)(f+1)(j+1)k(n+1)", "(c+1)(f+1)(l+1)", "a(b+1)(k+1)l",
+            "(d+1)f(h+1)(o+1)", "e(i+1)(j+1)kn", "a(b+1)(d+1)e(f+1)jk", "(a+1)cej",
+            "a(d+1)e(h+1)o", "g(i+1)(j+1)(l+1)", "(b+1)(c+1)(f+1)(m+1)(n+1)", "cdfhi(o+1)",
+            "b(c+1)dfkln(o+1)", "bfgh(k+1)lm(n+1)", "(a+1)de(f+1)(k+1)o", "a(b+1)c(e+1)gjl",
+            "a(c+1)dg(h+1)(i+1)(m+1)n", "h(l+1)(n+1)", "(e+1)(f+1)(h+1)o",
+            "(b+1)(c+1)ghilmn", "de(g+1)(h+1)n", "(b+1)(i+1)(m+1)", "a(b+1)(e+1)hn(o+1)",
+            "dg(h+1)jk(l+1)mn", "(a+1)(b+1)(e+1)(k+1)(m+1)n", "(b+1)c(h+1)jl(m+1)(o+1)",
+            "a(b+1)c(e+1)(n+1)o"],
+        ["adeg(j+1)k(m+1)", "(a+1)(e+1)f(g+1)(l+1)(m+1)(o+1)", "def(h+1)(l+1)(m+1)",
+            "a(d+1)(f+1)(i+1)j(l+1)(m+1)", "a(b+1)(h+1)(i+1)j(k+1)(m+1)(o+1)",
+            "a(f+1)(h+1)(n+1)", "ace(g+1)(l+1)n", "(a+1)bdh(i+1)mn",
+            "(a+1)b(c+1)(f+1)(g+1)i(m+1)(o+1)", "bh(i+1)j(m+1)(n+1)", "a(b+1)(e+1)fh(i+1)ln",
+            "(a+1)c(d+1)(e+1)(f+1)lm(o+1)", "a(b+1)(c+1)h(i+1)(l+1)(o+1)",
+            "ab(g+1)k(m+1)(n+1)o", "de(g+1)klmo", "(b+1)(d+1)(f+1)ijl(m+1)(o+1)",
+            "(c+1)(d+1)(f+1)gik(m+1)", "(c+1)d(e+1)fg(m+1)n",
+            "(a+1)(e+1)(f+1)(h+1)(i+1)(j+1)km", "(a+1)(b+1)(d+1)e(h+1)(i+1)kn",
+            "b(d+1)(g+1)jk(m+1)", "ab(m+1)", "(b+1)cd(h+1)m(n+1)o", "(a+1)c(e+1)hjm(n+1)",
+            "(c+1)(e+1)fl(n+1)", "e(h+1)(o+1)", "(i+1)(k+1)(m+1)", "k(n+1)(o+1)",
+            "(e+1)(f+1)(i+1)", "(a+1)(c+1)d(e+1)(f+1)h", "abcj(l+1)n",
+            "(b+1)(c+1)dh(i+1)j(l+1)o", "a(d+1)(e+1)fln", "bd(e+1)(h+1)i(m+1)o", "a(e+1)hk",
+            "dh(l+1)n(o+1)", "de(i+1)k(l+1)m(n+1)(o+1)", "c(d+1)(f+1)(i+1)",
+            "(a+1)(b+1)g(n+1)(o+1)", "(a+1)(b+1)dghi(k+1)n", "a(f+1)(g+1)i(k+1)",
+            "b(d+1)(i+1)jn(o+1)", "b(f+1)(g+1)(k+1)(l+1)", "(e+1)(g+1)(h+1)(k+1)l",
+            "a(c+1)(g+1)i(j+1)", "(b+1)cfg(i+1)(j+1)(k+1)o", "(a+1)(i+1)(j+1)(m+1)",
+            "a(c+1)g(k+1)l", "d(f+1)(l+1)", "(e+1)(j+1)k(m+1)", "a(b+1)d(h+1)(i+1)kmo",
+            "c(d+1)gj(k+1)l", "a(c+1)(i+1)jl", "(a+1)(c+1)de(h+1)(i+1)jl",
+            "a(d+1)(f+1)hi(n+1)o", "(e+1)jk(o+1)", "(d+1)e(j+1)(k+1)m(n+1)",
+            "bc(f+1)(h+1)ij(n+1)", "dghl(m+1)o", "(a+1)e(i+1)", "c(e+1)j(l+1)(m+1)n",
+            "e(h+1)(n+1)(o+1)", "a(c+1)(d+1)(e+1)fhmo", "b(f+1)(l+1)n",
+            "beg(h+1)(j+1)(l+1)(m+1)", "d(e+1)(m+1)", "de(f+1)(g+1)(h+1)jmo", "e(m+1)(o+1)",
+            "(a+1)(b+1)(h+1)ikmn", "(b+1)(e+1)(f+1)(h+1)(l+1)mo", "b(c+1)efghkl",
+            "bcfhj(l+1)(o+1)", "(c+1)df(i+1)(m+1)(n+1)", "(c+1)efil(m+1)",
+            "(a+1)cj(l+1)(m+1)", "bcd(f+1)i(k+1)(m+1)(o+1)", "(a+1)(b+1)c(d+1)ej(o+1)",
+            "(a+1)cdg", "(d+1)e(g+1)(h+1)jmo", "(a+1)d(e+1)fg(i+1)(l+1)",
+            "(c+1)dfghj(k+1)(o+1)", "(a+1)(b+1)e", "(f+1)i(k+1)(o+1)", "(a+1)d(k+1)(l+1)m",
+            "(a+1)(c+1)(f+1)hkl(n+1)(o+1)", "(b+1)(d+1)(e+1)hi(m+1)", "a(b+1)(d+1)(e+1)h",
+            "(a+1)e(g+1)(h+1)(l+1)(n+1)", "(a+1)deg(i+1)k(l+1)o", "b(f+1)g(h+1)jm(o+1)",
+            "(a+1)(b+1)e(f+1)j(l+1)", "(d+1)(k+1)ln", "a(b+1)(d+1)(h+1)(i+1)k(m+1)(o+1)",
+            "eg(m+1)o", "(k+1)l(m+1)(o+1)", "(a+1)(b+1)de(f+1)(n+1)",
+            "(b+1)(d+1)(e+1)(i+1)l(n+1)o", "cfgi(j+1)k", "bh(j+1)l", "(a+1)(b+1)(c+1)(j+1)",
+            "a(b+1)(d+1)(f+1)(g+1)(h+1)ik", "(g+1)(i+1)kl(n+1)", "(b+1)f(g+1)l(m+1)o",
+            "bc(d+1)g(i+1)m", "d(e+1)f(g+1)(k+1)(m+1)", "(a+1)(b+1)(c+1)i(k+1)l(m+1)o",
+            "k(m+1)(o+1)", "c(f+1)gm(n+1)(o+1)", "(a+1)f(g+1)(h+1)(i+1)k(m+1)n",
+            "(a+1)(c+1)(h+1)i(m+1)", "a(c+1)g(h+1)(i+1)kl(m+1)", "(c+1)h(j+1)(o+1)",
+            "(a+1)d(h+1)ikmn(o+1)", "cdfgh(j+1)lo", "(a+1)(c+1)gi(j+1)(k+1)ln",
+            "e(g+1)(h+1)(i+1)lmn", "df(g+1)(h+1)jk(o+1)", "(b+1)d(g+1)(i+1)jlmo",
+            "bcdf(i+1)km(o+1)", "a(b+1)f(h+1)klm", "b(e+1)f(n+1)(o+1)",
+            "(a+1)(b+1)efgh(n+1)(o+1)", "(f+1)(h+1)(i+1)jm", "(c+1)(d+1)(f+1)(g+1)jo",
+            "(c+1)e(f+1)(g+1)(k+1)o", "bf(g+1)(h+1)i(l+1)n", "a(b+1)e(f+1)(i+1)",
+            "df(j+1)(m+1)(o+1)", "(a+1)b(e+1)(f+1)(i+1)(l+1)", "(a+1)g(h+1)(i+1)(j+1)",
+            "h(m+1)o", "acdef(k+1)m(n+1)", "(a+1)(c+1)m(n+1)", "(a+1)bdeho",
+            "(a+1)(b+1)(e+1)gm(o+1)", "(c+1)dei(j+1)(n+1)o", "(a+1)(b+1)(c+1)(i+1)(n+1)",
+            "bcdghi(l+1)", "ah(i+1)lm(o+1)", "(a+1)bjo", "(e+1)hk(m+1)(n+1)",
+            "(a+1)(b+1)(c+1)dim(n+1)(o+1)", "(a+1)gh(j+1)(k+1)n(o+1)", "cdf(g+1)(j+1)(k+1)n",
+            "(a+1)(d+1)f(h+1)(m+1)o", "(b+1)fg(h+1)ikmn", "e(g+1)(j+1)o", "bcfgh(j+1)(k+1)",
+            "bd(f+1)(i+1)j(k+1)mn", "c(d+1)(f+1)(h+1)(j+1)(m+1)(n+1)", "(f+1)jn",
+            "(a+1)c(d+1)(f+1)kl(m+1)", "ae(h+1)(n+1)(o+1)", "ac(e+1)(f+1)(n+1)",
+            "(d+1)(f+1)(i+1)(n+1)", "(a+1)(b+1)deh(k+1)(n+1)o", "cg(i+1)klo", "(g+1)l(n+1)o",
+            "be(f+1)(g+1)(h+1)i(j+1)m", "bchln(o+1)"],
+        ["b(e+1)(f+1)(g+1)hik(l+1)"]]
+    -}
 
 
 main    :: IO ()

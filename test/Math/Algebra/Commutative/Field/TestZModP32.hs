@@ -36,7 +36,7 @@ test1 p                 = case someNatVal (fromInteger p) of
     (sg, testEq)    = zpwTestOps @p
     fromZ           = zpField.fromZ
     lim             = p `quot` 2
-    props           = withRing zpField fieldProps sg testEq
+    props           = fieldProps sg testEq zpField
                         ++ [("p0", p0),
                             ("balRepIsRep", balRepIsRep), ("balRepIsSmall", balRepIsSmall)]
         -- fieldProps checks zzRing -> zpField is a homomorphism, 0 /= 1

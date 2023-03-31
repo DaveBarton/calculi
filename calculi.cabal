@@ -44,7 +44,7 @@ library
         Math.Prob.Random
         StrictList2
 
-    other-extensions:   AllowAmbiguousTypes CPP Strict UndecidableInstances
+    other-extensions:   Strict
     
     build-depends:
         array == 0.5.*,
