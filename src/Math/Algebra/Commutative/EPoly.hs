@@ -212,7 +212,7 @@ epOps cR nVars evCmp    = EPolyOps { .. }
                 Just qd     -> -- {-# SCC "top-etc-epDiv'" #-}
                     let (qc, rc)    = cR.bDiv doFull c c1
                         -- want p = (c1*x^ev1 + t1) * (qc*x^qd + q2) + (rc*x^ev + r2):
-                        ~p'         = {-# SCC "epDiv'-+-qM*" #-} agPlus ssAG !$ t
+                        ~p'         = {-# SCC "epDiv'-+-qM*" #-} ssAG.plus !$ t
                                         !$ {-# SCC epTimesMonom #-}
                                            epTimesMonom t1 qd (cNeg qc)
                         ~qr2    = if doFull || cIsZero rc then epDiv' p'

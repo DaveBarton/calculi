@@ -29,8 +29,8 @@ testUPoly               = checkGroup "UPoly" props
     zxShow          = upShowPrec "X" (const show) 0
     -- zxShow p        = show (ssNumTerms p) ++ "t:" ++ upShowPrec "X" (const show) 0 p
         -- for catching terms with coef 0
-    testEq          = diffWith zxShow (rEq zxRing)
-    monom c d       = ssLead (rIsZero zzRing) c d SSZero
+    testEq          = diffWith zxShow zxRing.eq
+    monom c d       = ssLead zzRing.isZero c d SSZero
     monomGen        = liftM2 monom (zzExpGen 1_000_000) (Gen.integral (Range.linear 0 10))
     monomsGen       = Gen.list (Range.linear 0 10) monomGen
     zxGen           = fmap (rSumL' zxRing) monomsGen

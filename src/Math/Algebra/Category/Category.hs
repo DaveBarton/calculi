@@ -161,10 +161,10 @@ acSum2          :: AdditiveCat obj arr prod2TF z cokTF ->
 acSum2 (AdditiveCat (Category (.:) idArr) homAG prod2 _ _ _) bObj cObj  =
     UnivL bcObj (TgtArrs2 bToBc cToBc) sumUnivF
   where UnivR bcObj (SrcArrs2 bcToB bcToC) prodUnivF    = prod2 bObj cObj
-        bToBc   = prodUnivF bObj (SrcArrs2 (idArr bObj) (agZero (homAG bObj cObj)))
-        cToBc   = prodUnivF cObj (SrcArrs2 (agZero (homAG cObj bObj)) (idArr cObj))
+        bToBc   = prodUnivF bObj (SrcArrs2 (idArr bObj) (homAG bObj cObj).zero)
+        cToBc   = prodUnivF cObj (SrcArrs2 (homAG cObj bObj).zero (idArr cObj))
         sumUnivF tObj (TgtArrs2 bToT cToT)  =
-            agPlus (homAG bcObj tObj) (bToT .: bcToB) (cToT .: bcToC)
+            (homAG bcObj tObj).plus (bToT .: bcToB) (cToT .: bcToC)
 
 acIm            :: AdditiveCat obj arr prod2TF z cokTF ->
         obj b -> obj c -> arr b c -> UnivR obj (FlipTF arr c) arr c

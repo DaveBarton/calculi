@@ -33,27 +33,28 @@ allPT aShow p as    = do
 groebnerBasisProps      :: ShowGen p -> GBPolyOps ev term p -> [(PropertyName, Property)]
 groebnerBasisProps pSG gbpA@(GBPolyOps { .. })  = [("GB Residues 0", residues0)]
   where
-    gsSG            = listShowGen (Range.linear 0 10) pSG
-    gbTrace         = 0
     scale11         = Gen.scale (Range.Size 11 *)
+    gsSG11          = second scale11 (listShowGen (Range.linear 0 5) pSG)
     sPolyIJ gs i j  = sPoly f g (SPair i j (evTotDeg m) m)
       where
         f   = Seq.index gs i
         g   = Seq.index gs j
         m   = evLCM (leadEvNZ f) (leadEvNZ g)
+    gbTrace         = 0
     residues0       = withTests 10 $ property $ do
-        initGens        <- genVis (second scale11 gsSG)
+        gens0           <- genVis gsSG11
+        gens1           <- genVis gsSG11
         nCores          <- forAll (scale11 (Gen.int (Range.linear 1 4)))
         doRedGens       <- forAll (scale11 Gen.bool)
         doFullMod       <- forAll (scale11 Gen.bool)
-        let SubmoduleOps { .. }     = gbiSmOps gbpA nCores gbTrace
-            gbIdeal         = fromGens initGens
+        let smA@(SubmoduleOps { .. })   = gbiSmOps gbpA nCores
+            gbIdeal         = plusGens gbTrace (fromGens smA gbTrace gens0) gens1
             gbGens          = stdGens doRedGens gbIdeal
             gbGensL         = toList gbGens
-            checkZeros ps   = allPT pShow (rIsZero pR) (map (bModBy doFullMod gbIdeal) ps)
-        annotate $ fst gsSG gbGensL
-        checkZeros initGens
-        mapM_ checkZeros
+            checkRes0s ps   = allPT pShow pR.isZero (map (bModBy doFullMod gbIdeal) ps)
+        annotate $ fst gsSG11 gbGensL
+        checkRes0s (gens0 ++ gens1)
+        mapM_ checkRes0s
             [[sPolyIJ gbGens i j | i <- [0 .. j - 1]]
                 | j <- [1 .. length gbGens - 1]]
 
@@ -66,17 +67,18 @@ type BP58Ops    = (GBPolyOps EV58 EV58 BP58, BPOtherOps EV58 Word64)
 gbCountZerosProp                    :: ShowGen BP58 -> BP58Ops -> (PropertyName, Property)
 gbCountZerosProp pSG (gbpA, bpoA)   = ("gbCountZeros", gbCountZeros)
   where
-    gsSG            = listShowGen (Range.linear 0 10) pSG
-    gbTrace         = 0
     scale11         = Gen.scale (Range.Size 11 *)
+    gsSG11          = second scale11 (listShowGen (Range.linear 0 5) pSG)
+    gbTrace         = 0
     gbCountZeros    = withTests 10 $ property $ do
-        initGens        <- genVis (second scale11 gsSG)
+        gens0           <- genVis gsSG11
+        gens1           <- genVis gsSG11
         nCores          <- forAll (scale11 (Gen.int (Range.linear 1 4)))
-        let SubmoduleOps { .. }     = gbiSmOps gbpA nCores gbTrace
-            gbIdeal         = fromGens initGens
+        let smA@(SubmoduleOps { .. })   = gbiSmOps gbpA nCores
+            gbIdeal         = plusGens gbTrace (fromGens smA gbTrace gens0) gens1
             reducedGensL    = toList (stdGens True gbIdeal)
-        annotate $ fst gsSG reducedGensL
-        bpCountZeros bpoA initGens === bpCountZeros bpoA reducedGensL
+        annotate $ fst gsSG11 reducedGensL
+        bpCountZeros bpoA (gens0 ++ gens1) === bpCountZeros bpoA reducedGensL
 
 test1           :: Int -> StdEvCmp -> IO Bool
 -- 1 <= nVars <= 58

@@ -34,12 +34,12 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
     EPolyOps { epUniv }     = epOps cRing nVars gRevLex
     UnivL epRing (RingTgtXs cToEp varEps) epUnivF   = epUniv
     nT              = cRing.fromZ
-    nextT b         = rPlus cRing (cRing.times (nT 1234) b) (nT 567)
+    nextT b         = cRing.plus (cRing.times (nT 1234) b) (nT 567)
     ts              = take nVars (unfoldr (\b -> Just (b, nextT b)) (nT 12345))
     epToT           = epUnivF cRing (RingTgtXs id ts)
     varSs           = map (: []) (take nVars ['a' .. 'z'])
     GBPolyOps { pShow }     = epGBPOps gRevLex True cRing varSs (const cShow) True
-    testEq          = diffWith pShow (rEq epRing)
+    testEq          = diffWith pShow epRing.eq
     varPowGen       = liftM2 (expt1 (epRing.times)) (Gen.element varEps)
                         (Gen.int (Range.exponential 1 200_000))
     monomGen        = do

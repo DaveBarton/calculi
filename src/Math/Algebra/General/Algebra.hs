@@ -1,4 +1,4 @@
-{-# LANGUAGE Strict #-}
+{-# LANGUAGE DataKinds, Strict #-}
 
 {- |  This module defines the most common types of algebras, and simple functions using them.
     
@@ -51,7 +51,7 @@ module Math.Algebra.General.Algebra (
     EqRel,
     pairEq, liftEq,
     -- ** Cls
-    Cls(..),
+    Cls(Cls, rep),
     
     -- * Comparison
     -- ** Cmp
@@ -64,19 +64,18 @@ module Math.Algebra.General.Algebra (
     -- ** MonoidFlags
     show0x, IntBits, (.&.), (.|.), zeroBits, eiBit, eiBits, hasEIBit, hasEIBits,
     MonoidFlag(Abelian, IsGroup), MonoidFlags, agFlags,
-    -- ** Group
-    Group(..), expt1, gpExpt, pairGp, gpModF, gpProductL', gpProductR,
-    -- ** AbelianGroup
-    AbelianGroup(), pattern AbelianGroup,   -- @@@ fails: plus, zero, isZero, neg,
-    agPlus, agZero, agIsZero, agNeg, abelianGroup,
-    minus, sumL', sumR,
+    -- ** Group and AbelianGroup
+    Group(Group, monFlags, eq, op, ident, isIdent, inv,
+        AbelianGroup, plus, zero, isZero, neg),
+    expt1, gpExpt, pairGp, gpModF, gpProductL', gpProductR,
+    AbelianGroup, abelianGroup, minus, sumL', sumR,
     
     -- * Rings and fields
     -- ** RingFlags
     RingFlag(NotZeroRing, IsCommutativeRing, NoZeroDivisors, IsInversesRing), RingFlags,
     integralDomainFlags, divisionRingFlags, fieldFlags,
     -- ** Ring
-    Ring(..), rEq, rPlus, rZero, rIsZero, rNeg,
+    Ring(Ring, ag, rFlags, times, one, fromZ, bDiv),
     rIsOne, exactQuo, nearQuo, smallRem, rInv, divides,
     rExpt, rSumL', rSumR, rProductL', rProductR,
     -- ** Field
@@ -84,7 +83,7 @@ module Math.Algebra.General.Algebra (
     
     -- * Modules and R-algebras
     -- ** Module, RMod, ModR
-    Module(..), RMod, ModR,
+    Module(Module, ag, scale, bDiv), RMod, ModR,
     pairMd, mdModF,
     -- ** RAlg
     RAlg(..),
@@ -105,6 +104,8 @@ module Math.Algebra.General.Algebra (
     zzReads, agReads, rngReads, polynomReads
 ) where
 
+import GHC.Records
+
 import Control.Exception (assert)
 import Data.Bits (Bits, FiniteBits, (.&.), (.|.), bit, finiteBitSize, testBit, zeroBits)
 import Data.Char (isDigit)
@@ -113,6 +114,7 @@ import Data.Functor.Classes (liftCompare, liftEq)
 import Data.List (foldl', stripPrefix)
 import Data.List.Extra (trimStart)
 import Data.Maybe (maybeToList)
+import Data.Tuple.Extra (second)
 import Numeric (readDec, showHex)
 import Text.ParserCombinators.ReadPrec (Prec)
 
@@ -321,23 +323,21 @@ gpProductR Group{ .. }      = foldr op ident
 type AbelianGroup       = Group
 {- ^ @op@ must be commutative. We then usually use additive notation, as in the next few
     functions. -}
-pattern AbelianGroup    :: MonoidFlags -> EqRel a -> Op2 a -> a -> Pred a -> Op1 a -> Group a
+
+pattern AbelianGroup    :: MonoidFlags -> EqRel a -> Op2 a -> a -> Pred a -> Op1 a ->
+                            AbelianGroup a
 pattern AbelianGroup { monFlags, eq, plus, zero, isZero, neg }  =
     Group { monFlags, eq, op = plus, ident = zero, isIdent = isZero, inv = neg }
 {-# COMPLETE AbelianGroup #-}
 
-agPlus          :: AbelianGroup a -> Op2 a
--- ^ @agPlus = (.op)@
-agPlus (AbelianGroup { .. })    = plus
-agZero          :: AbelianGroup a -> a
--- ^ @agZero = (.ident)@
-agZero          = (.ident)
-agIsZero        :: AbelianGroup a -> Pred a
--- ^ @agIsZero = (.isIdent)@
-agIsZero        = (.isIdent)
-agNeg           :: AbelianGroup a -> Op1 a
--- ^ @agNeg = (.inv)@
-agNeg           = (.inv)
+instance HasField "plus" (AbelianGroup g) (Op2 g) where
+    getField (AbelianGroup { plus }) = plus
+instance HasField "zero" (AbelianGroup g) g where
+    getField (AbelianGroup { zero }) = zero
+instance HasField "isZero" (AbelianGroup g) (Pred g) where
+    getField (AbelianGroup { isZero }) = isZero
+instance HasField "neg" (AbelianGroup g) (Op1 g) where
+    getField (AbelianGroup { neg }) = neg
 
 abelianGroup    :: EqRel a -> Op2 a -> a -> Pred a -> Op1 a -> AbelianGroup a
 -- ^ @abelianGroup eq plus zero isZero neg@ creates an 'AbelianGroup'
@@ -405,31 +405,26 @@ data Ring a         = Ring {
 -- A /homomorphism of rings/ @f :: R -> R'@ is an additive (Abelian group) homomorphism that
 -- also satisfies @f (x *. y) = f x *. f y@ and @f one = one'@.
 
-rEq             :: Ring a -> EqRel a
--- ^ > rEq = (.eq) . (.ag)
-rEq aR          = aR.ag.eq
-rPlus           :: Ring a -> Op2 a
--- ^ > rPlus = agPlus . (.ag)
-rPlus           = agPlus . (.ag)
-rZero           :: Ring a -> a
--- ^ > rZero = agZero . (.ag)
-rZero           = agZero . (.ag)
-rIsZero         :: Ring a -> Pred a
--- ^ > rIsZero = agIsZero . (.ag)
-rIsZero         = agIsZero . (.ag)
-rNeg            :: Ring a -> Op1 a
--- ^ > rNeg = agNeg . (.ag)
-rNeg            = agNeg . (.ag)
+instance HasField "eq" (Ring r) (r -> r -> Bool) where
+    getField rR = rR.ag.eq
+instance HasField "plus" (Ring r) (Op2 r) where
+    getField rR = rR.ag.plus
+instance HasField "zero" (Ring r) r where
+    getField rR = rR.ag.zero
+instance HasField "isZero" (Ring r) (Pred r) where
+    getField rR = rR.ag.isZero
+instance HasField "neg" (Ring r) (Op1 r) where
+    getField rR = rR.ag.neg
 
 rIsOne          :: Ring a -> Pred a
--- ^ > rIsOne aR = rEq aR aR.one
-rIsOne aR       = rEq aR aR.one
+-- ^ > rIsOne aR = aR.eq aR.one
+rIsOne aR       = aR.eq aR.one
 
 exactQuo        :: Ring a -> Op2 a
 -- ^ exact quotient, i.e. division (@bDiv False@) should have zero remainder
 exactQuo rR y m =
     let (q, r)      = rR.bDiv False y m
-    in  if rIsZero rR r then q else error "division is not exact"
+    in  if rR.isZero r then q else error "division is not exact"
 
 nearQuo                 :: Ring a -> Bool -> Op2 a
 -- ^ > nearQuo rR doFull y m = fst (rR.bDiv doFull y m)
@@ -444,7 +439,7 @@ rInv rR         = exactQuo rR rR.one
 
 divides         :: Ring a -> a -> a -> Bool
 -- ^ whether an element divides another element; note the arguments are reversed from division
-divides rR d y  = rIsZero rR (snd (rR.bDiv False y d))
+divides rR d y  = rR.isZero (snd (rR.bDiv False y d))
 
 rExpt           :: Integral b => Ring a -> a -> b -> a
 -- ^ exponentiation to an integral power
@@ -480,8 +475,7 @@ divisionRing    :: AbelianGroup a -> RingFlags -> Op2 a -> a -> (Integer -> a) -
                     Ring a
 -- ^ @divisionRing ag extraFlags (*~) one fromZ inv@ creates a division ring
 divisionRing ag extraFlags (*~) one fromZ inv   =
-    let zero        = agZero ag
-        bDiv _ y m      = if agIsZero ag m then (zero, y) else (inv m *~ y, zero)
+    let bDiv _ y m      = if ag.isZero m then (ag.zero, y) else (inv m *~ y, ag.zero)
     in  Ring ag (divisionRingFlags .|. extraFlags) (*~) one fromZ bDiv
 
 field           :: AbelianGroup a -> Op2 a -> a -> (Integer -> a) -> Op1 a -> Field a
@@ -490,7 +484,7 @@ field ag        = divisionRing ag fieldFlags
 
 fieldGcd        :: Field a -> Op2 a
 -- ^ creates a gcd (greatest common divisior) function for a 'Field'
-fieldGcd (Ring ag _ _ one _ _) x y  = if agIsZero ag x && agIsZero ag y then agZero ag else one
+fieldGcd (Ring ag _ _ one _ _) x y  = if ag.isZero x && ag.isZero y then ag.zero else one
 
 
 -- * Modules and R-algebras
@@ -502,7 +496,13 @@ fieldGcd (Ring ag _ _ one _ _) x y  = if agIsZero ag x && agIsZero ag y then agZ
     Abelian group M together with a ring homomorphism R -> End(M). A /right module over R/
     has the same definition, but with function composition defined on the right, i.e. by
     @(flip .)@. A /module/ is either a left module or a right module. -}
-data Module r m     = Module { ag :: AbelianGroup m, scale :: r -> Op1 m }
+data Module r m     = Module {
+    ag          :: AbelianGroup m,
+    scale       :: r -> Op1 m,
+    bDiv        :: Bool -> m -> m -> (r, m)
+        -- ^ like 'bDiv' for a 'Ring' (as a right module over itself),
+        -- @bDiv doFull y m = (q, r) => y = scale q m + r@,
+}
 {- ^ A /vector space/ is a module over a field.
 
     A /homomorphism of R-modules/ or /R-linear map/ @f :: M -> M'@ is an additive homomorphism
@@ -513,16 +513,27 @@ type RMod           = Module
 type ModR           = Module
 -- ^ a right module over R
 
-pairMd              :: Module r a -> Module r b -> Module r (a, b)
--- ^ direct sum (or product) of two modules
-pairMd aMd bMd      = Module (pairGp aMd.ag bMd.ag) (\r -> pairOp1 (aMd.scale r) (bMd.scale r))
+pairMd              :: Ring r -> Module r a -> Module r b -> Module r (a, b)
+-- ^ direct sum (or product) of two left modules or two right modules
+pairMd rR aMd bMd   =
+    Module (pairGp aMd.ag bMd.ag) (\r -> pairOp1 (aMd.scale r) (bMd.scale r)) pairBDiv
+  where
+    pairBDiv doFull (y, z) (m, n)
+        | aMd.ag.isZero m && doFull     =
+            let (q, r) = bMd.bDiv doFull z n
+            in  (q, (y, r))
+        | otherwise                     =
+            let (q, r)  = aMd.bDiv doFull y m
+            in  (q, (r, bMd.ag.plus z (bMd.scale (rR.neg q) n)))
 
 mdModF              :: Module r a -> Op1 a -> Module r (Cls a)
 {- ^ @mdModF md reduce@ is @md@ modulo a submodule, using @reduce@ to produce @Cls@ (coset)
-    representatives. -}
+    representatives. This @bDiv@ is very naive. -}
 mdModF (Module { .. }) reduce     =
-    let modF    = Cls . reduce
-    in  Module (gpModF ag reduce zeroBits) (\ r (Cls m) -> modF (scale r m))
+    Module (gpModF ag reduce zeroBits) (\ r (Cls m) -> modF (scale r m)) modBDiv
+  where
+    modF    = Cls . reduce
+    modBDiv doFull (Cls m) (Cls n)  = second modF (bDiv doFull m n)
 
 -- ** RAlg
 
@@ -535,8 +546,8 @@ data RAlg r a       = RAlg {
     fromR       :: r -> a
 }
 
-algMd           :: RAlg r a -> Module r a
--- ^ > algMd (RAlg { .. }) = Module aR.ag scale
+algMd           :: RAlg r a -> (Bool -> a -> a -> (r, a)) -> Module r a
+-- ^ > algMd (RAlg { .. }) bDiv = Module aR.ag scale bDiv
 algMd (RAlg { .. })     = Module aR.ag scale
 
 

@@ -7,7 +7,7 @@
 -}
 
 module Math.Algebra.Commutative.GroebnerBasis (
-    SubmoduleOps(..),
+    SubmoduleOps(..), fromGens,
     SPair(..), GBPolyOps(..), StdEvCmp(..), secIsGraded,
     gbTSummary, gbTProgressChars, gbTProgressInfo, gbTResults, gbTQueues, gbTProgressDetails,
     GroebnerIdeal, gbiSmOps
@@ -48,11 +48,16 @@ import System.IO (hPutStr, stderr)
 
 -- | @@ Move and generalize 'SubmoduleOps' (include bDiv and syzygies?):
 data SubmoduleOps r m sm    = SubmoduleOps {
-    fromGens    :: [m] -> sm,           -- ^ from any generators
+    zeroMd      :: sm,                  -- ^ zero module
+    plusGens    :: Int -> sm -> [m] -> sm,  -- ^ @plusGens gbTrace@, add any generators
     stdGens     :: Bool -> sm -> Seq.Seq m,     -- ^ \"standard\" generators,
                     -- ^ @stdGens doFullReduce sm@
     bModBy      :: Bool -> sm -> Op1 m  -- ^ @bModBy doFullReduce sm m@
 }
+
+fromGens        :: (SubmoduleOps r m sm) -> Int -> [m] -> sm
+-- ^ @fromGens smA gbTrace gens@
+fromGens smA gbTrace    = smA.plusGens gbTrace smA.zeroMd
 
 
 evElts          :: [a] -> ()
@@ -281,8 +286,8 @@ data KGsOps p       = KGsOps {
 kgsOps                      :: forall ev term p. GBPolyOps ev term p -> KGsOps p
 kgsOps (GBPolyOps { .. })   = KGsOps { .. }
   where
-    pZero       = rZero pR
-    pIsZero     = rIsZero pR
+    pZero       = pR.zero
+    pIsZero     = pR.isZero
     topDiv      = pR.bDiv False
     
     kgsEmpty            :: KerGens p
@@ -467,20 +472,21 @@ printThreadCapabilities prefix otherThreadIds   = do
 
 data GroebnerIdeal p    = GroebnerIdeal {
     gkgs        :: GapsKerGens p,
+    gbGhs       :: Seq.Seq (EPolyHDeg p),   -- nonzero g's with ascending (leadEvNZ g)
     gbGens      :: Seq.Seq p,       -- a Groebner Basis
     redGbGens   :: ~(Seq.Seq p)     -- fully reduced Groebner Basis generators
 }
 
-groebnerBasis   :: forall ev term p. GBPolyOps ev term p -> [p] -> Int -> Int ->
-                    IO (GroebnerIdeal p)
-groebnerBasis gbpA@(GBPolyOps { .. }) initGens nCores gbTrace   = do
+groebnerBasis   :: forall ev term p. GBPolyOps ev term p -> Int -> Int ->
+                    GroebnerIdeal p -> [p] -> IO (GroebnerIdeal p)
+groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
     cpuTime0        <- getCPUTime
     sysTime0        <- getSystemTime
     cpuTime1Ref     <- newIORef cpuTime0
     mRTSStats0      <- getMaybeRTSStats
     let KGsOps { .. }   = kgsOps gbpA
-    gkgsRef         <- newTVarIO (WithNGens gkgsEmpty 0)
-    genHsRef        <- newTVarIO Seq.empty  :: IO (TVar (Seq.Seq (EPolyHDeg p)))
+    gkgsRef         <- newTVarIO (WithNGens gbi0.gkgs (length gbi0.gbGhs))
+    genHsRef        <- newTVarIO gbi0.gbGhs :: IO (TVar (Seq.Seq (EPolyHDeg p)))
     nRedStepsRef    <- newIORef 0           :: IO (IORef Int)
     nSPairsRedRef   <- newIORef 0           :: IO (IORef Int)
     let _gbTQueues1 = gbTrace .&. gbTQueues /= 0 && nCores > 1
@@ -587,7 +593,8 @@ groebnerBasis gbpA@(GBPolyOps { .. }) initGens nCores gbTrace   = do
                             putS $ show d ++ " "
                             writeIORef gDShownRef d
                     traceEvent ("  addGenHN end " ++ show kN) $ pure ()
-    gMGisRef        <- newTVarIO Seq.empty  :: IO (TVar (Seq.Seq (Maybe (GBGenInfo ev))))
+    gMGisRef        <- newTVarIO (fmap (Just . giNew gbpA) gbi0.gbGhs)
+                                        :: IO (TVar (Seq.Seq (Maybe (GBGenInfo ev))))
     ijcsRef         <- newTVarIO SL.Nil :: IO (TVar (SortedSPairs ev))  -- ascending by hEvCmp
     let newIJCs     = do
             ghs0        <- readTVarIO genHsRef
@@ -637,8 +644,10 @@ groebnerBasis gbpA@(GBPolyOps { .. }) initGens nCores gbTrace   = do
                         when (gbTrace .&. gbTProgressInfo /= 0) $
                             putStrLn $ " g" ++ show t ++ ": " ++ pShowEV gh.p
                         traceEvent ("  newIJCs done " ++ show t) $ pure True
-    rgsRef          <- newIORef []          :: IO (IORef [(p, Int)])
-    rgsMNGensRef    <- newIORef (Just 0)    :: IO (IORef (Maybe Int))   -- Nothing if locked
+        rgs0        = reverse (zipWith (\gh i -> (gh.p, i)) (toList gbi0.gbGhs) [0 ..])
+    rgsRef          <- newIORef rgs0                            :: IO (IORef [(p, Int)])
+    rgsMNGensRef    <- newIORef (Just (length gbi0.gbGens))     :: IO (IORef (Maybe Int))
+        -- Nothing if locked
     let checkRgs1   = do    -- may add 1 gh to rgs
             mk          <- readIORef rgsMNGensRef   -- for speed, to avoid atomic modify
             case mk of
@@ -664,7 +673,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) initGens nCores gbTrace   = do
                         pure res
                     else pure False
                 Nothing     -> pure False
-    let newG sp@(SPair i j h c)     = {-# SCC newG #-} do
+        newG sp@(SPair i j h c)     = {-# SCC newG #-} do
             let ~s  = " start spair(g" ++ show i ++ ",g" ++ show j ++ "): sugar degree " ++
                         show h ++ ", lcm of heads " ++ evShow c
             when (gbTrace .&. gbTProgressDetails /= 0) $ putStrLn s
@@ -696,8 +705,8 @@ groebnerBasis gbpA@(GBPolyOps { .. }) initGens nCores gbTrace   = do
                         when (wake1 == wake0) retry
                     inc numSleepingRef (-1)
                 loop
-    mapM_ (\g -> addGenHN =<< endReduce_n 0 (EPolyHDeg g (homogDeg0 g)))
-        (sortBy (evCmp `on` leadEvNZ) (filter (not . pIsZero) initGens))
+    mapM_ (\g -> addGenHN =<< reduce_n (EPolyHDeg g (homogDeg0 g)))
+        (sortBy (evCmp `on` leadEvNZ) (filter (not . pIsZero) newGens))
     auxThreadIds        <- forM [1 .. nCores - 1] (\t -> forkOn t (checkQueues t))
     let traceTime   = do
             cpuTime2        <- getCPUTime
@@ -759,8 +768,10 @@ groebnerBasis gbpA@(GBPolyOps { .. }) initGens nCores gbTrace   = do
                             (if dh > 0 then '+' : show dh else "") ++ "," ++ show n
             gMGisL      <- toList <$> readTVarIO gMGisRef
             mapM_ (putStrLn . unwords) (chunksOf 10 (zipWith show4 ndhs gMGisL))
-    rgs         <- readIORef rgsRef
-    let gbGens  = Seq.fromList ({- mapM reduce2NZ $ -} reverse (map fst rgs))
+    rgs1        <- readIORef rgsRef
+    ghs1        <- readTVarIO genHsRef
+    let gbGhs   = Seq.fromList (map (Seq.index ghs1 . snd) (reverse rgs1))
+        gbGens  = fmap (.p) gbGhs
         ~s      = show (length gbGens) ++ " generators"
     if gbTrace .&. gbTResults /= 0 then do
         putStrLn (s ++ ":")
@@ -774,10 +785,10 @@ groebnerBasis gbpA@(GBPolyOps { .. }) initGens nCores gbTrace   = do
           where
             (!cd, !t)   = unconsNZ p
         ~redGbGens  =   fmap fullReduce2NZ gbGens   -- @@@ parallelize
-    pure $ GroebnerIdeal { gkgs, gbGens, redGbGens }
+    pure $ GroebnerIdeal { gkgs, gbGhs, gbGens, redGbGens }
   where
-    pZero           = rZero pR
-    pIsZero         = rIsZero pR
+    pZero           = pR.zero
+    pIsZero         = pR.isZero
     pShowEV p
         | pIsZero p         = "0"
         | numTerms p < 10   = pShow (monicize p)
@@ -785,11 +796,13 @@ groebnerBasis gbpA@(GBPolyOps { .. }) initGens nCores gbTrace   = do
     hEvCmp          = spCmp evCmp useSugar      :: Cmp (SPair ev)
 
 
-gbiSmOps        :: GBPolyOps ev term p -> Int -> Int -> SubmoduleOps p p (GroebnerIdeal p)
--- ^ @gbiSmOps gbpA nCores gbTrace@
-gbiSmOps gbpA nCores gbTrace    = SubmoduleOps { .. }
+gbiSmOps        :: GBPolyOps ev term p -> Int -> SubmoduleOps p p (GroebnerIdeal p)
+-- ^ @gbiSmOps gbpA nCores@
+gbiSmOps gbpA nCores    = SubmoduleOps { .. }
   where
-    fromGens initGens           = unsafePerformIO $ groebnerBasis gbpA initGens nCores gbTrace
+    KGsOps { gkgsEmpty, gkgsReduce }    = kgsOps gbpA
+    zeroMd  = GroebnerIdeal gkgsEmpty Seq.empty Seq.empty Seq.empty
+    plusGens gbTrace gbi0 newGens   =
+        unsafePerformIO $ groebnerBasis gbpA nCores gbTrace gbi0 newGens
     stdGens doFullReduce gbi    = if doFullReduce then gbi.redGbGens else gbi.gbGens
-    KGsOps { gkgsReduce }       = kgsOps gbpA
     bModBy doFullReduce gbi p   = fst (gkgsReduce gbi.gkgs doFullReduce p)

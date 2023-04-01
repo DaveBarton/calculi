@@ -164,7 +164,7 @@ ssAGUniv (AbelianGroup _cFlags eq plus _zero isZero neg) dCmp   =
 
 ssDotWith       :: Cmp d -> (c -> c1 -> c2) -> AbelianGroup c2 ->
                         SparseSum c d -> SparseSum c1 d -> c2
-ssDotWith dCmp f (AbelianGroup _monFlags _eq plus zero _isZero _neg)    = dot
+ssDotWith dCmp f (AbelianGroup { plus, zero })    = dot
   where
     dot s s'     = if ssIsZero s || ssIsZero s' then zero else
         let d = ssDegNZ s

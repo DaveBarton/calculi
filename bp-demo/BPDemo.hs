@@ -6,9 +6,9 @@ import Math.Algebra.General.Algebra
 import Math.Algebra.Commutative.GroebnerBasis
 import Math.Algebra.Commutative.BinPoly
 
-import Control.Monad (when)
-import Data.Foldable (toList)
-import qualified Data.Sequence as Seq
+-- import Control.Monad (when)
+import Data.Foldable (foldl', toList)
+-- import qualified Data.Sequence as Seq
 import Data.Word (Word64)
 
 import Control.Concurrent (forkOn, getNumCapabilities)
@@ -30,27 +30,30 @@ demoOps nVars sec   = bp58Ops evCmp isGraded varSs useSugar
 bpDemo                  :: Int -> Int -> IO ()
 bpDemo nCores gbTrace   = do
     putStrLn $ name ++ " " ++ show sec
-    -- when (Seq.length reducedGBGensSeq < 250) $ putStrLn $ showGens gbpA.pShow reducedGBGensL
+    -- when (Seq.length reducedGBGensSeq < 250) $ mapM_ (putStrLn . pShow) reducedGBGensL
     putStrLn $ show (bpCountZeros bpoA reducedGBGensL) ++ " receiver zeros"
-    putStrLn $ show (bpCountZeros bpoA reducedBigGBGensL) ++ " common zeros"
-    putStrLn $ show (length newReducedGensL) ++ " generators to send:"
-    mapM_ (putStrLn . gbpA.pShow) newReducedGensL
+    putStrLn $ show (bpCountZeros bpoA toReduce) ++ " sender zeros"
+    putStrLn $ show (length revSend) ++ " of " ++ show (length toReduce) ++
+        " generators to send:"
+    putStrLn $ showGens pShow (reverse revSend)
   where
     -- To run a demo, first set the "@@" lines below the way you want.
 
     sec             = LexCmp   -- @@ LexCmp, GrLexCmp, or GrRevLexCmp
-    (gbpA, bpoA@(BPOtherOps { pRead }))     = demoOps nVars sec
-    SubmoduleOps { .. }         = gbiSmOps gbpA nCores gbTrace
+    (gbpA@(GBPolyOps { pR, numTerms, pShow }), bpoA@(BPOtherOps { pRead }))
+                    = demoOps nVars sec
+    smA@(SubmoduleOps { .. })   = gbiSmOps gbpA nCores
     
     initGensL       = map (map pRead) initGenSsL
-    gbIdeal         = fromGens (initGensL !! 1)     -- @@ 0-based indexing into initGensL
+    gbIdeal         = fromGens smA gbTrace (initGensL !! 1)
     reducedGBGensSeq    = stdGens True gbIdeal
     reducedGBGensL      = toList reducedGBGensSeq
     toReduce        = initGensL !! 0                -- @@ more 0-based indexing, sender
-    gbIdeal'        = fromGens (reducedGBGensL ++ toReduce)
-    reducedBigGBGensL   = toList (stdGens True gbIdeal')
-    newReducedGensL     = filter (not . rIsZero gbpA.pR)
-        (map (bModBy True gbIdeal) reducedBigGBGensL)
+    shorter p q     = if numTerms p <= numTerms q then p else q
+    plus1 arg@(sm, gs) g    =
+        let g1  = smA.bModBy True sm g
+        in  if pR.isZero g1 then arg else (smA.plusGens 0 sm [g1], (shorter g1 g) : gs)
+    (_recSm1, revSend)  = foldl' plus1 (gbIdeal, []) toReduce
     
     -- @@ choose a name, nVars, and gens, commenting out the other examples:
     -- 'a' is the most main variable
@@ -128,7 +131,7 @@ bpDemo nCores gbTrace   = do
         fhm+fh+fm+hm+f+h+m+1, chm+hm, fgm+fg+fm+gm+f+g+m+1, dgm+dhm+dg+dh+gm+hm+g+h,
         dfm+df+dm+fm+d+f+m+1, dgh+dh+gh+h ⟩ GrRevLexCmp: 0.4 or 26.7 (sugar) cpu seconds
     -}
-    {- -}
+    {- 
     name            = "logic6"
     nVars           = 15
     initGenSsL      = [
@@ -218,9 +221,9 @@ bpDemo nCores gbTrace   = do
             -- generated (redundant) basis has 3724 elements with 248171 monomials
         -- GrLexCmp 807 gens, 365s cpu,
             -- generated (redundant) basis has 4026 elements with 462290 monomials
-    -- receiver starts with 4080 zeros, GB LexCmp has 1270 gens, 
-    
-    {- 
+    -- receiver starts with 4080 zeros, GB LexCmp has 1270 gens, needs 413 new GB gens
+    -}
+    {- -}
     name            = "logic7"
     nVars           = 15
     initGenSsL      = [
@@ -327,7 +330,7 @@ bpDemo nCores gbTrace   = do
             "(d+1)(f+1)(i+1)(n+1)", "(a+1)(b+1)deh(k+1)(n+1)o", "cg(i+1)klo", "(g+1)l(n+1)o",
             "be(f+1)(g+1)(h+1)i(j+1)m", "bchln(o+1)"],
         ["b(e+1)(f+1)(g+1)hik(l+1)"]]
-    -}
+    
 
 
 main    :: IO ()

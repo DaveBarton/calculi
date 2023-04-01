@@ -23,7 +23,7 @@ zpwTestOps              = ((zpShow, gen), testEq)
   where
     (zpField, balRep)   = zzModPW @p
     zpShow          = show . balRep
-    testEq          = diffWith zpShow (rEq zpField)
+    testEq          = diffWith zpShow zpField.eq
     gen             = fmap zpField.fromZ (Gen.integral (Range.constantFrom 0 (- lim) lim))
     p               = fromIntegral (natVal (Proxy :: Proxy p))
     lim             = p `quot` 2
@@ -40,7 +40,7 @@ test1 p                 = case someNatVal (fromInteger p) of
                         ++ [("p0", p0),
                             ("balRepIsRep", balRepIsRep), ("balRepIsSmall", balRepIsSmall)]
         -- fieldProps checks zzRing -> zpField is a homomorphism, 0 /= 1
-    p0              = propertyOnce $ fromZ p `testEq` rZero zpField
+    p0              = propertyOnce $ fromZ p `testEq` zpField.zero
     balRepIsRep     = property $ sameFun1PT sg testEq (fromZ . balRep) id
     balRepIsSmall   = property $ do
         x       <- genVis sg

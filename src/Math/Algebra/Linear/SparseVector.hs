@@ -73,10 +73,10 @@ svAGUniv (AbelianGroup _cFlags eq plus _zero isZero neg)    = UnivL svAG (TgtArr
     svEq            = liftEq eq `on` (.im)
     svAG            = abelianGroup svEq svPlus svZero svIsZero svNeg
     iCToSV          = pICToSV isZero
-    univF (AbelianGroup _ _ tPlus tZero _ _) (TgtArrsF iCToT)   = svFoldr' tPlus tZero iCToT
+    univF tAG (TgtArrsF iCToT)  = svFoldr' tAG.plus tAG.zero iCToT
 
 svDotWith       :: (c -> c1 -> c2) -> AbelianGroup c2 -> SparseVector c -> SparseVector c1 -> c2
-svDotWith f (AbelianGroup _ _ plus zero _ _) (SV m) (SV m')     =
+svDotWith f (AbelianGroup { plus, zero }) (SV m) (SV m')    =
     IM.foldr' plus zero (IM.intersectionWith f m m')
 
 data SVOverRingOps c    = SVOverRingOps {
@@ -142,10 +142,11 @@ scmOps          :: forall c. Ring c -> Int -> SCMOps c
 -- ^ ring of matrices. @one@ and @fromZ@ of @scmOps cR n@ will create @n x n@ matrices.
 scmOps cR maxN  = SCMOps { .. }
   where
-    cIsZero         = rIsZero cR
+    cIsZero         = cR.isZero
     UnivL vAG (TgtArrsF _iCToV) _vUnivF     = svAGUniv cR.ag
     vOverCRingA     = svOverRingOps cR
-    vModR           = Module vAG vOverCRingA.timesC
+    vBDiv _doFull v _w  = (cR.zero, v) -- @@@ improve
+    vModR           = Module vAG vOverCRingA.timesC vBDiv
     UnivL ag (TgtArrsF _jVToMat) _vvUnivF   = svAGUniv vAG
     scmTimesV       = svDotWith (flip vOverCRingA.timesNZC) vAG
     matFlags        = case maxN of

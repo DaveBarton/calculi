@@ -71,18 +71,18 @@ upOps cR        = UPolyOps { .. }
                 qd  = d - d1
                 (qc, rc)    = cR.bDiv doFull (ssHeadCoef p) c1
                 -- want p = (c1*x^d1 + t1) * (qc*x^qd + q2) + (rc*x^d + r2):
-                ~p' = agPlus ssAG !$ ssTail p !$ upTimesMonom t1 qd (cNeg qc)
+                ~p' = ssAG.plus !$ ssTail p !$ upTimesMonom t1 qd (cNeg qc)
                 ~qr2    = if doFull || cIsZero rc then cxDiv' p' else (SSZero, p')
             in  (ssLead' qc qd (fst qr2), ssLead' rc d (snd qr2))
     cxUnivF     :: Ring t -> RingTgtX c t -> UPoly c -> t
     cxUnivF tR (RingTgtX cToT xT) p     = case p of     -- uses Horner's rule
-        SSZero          -> rZero tR
+        SSZero          -> tR.zero
         SSNZ c' d' r'   -> cxToT (cToT c') d' r'
           where
             (*~)                    = tR.times
             cxToT t 0 SSZero        = t
             cxToT t d SSZero        = t *~ expt1 (*~) xT d
-            cxToT t d (SSNZ c e r)  = cxToT (rPlus tR (t *~ expt1 (*~) xT (d - e)) (cToT c)) e r
+            cxToT t d (SSNZ c e r)  = cxToT (tR.plus (t *~ expt1 (*~) xT (d - e)) (cToT c)) e r
     -- @@ use _ssUnivF !?
 
 -- @@ -> RMod, RAlg (if R comm.), R[X] * M[X] ?

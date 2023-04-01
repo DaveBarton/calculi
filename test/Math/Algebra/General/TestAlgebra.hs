@@ -187,6 +187,18 @@ abelianGroupProps       :: ShowGen g -> TestRel g -> AbelianGroup g ->
                                 [(PropertyName, Property)]
 abelianGroupProps sg testEq     = monoidProps sg testEq agFlags
 
+bDivProps               :: (r -> String) -> ShowGen m -> TestRel m -> Module r m ->
+                            [(PropertyName, Property)]
+bDivProps rShow sgm@(mShow, _) mTestEq (Module { .. })  =
+    [("bDiv True", divProp (bDiv True)), ("bDiv False", divProp (bDiv False))]
+  where
+    divProp quoRemF     = property $ do
+        y       <- genVis sgm
+        m       <- genVis sgm
+        let (q, r)  = quoRemF y m
+        annotateShow $ [rShow q, mShow r]
+        mTestEq y (ag.plus (scale q m) r)
+
 ringProps               :: forall r. ShowGen r -> TestRel r -> RingFlags -> Ring r ->
                             [(PropertyName, Property)]
 ringProps sg@(rShow, _) testEq reqRingFlags rR@(Ring { .. })    =
@@ -195,13 +207,13 @@ ringProps sg@(rShow, _) testEq reqRingFlags rR@(Ring { .. })    =
          ("left distributive", leftDistrib), ("right distributive", rightDistrib),
          associativeProp sg testEq times, identityProp sg testEq times one] ++
         ringHomomProps zzShowGen zzRing testEq rR fromZ ++
-        [("bDiv True", div2PT (bDiv True)), ("bDiv False", div2PT (bDiv False))] ++
+        bDivProps rShow sg testEq (Module ag (flip times) bDiv) ++
         [("nonzero", nonzero) | hasEIBit rFlags NotZeroRing] ++
         [commutativeProp sg testEq times | hasEIBit rFlags IsCommutativeRing] ++
         [("no zero divisors", noZeroDivs) | hasEIBit rFlags NoZeroDivisors] ++
         [("inverses", inverses) | hasEIBit rFlags IsInversesRing]
   where
-    AbelianGroup _monFlags _eq plus _zero isZero _neg   = ag
+    AbelianGroup { .. }     = ag
     ringFlagsOk     = propertyOnce $ do
         annotateShow [rFlags, reqRingFlags]
         assert (hasEIBits rFlags reqRingFlags)
@@ -212,12 +224,6 @@ ringProps sg@(rShow, _) testEq reqRingFlags rR@(Ring { .. })    =
     rightDistrib    = property $ do
         a       <- rand
         endomPT sg testEq plus (`times` a)
-    div2PT quoRemF  = property $ do
-        y       <- rand
-        m       <- rand
-        let (q, r)  = quoRemF y m
-        annotateShow $ map rShow [y, m, q, r]
-        testEq y ((m `times` q) `plus` r)
     nonzero         = propertyOnce $ do
         annotate $ rShow one
         assert (not (isZero one))
@@ -234,7 +240,7 @@ ringProps sg@(rShow, _) testEq reqRingFlags rR@(Ring { .. })    =
 ringHomomProps          :: ShowGen a -> Ring a -> TestRel b -> Ring b ->
                                 (a -> b) -> [(PropertyName, Property)]
 ringHomomProps sga aR bTestEq bR f  =
-    [("additive homomorphism", property $ homomPT sga (rPlus aR) bTestEq (rPlus bR) f),
+    [("additive homomorphism", property $ homomPT sga aR.plus bTestEq bR.plus f),
      ("multiplicative homomorphism", property $ homomPT sga aR.times bTestEq bR.times f),
      ("one ↦ one", propertyOnce $ bTestEq (f aR.one) bR.one)]
 
@@ -243,16 +249,17 @@ fieldProps sg testEq    = ringProps sg testEq fieldFlags
 
 moduleProps             :: Bool -> ShowGen r -> Ring r -> ShowGen m -> TestRel m ->
                             Module r m -> [(PropertyName, Property)]
-moduleProps isLeftMod sgr rR sgm mTestEq (Module mAg scale)     =
-    abelianGroupProps sgm mTestEq mAg ++
+moduleProps isLeftMod sgr@(rShow, _) rR sgm mTestEq mM@(Module { .. })  =
+    abelianGroupProps sgm mTestEq ag ++
         [("endM", endM), ("distribM", distribM), ("identityM", identityM), ("assocM", assocM)]
+        ++ bDivProps rShow sgm mTestEq mM
   where
     endM            = property $ do
         r       <- genVis sgr
-        endomPT sgm mTestEq (agPlus mAg) (scale r)
+        endomPT sgm mTestEq ag.plus (scale r)
     distribM        = property $ do
         m       <- genVis sgm
-        homomPT sgr (rPlus rR) mTestEq (agPlus mAg) (`scale` m)
+        homomPT sgr rR.plus mTestEq ag.plus (`scale` m)
     identityM       = property $
         sameFun1PT sgm mTestEq (scale rR.one) id
     (*~)            = (if isLeftMod then id else flip) rR.times
