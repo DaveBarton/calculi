@@ -28,19 +28,19 @@ testUPoly               = checkGroup "UPoly" props
     zxToT           = zxUnivF zzRing (RingTgtX id 12345)
     zxShow          = upShowPrec "X" (const show) 0
     -- zxShow p        = show (ssNumTerms p) ++ "t:" ++ upShowPrec "X" (const show) 0 p
-        -- for catching terms with coef 0
-    testEq          = diffWith zxShow zxRing.eq
+        -- for showing terms with coef 0
     monom c d       = ssLead zzRing.isZero c d SSZero
     monomGen        = liftM2 monom (zzExpGen 1_000_000) (Gen.integral (Range.linear 0 10))
     monomsGen       = Gen.list (Range.linear 0 10) monomGen
     zxGen           = fmap (rSumL' zxRing) monomsGen
         -- polys of degree up to 10
-    sg              = (zxShow, zxGen)
-    props           = ringProps sg testEq zeroBits zxRing
-                        ++ ringHomomProps zzShowGen zzRing testEq zxRing zToZX
-                        ++ [("x", propertyOnce $ testEq xZX (monom 1 1))]
-                        ++ ringHomomProps sg zxRing (===) zzRing zxToT
+    pT              = testOps zxShow zxGen zxRing.eq
+    
+    props           = ringProps pT zeroBits zxRing
+                        ++ ringHomomProps zzTestOps zzRing pT.tEq zxRing zToZX
+                        ++ [("x", propertyOnce $ pT.tEq xZX (monom 1 1))]
+                        ++ ringHomomProps pT zxRing (===) zzRing zxToT
                         ++ [("C -> T",
-                                property $ sameFun1PT zzShowGen (===) (zxToT . zToZX) id),
+                                property $ sameFun1TR zzTestOps (===) (zxToT . zToZX) id),
                             ("x ->", propertyOnce $ zxToT xZX === 12345),
-                            readsProp sg testEq (polynomReads zxRing [("X", xZX)])]
+                            readsProp pT (polynomReads zxRing [("X", xZX)])]

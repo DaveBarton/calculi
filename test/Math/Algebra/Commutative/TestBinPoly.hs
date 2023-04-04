@@ -18,7 +18,6 @@ import qualified Hedgehog.Range as Range
 import Data.Bits (bit)
 import Data.Foldable (toList)
 import qualified Data.Sequence as Seq
-import Data.Tuple.Extra (second)
 import Data.Word (Word64)
 import qualified StrictList2 as SL
 
@@ -31,10 +30,11 @@ allPT aShow p as    = do
     assert (all p as)
 
 groebnerBasisProps      :: ShowGen p -> GBPolyOps ev term p -> [(PropertyName, Property)]
-groebnerBasisProps pSG gbpA@(GBPolyOps { .. })  = [("GB Residues 0", residues0)]
+groebnerBasisProps pT gbpA@(GBPolyOps { .. })   = [("GB Residues 0", residues0)]
   where
     scale11         = Gen.scale (Range.Size 11 *)
-    gsSG11          = second scale11 (listShowGen (Range.linear 0 5) pSG)
+    gs5SG           = listTestOps (Range.linear 0 5) pT
+    gsSG11          = gs5SG { gen = scale11 gs5SG.gen }
     sPolyIJ gs i j  = sPoly f g (SPair i j (evTotDeg m) m)
       where
         f   = Seq.index gs i
@@ -52,7 +52,7 @@ groebnerBasisProps pSG gbpA@(GBPolyOps { .. })  = [("GB Residues 0", residues0)]
             gbGens          = stdGens doRedGens gbIdeal
             gbGensL         = toList gbGens
             checkRes0s ps   = allPT pShow pR.isZero (map (bModBy doFullMod gbIdeal) ps)
-        annotate $ fst gsSG11 gbGensL
+        annotate $ gsSG11.tShow gbGensL
         checkRes0s (gens0 ++ gens1)
         mapM_ checkRes0s
             [[sPolyIJ gbGens i j | i <- [0 .. j - 1]]
@@ -65,10 +65,11 @@ type BP58       = BinPoly EV58
 type BP58Ops    = (GBPolyOps EV58 EV58 BP58, BPOtherOps EV58 Word64)
 
 gbCountZerosProp                    :: ShowGen BP58 -> BP58Ops -> (PropertyName, Property)
-gbCountZerosProp pSG (gbpA, bpoA)   = ("gbCountZeros", gbCountZeros)
+gbCountZerosProp pT (gbpA, bpoA)    = ("gbCountZeros", gbCountZeros)
   where
     scale11         = Gen.scale (Range.Size 11 *)
-    gsSG11          = second scale11 (listShowGen (Range.linear 0 5) pSG)
+    gs5SG           = listTestOps (Range.linear 0 5) pT
+    gsSG11          = gs5SG { gen = scale11 gs5SG.gen }
     gbTrace         = 0
     gbCountZeros    = withTests 10 $ property $ do
         gens0           <- genVis gsSG11
@@ -77,7 +78,7 @@ gbCountZerosProp pSG (gbpA, bpoA)   = ("gbCountZeros", gbCountZeros)
         let smA@(SubmoduleOps { .. })   = gbiSmOps gbpA nCores
             gbIdeal         = plusGens gbTrace (fromGens smA gbTrace gens0) gens1
             reducedGensL    = toList (stdGens True gbIdeal)
-        annotate $ fst gsSG11 reducedGensL
+        annotate $ gsSG11.tShow reducedGensL
         bpCountZeros bpoA (gens0 ++ gens1) === bpCountZeros bpoA reducedGensL
 
 test1           :: Int -> StdEvCmp -> IO Bool
@@ -94,24 +95,23 @@ test1 nVars sec = checkGroup ("BinPoly " ++ show nVars ++ " " ++ show sec) props
     varPs           = map bpVar [0 .. nVars - 1]
     mask            = bit nVars - 1     :: Word64
     vals            = 0x6789abcdef012345 .&. mask
-    -- evTestEq        = diffWith evShow (==)
     evGen           = fmap fromBits58 (Gen.word64 (Range.linear 0 mask))
-    evSG            = (evShow, evGen)
-    pTestEq         = diffWith pShow (==)
+    evT             = testOps evShow evGen (==)
     monomGen        = fmap SL.singleton evGen
-    pSG             = (pShow, fmap (rSumL' pR) (Gen.list (Range.linear 0 10) monomGen))
+    pGen            = fmap (rSumL' pR) (Gen.list (Range.linear 0 10) monomGen)
+    pT              = testOps pShow pGen pR.eq
     pToT p          = pAt p vals
     gbProps         = if nVars > 6 then [] else
-                        groebnerBasisProps pSG gbpA ++ [gbCountZerosProp pSG bpA2]
+                        groebnerBasisProps pT gbpA ++ [gbCountZerosProp pT bpA2]
     
-    props           = totalOrderProps evSG (==) evCmp
-                        ++ ringProps pSG pTestEq (eiBit IsCommutativeRing) pR
-                        ++ ringHomomProps pSG pR (===) boolField pToT
-                        ++ [readsProp pSG pTestEq (polynomReads pR (zip varSs varPs))]
+    props           = totalOrderProps evT (==) evCmp
+                        ++ ringProps pT (eiBit IsCommutativeRing) pR
+                        ++ ringHomomProps pT pR (===) boolField pToT
+                        ++ [readsProp pT (polynomReads pR (zip varSs varPs))]
                         ++ gbProps
 
 testBinPoly             :: IO Bool
 testBinPoly             =
-    checkAll $ checkGroup "boolField" (fieldProps (show, Gen.bool) (===) boolField)
+    checkAll $ checkGroup "boolField" (fieldProps (testOps0 Gen.bool) boolField)
         : [test1 nVars sec
             | nVars <- [1 .. 6] ++ [14, 25 .. 58], sec <- [LexCmp, GrLexCmp, GrRevLexCmp]]

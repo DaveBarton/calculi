@@ -37,6 +37,8 @@ import Data.Word (Word64)
 import StrictList2 (pattern (:!))
 import qualified StrictList2 as SL
 
+import Control.Parallel.Strategies (rpar, runEval)
+
 
 newtype EV58        = EV58 { w64 :: Word64 }    deriving Eq
 
@@ -142,7 +144,7 @@ bp58Ops evCmp isGraded varSs useSugar   = assert (nVars <= 58)
                 EQ  -> go r        t  u
         go r xs           SL.Nil        = SL.prependReversed r xs
         go r SL.Nil       ys            = SL.prependReversed r ys
-    bpAG                = abelianGroup (==) bpPlus SL.Nil null id
+    bpAG                = abelianGroup (==) bpPlus SL.Nil SL.null id
     bpRFlags            = eiBits [NotZeroRing, IsCommutativeRing]
     bpFromZ n           = if even (n :: Integer) then SL.Nil else SL.singleton evOne
     bpTimesEv bp ev     = if ev == evOne then bp else   -- for speed
@@ -190,11 +192,19 @@ bp58Ops evCmp isGraded varSs useSugar   = assert (nVars <= 58)
     pRead               = (\ [(x,"")] -> x) . polynomReads pR (zip varSs varPs) -- @@@ improve
 
 bpCountZeros        :: BPOtherOps EV58 Word64 -> [BinPoly EV58] -> Int
--- ^ @1 <= nVars <= 58@
+-- ^ @1 <= nVars <= 58@; fastest if the first polynomials are short or have few zeros
 bpCountZeros (BPOtherOps { nVars, pAt }) ps     =
-    assert (nVars > 0) $ go 0 (1 `unsafeShiftL` (nVars - 1))
-  where     -- @@@ parallelize
+    assert (nVars > 0) $ goPar 0 (1 `unsafeShiftL` (nVars - 1))
+  where
     go bs 0     = if any (`pAt` bs) ps then 0 else 1
     go bs b     = go bs b1 + go (bs .|. b) b1
       where
         b1  = b `unsafeShiftR` 1
+    minPar      = 1 `unsafeShiftL` max (nVars - 10) 12
+    goPar bs b
+        | b < minPar    = go bs b
+        | otherwise     = runEval $ do
+            let b1  = b `unsafeShiftR` 1
+            ~x      <- rpar (goPar bs b1)
+            let y   = goPar (bs .|. b) b1
+            pure $ x + y

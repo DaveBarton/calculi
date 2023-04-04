@@ -33,6 +33,7 @@ import Control.Concurrent (ThreadId, forkOn, killThread, myThreadId, threadCapab
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO,
     writeTVar)
 import Control.Monad.STM (atomically, retry)
+import Control.Parallel.Strategies (parListChunk, rseq, using)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.IORef.Extra (atomicModifyIORef'_, atomicWriteIORef')
 import System.IO.Unsafe (unsafePerformIO)
@@ -633,7 +634,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
                             let ijcs'   = SL.mergeBy hEvCmp ijcs1 addITCs
                             writeTVar ijcsRef ijcs'
                             pure ijcs'
-                        when (null ijcs && not (null ijcs')) $ inc1TVar wakeAllThreads
+                        when (SL.null ijcs && not (SL.null ijcs')) $ inc1TVar wakeAllThreads
                         when (gbTrace .&. gbTQueues /= 0) $ do
                             let n       = length ijcs
                                 n'      = length ijcs'
@@ -784,7 +785,8 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
     let fullReduce2NZ p     = cd `cons` fst (gkgsReduce gkgs True t)
           where
             (!cd, !t)   = unconsNZ p
-        ~redGbGens  =   fmap fullReduce2NZ gbGens   -- @@@ parallelize
+        ~redGbGens  =   if not useSugar then gbGens else
+            Seq.fromList (fmap fullReduce2NZ (toList gbGens) `using` parListChunk 10 rseq)
     pure $ GroebnerIdeal { gkgs, gbGhs, gbGens, redGbGens }
   where
     pZero           = pR.zero

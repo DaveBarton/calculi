@@ -9,7 +9,7 @@ import Math.Algebra.Commutative.Field.ZModP32
 
 import Math.Algebra.General.TestAlgebra
 
-import Hedgehog (annotateShow, assert)
+import Hedgehog ((===), annotateShow, assert)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
@@ -19,11 +19,10 @@ import GHC.TypeNats (KnownNat, natVal)
 
 zpwTestOps              :: forall p. KnownNat p => TestOps (Mod p)
 -- ^ caller shows @p@
-zpwTestOps              = ((zpShow, gen), testEq)
+zpwTestOps              = TestOps tShow gen (===)
   where
     (zpField, balRep)   = zzModPW @p
-    zpShow          = show . balRep
-    testEq          = diffWith zpShow zpField.eq
+    tShow           = show . balRep
     gen             = fmap zpField.fromZ (Gen.integral (Range.constantFrom 0 (- lim) lim))
     p               = fromIntegral (natVal (Proxy :: Proxy p))
     lim             = p `quot` 2
@@ -33,17 +32,17 @@ test1 p                 = case someNatVal (fromInteger p) of
  SomeNat (Proxy :: Proxy p)     -> checkGroup ("ZModP32 " ++ show p) props
   where
     (zpField, balRep)   = zzModPW @p
-    (sg, testEq)    = zpwTestOps @p
+    zpT             = zpwTestOps @p
     fromZ           = zpField.fromZ
     lim             = p `quot` 2
-    props           = fieldProps sg testEq zpField
+    props           = fieldProps zpT zpField
                         ++ [("p0", p0),
                             ("balRepIsRep", balRepIsRep), ("balRepIsSmall", balRepIsSmall)]
         -- fieldProps checks zzRing -> zpField is a homomorphism, 0 /= 1
-    p0              = propertyOnce $ fromZ p `testEq` zpField.zero
-    balRepIsRep     = property $ sameFun1PT sg testEq (fromZ . balRep) id
+    p0              = propertyOnce $ fromZ p === zpField.zero
+    balRepIsRep     = property $ sameFun1TR zpT zpT.tEq (fromZ . balRep) id
     balRepIsSmall   = property $ do
-        x       <- genVis sg
+        x       <- genVis zpT
         let n   = balRep x
         annotateShow n
         assert $ abs n <= lim

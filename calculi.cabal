@@ -50,9 +50,11 @@ library
         -- constraints >= 0.11 && < 0.14,
             -- note 'implied' added in 0.13
         mod,
+        parallel >= 3.2,
         random >= 1.2.1 && < 1.3,
         -- reflection >= 2.1.6 && < 2.2,
         stm >= 2.4 && < 2.6,
+        -- strict >= 0.4,
         strict-list,
         time >= 1.9.3 && < 2
 

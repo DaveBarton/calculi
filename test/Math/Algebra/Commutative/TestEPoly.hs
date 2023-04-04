@@ -30,7 +30,7 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
     -- should change to a noncommutative coef ring C with zero divisors, and check indets
     -- commute with it:
     (cRing, _)      = zzModPW @2_000_003
-    (cSG@(cShow, cGen), cTestEq)    = zpwTestOps @2_000_003
+    cT              = zpwTestOps @2_000_003
     EPolyOps { epUniv }     = epOps cRing nVars gRevLex
     UnivL epRing (RingTgtXs cToEp varEps) epUnivF   = epUniv
     nT              = cRing.fromZ
@@ -38,25 +38,23 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
     ts              = take nVars (unfoldr (\b -> Just (b, nextT b)) (nT 12345))
     epToT           = epUnivF cRing (RingTgtXs id ts)
     varSs           = map (: []) (take nVars ['a' .. 'z'])
-    GBPolyOps { pShow }     = epGBPOps gRevLex True cRing varSs (const cShow) True
-    testEq          = diffWith pShow epRing.eq
+    GBPolyOps { pShow }     = epGBPOps gRevLex True cRing varSs (const cT.tShow) True
     varPowGen       = liftM2 (expt1 (epRing.times)) (Gen.element varEps)
                         (Gen.int (Range.exponential 1 200_000))
     monomGen        = do
-        c       <- cGen
+        c       <- cT.gen
         varPows <- Gen.list (Range.linear 0 nVars) varPowGen
         pure $ epRing.times (cToEp c) (rProductL' epRing varPows)
     epGen           = fmap (rSumL' epRing) (Gen.list (Range.linear 0 10) monomGen)
-    sg              = (pShow, epGen)
+    pT              = testOps pShow epGen epRing.eq
     
-    props           = ringProps sg testEq (eiBit IsCommutativeRing) epRing
-                        ++ ringHomomProps cSG cRing testEq epRing cToEp
+    props           = ringProps pT (eiBit IsCommutativeRing) epRing
+                        ++ ringHomomProps cT cRing pT.tEq epRing cToEp
                         ++ [("xs", propertyOnce $ zipWithM_ (===) (map pShow varEps) varSs)]
-                        ++ ringHomomProps sg epRing cTestEq cRing epToT
-                        ++ [("C -> T", property $ sameFun1PT cSG cTestEq (epToT . cToEp) id),
-                            ("xs ->",
-                                propertyOnce $ listTestEq cShow cTestEq (map epToT varEps) ts),
-                            readsProp sg testEq (polynomReads epRing (zip varSs varEps))]
+                        ++ ringHomomProps pT epRing cT.tEq cRing epToT
+                        ++ [("C -> T", property $ sameFun1TR cT cT.tEq (epToT . cToEp) id),
+                            ("xs ->", propertyOnce $ listTestEq cT (map epToT varEps) ts),
+                            readsProp pT (polynomReads epRing (zip varSs varEps))]
 
 testEPoly               :: IO Bool
 testEPoly               = checkAll $ map test1 [1, 2, 3, 5, 9, 14, 20]
