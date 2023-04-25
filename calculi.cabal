@@ -18,7 +18,7 @@ copyright:          Copyright (c) David R. Barton, 2022
 category:           Math
 extra-source-files: CHANGELOG.md dirs.txt timings/timings.txt
 
-tested-with:        ghc ==9.2.4 ghc ==9.4.2
+tested-with:        ghc ==9.2.4 ghc ==9.4.4
 
 common deps
     default-language:   GHC2021

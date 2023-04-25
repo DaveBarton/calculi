@@ -1,4 +1,4 @@
-{-# LANGUAGE Strict, ViewPatterns #-}
+{-# LANGUAGE DataKinds, Strict, ViewPatterns #-}
 
 {- |  This module uses vector-backed multivariate polynomials from the @poly@ package.
     
@@ -36,7 +36,7 @@ vmpModPwGbpOps              :: forall p n. (KnownNat p, KnownNat n) => Bool -> B
 vmpModPwGbpOps isGraded useSugar    = GBPolyOps { .. }
   where
     nVars           = (fromIntegral (natVal (Proxy :: Proxy n)) :: Int) - 1
-    evCmp           = compare               -- LexCmp monomial order
+    evCmp           = compare               -- LexCmp or GrLexCmp monomial order
     evDivides       = VU.eqBy (<=) `on` EV.fromSized
     -- an "exps" is an unsized vector
     evExps          = (if isGraded then VU.tail else VU.init) . EV.fromSized
