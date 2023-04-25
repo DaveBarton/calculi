@@ -1,0 +1,4 @@
+packages: ./*.cabal
+
+tests: True
+    -- sometimes needed to get cabal's solver to pick a plan that works for hedgehog

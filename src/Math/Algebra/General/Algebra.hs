@@ -35,6 +35,9 @@
 -}
 
 module Math.Algebra.General.Algebra (
+    -- * Extend "Prelude"
+    foldl', liftA2,
+    
     -- * Common function types
     -- ** Pred
     assert,
@@ -90,7 +93,7 @@ module Math.Algebra.General.Algebra (
     algMd,
     
     -- * Basic numeric rings
-    numAG,
+    numAG, numRing,
     -- ** Integer
     zzAG, zzDiv, zzRing,
     -- ** Double
@@ -98,14 +101,15 @@ module Math.Algebra.General.Algebra (
     
     -- * Converting \<-> String
     pairShows, showGens,
-    plusS, timesS, quoS,
     Prec, applPrec, exptPrec, multPrec, addPrec, ShowPrec,
+    parensIf, plusSPrec, sumSPrec, timesSPrec, productSPrec,
     trimStart,
     zzReads, agReads, rngReads, polynomReads
 ) where
 
 import GHC.Records
 
+import Control.Applicative (liftA2)     -- unnecesary in base 4.18+, since in Prelude
 import Control.Exception (assert)
 import Data.Bits (Bits, FiniteBits, (.&.), (.|.), bit, finiteBitSize, testBit, zeroBits)
 import Data.Char (isDigit)
@@ -557,6 +561,10 @@ numAG           :: (Eq n, Num n) => AbelianGroup n
 -- ^ @n@ under addition
 numAG           = abelianGroup (==) (+) 0 (== 0) negate
 
+numRing         :: (Eq n, Num n) => RingFlags -> (Bool -> n -> n -> (n, n)) -> Ring n
+-- ^ @n@ as a 'Ring', @numRing rFlags bDiv@
+numRing rFlags  = Ring numAG rFlags (*) 1 fromInteger
+
 -- ** Integer
 
 zzAG            :: AbelianGroup Integer
@@ -573,7 +581,7 @@ zzDiv _ n d
 
 zzRing          :: Ring Integer
 -- ^ the ring of integers ℤ
-zzRing          = Ring zzAG integralDomainFlags (*) 1 id zzDiv
+zzRing          = numRing integralDomainFlags zzDiv
 
 -- ** Double
 
@@ -596,31 +604,6 @@ showGens _gShow []          = "⟨ ⟩"
 showGens  gShow (g0 : gs)   = "⟨ " ++ gShow g0 ++ foldr (\g s -> ", " ++ gShow g ++ s) " ⟩" gs
 
 
-plusS           :: String -> String -> String
-{- ^ @plusS s t@ shows the sum @s+t@. The caller checks precedences and parenthesizes @s@
-    and/or @t@ if necessary. @plusS@ checks for @s@ or @t@ being 0, or @t@ being negative. -}
-plusS s t       = if s == "0" then t else case t of
-    "0"         -> s
-    '-':_       -> s ++ t
-    _           -> s ++ '+' : t
-
-timesS          :: String -> String -> String
-{- ^ @timesS s t@ shows the product @st@. The caller checks precedences and parenthesizes @s@
-    and/or @t@ if necessary. @timesS@ checks for @s@ or @t@ being 1, @t@ being empty, or
-    @s@ being -1. -}
-timesS s t
-    | null t || t == "1"    = s
-    | s == "1"              = t
-    -- | s == "0" || t == "0"  = "0"
-    | s == "-1"             = '-' : t
-    | otherwise             = s ++ t
-
-quoS            :: String -> String -> String
-{- ^ @quoS s t@ shows the quotient @s/t@. The caller checks precedences and parenthesizes @s@
-    and/or @t@ if necessary. @quoS@ checks for @t@ being 1 or @s@ being 0. -}
-quoS s t        = if t == "1" || s == "0" then s else s ++ '/' : t
-
-
 applPrec        :: Prec
 -- ^ precedence of function application
 applPrec        = 10
@@ -637,6 +620,46 @@ addPrec         = 6
 type ShowPrec a = Prec -> a -> String
 {- ^ a function to show a value at a given minimum precedence. That is, the result is
     parenthesized if its top operator has less than the given precedence. -}
+
+parensIf        :: Bool -> String -> String
+-- ^ @parensIf b s@ encloses @s@ in parentheses if @b@
+parensIf b s    = if b then '(':s++")" else s
+
+plusSPrec       :: ShowPrec a -> ShowPrec b -> Prec -> a -> b -> String
+plusSPrec aSP bSP prec a b
+    | aS == "0"     = bSP prec b
+    | bS == "0"     = aSP prec a
+    | otherwise     = parensIf (addPrec < prec) (aS ++ (if isNeg bS then "" else "+") ++ bS)
+  where
+    aS      = aSP addPrec a
+    ~bS     = bSP addPrec b
+    isNeg ('-':_)   = True
+    isNeg _         = False
+
+sumSPrec        :: ShowPrec a -> ShowPrec [a]
+sumSPrec aSP    = asSP
+  where
+    asSP _prec []       = "0"
+    asSP  prec (h : t)  = plusSPrec aSP asSP prec h t
+
+timesSPrec      :: ShowPrec a -> ShowPrec b -> Prec -> a -> b -> String
+timesSPrec aSP bSP prec a b
+    | aS == "1"     = bSP prec b
+    | bS == "1"     = aSP prec a
+    | aS == "-1"    = parensIf (exptPrec < prec) ('-' : b1S)
+    | otherwise     = parensIf (multPrec < prec) (aS ++ b1S)
+  where
+    aS      = aSP multPrec a
+    ~bS     = bSP multPrec b
+    ~b1S    = parensIf (needsLParen bS) bS
+    needsLParen (c:_)   = c == '-' || isDigit c
+    needsLParen _       = False
+
+productSPrec    :: ShowPrec a -> ShowPrec [a]
+productSPrec aSP    = asSP
+  where
+    asSP _prec []       = "1"
+    asSP  prec (h : t)  = timesSPrec aSP asSP prec h t
 
 
 zzReads         :: ReadS Integer

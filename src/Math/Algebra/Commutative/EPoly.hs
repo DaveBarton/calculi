@@ -8,22 +8,22 @@
 -}
 
 module Math.Algebra.Commutative.EPoly (
-    ExponVec, eVecTotDeg, evMake, exponsL, evPlus, evMinusMay, evDividesF, evLCMF, gRevLex,
+    ExponVec, eVecTotDeg, evMake, exponsL, evPlus, evMinusMay, evDividesF, evLCMF, epEvCmpF,
     EPoly, RingTgtXs(..), EPolyUniv, EPolyOps(..),
-    headTotDeg, epOps, epGBPOps
+    headTotDeg, epOps, EvVarSs(..), evVarSs, evShowPrecF, epGBPOps, epCountZeros
 ) where
 
 import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
 import Math.Algebra.General.SparseSum
-import Math.Algebra.Commutative.GroebnerBasis (SPair(..), GBPolyOps(..))
+import Math.Algebra.Commutative.GroebnerBasis (SPair(..), GBPolyOps(..), StdEvCmp(..))
 
-import Data.Array.Base (numElements, unsafeAt)
-import Data.Array.IArray (bounds, elems, listArray)
-import Data.Array.Unboxed (UArray)
 import Data.Bits (xor, unsafeShiftL, unsafeShiftR)
 import Data.Maybe (fromJust)
+import qualified Data.Vector.Unboxed as U
 import Data.Word (Word64)
+
+import Control.Parallel.Strategies (parMap, rseq)
 
 
 zipWithExact    :: (a -> b -> c) -> [a] -> [b] -> [c]
@@ -33,14 +33,15 @@ zipWithExact f xs ys    = assert (length xs == length ys) (zipWith f xs ys)
 
 data Expons     = Expons1 Word64
                 | Expons2 Word64 Word64
-                | ExponsN (UArray Int Word)
+                | ExponsN (U.Vector Word)
     deriving Eq     -- e.g. for testing
--- In 'Expons1' and 'Expons2', the reversed exponents are stored in big-endian order.
+-- The (possibly reversed) exponents are stored in big-endian order, for fast comparisons. That
+-- is, the exponents are reversed (less main vars first) if isRev, e.g. GrRevLexCmp.
 
-instance Show Expons where  -- for debugging
+instance Show Expons where  -- e.g. for testing & debugging
     show (Expons1 w)        = show0x w
     show (Expons2 w v)      = show0x w ++ " " ++ show0x v
-    show (ExponsN a)        = show (elems a)
+    show (ExponsN a)        = show (U.toList a)
 
 data ExponVec   = ExponVec { totDeg :: Word, expons :: Expons }
     deriving (Eq, Show)     -- e.g. for testing & debugging
@@ -58,97 +59,106 @@ perWord64 nVars td
     | otherwise                 = -1
 
 evMake          :: [Word] -> ExponVec
--- ^ The exponents are listed in little-endian order.
+-- ^ The exponents are listed in big-endian order.
 evMake es       =
     let td          = sum es
         nVars       = length es
         perW        = perWord64 nVars td
         nBits       = if perW == 8 then 8 else 16
-        packW []        = 0
-        packW (e : t)   = packW t `unsafeShiftL` nBits + fromIntegral e
+        packW       = foldl' (\w e -> w `unsafeShiftL` nBits + fromIntegral e) 0
         exps
             | nVars <= perW     = Expons1 (packW es)
-            | nVars <= 2*perW   = let (es1, es0)   = splitAt (nVars - perW) es
+            | nVars <= 2*perW   = let (es0, es1)   = splitAt perW es
                                   in  Expons2 (packW es0) (packW es1)
-            | otherwise         = ExponsN (listArray (0, nVars - 1) es)
+            | otherwise         = ExponsN (U.fromListN nVars es)
     in  ExponVec td exps
 
 exponsL         :: Int -> ExponVec -> [Word]
--- ^ The exponents are listed in little-endian order.
+-- ^ The exponents are listed in big-endian order.
 exponsL nVars (ExponVec td es)  = case es of
     Expons1 w       -> bytesL nVars w []
-    Expons2 w0 w1   -> bytesL (nVars - perW) w1 (bytesL perW w0 [])
-    ExponsN a       -> elems a
+    Expons2 w0 w1   -> bytesL perW w0 (bytesL (nVars - perW) w1 [])
+    ExponsN a       -> U.toList a
   where
     perW        = perWord64 nVars td
     nBits       = if perW == 8 then 8 else 16
     mask        = if perW == 8 then 0xFF else 0xFFFF
     bytesL          :: Int -> Word64 -> [Word] -> [Word]
     bytesL n w ~t   = if n == 0 then t else
-        fromIntegral (w .&. mask) : bytesL (n - 1) (w `unsafeShiftR` nBits) t
+        bytesL (n - 1) (w `unsafeShiftR` nBits) (fromIntegral (w .&. mask) : t)
 
 evPlus          :: Int -> Op2 ExponVec
-evPlus nVars ev@(ExponVec d es) ev'@(ExponVec d' es')   = go es es'
+evPlus nVars ev@(ExponVec d es) ev'@(ExponVec d' es')
+    | perW == perWord64 nVars (min d d')    = ExponVec td (go es es')
+    | otherwise                             = slow
   where
     td      = d + d'
     perW    = perWord64 nVars td
-    go (Expons1 w)   (Expons1 w')     | nVars <= perW   =
-        ExponVec td (Expons1 (w + w'))
-    go (Expons2 w v) (Expons2 w' v')  | nVars <= 2*perW =
-        ExponVec td (Expons2 (w + w') (v + v'))
-    go _             _                                  =
-        evMake (zipWithExact (+) (exponsL nVars ev) (exponsL nVars ev'))
+    go (Expons1 w)   (Expons1 w')       = Expons1 (w + w')
+    go (Expons2 w v) (Expons2 w' v')    = Expons2 (w + w') (v + v')
+    go (ExponsN a)   (ExponsN a')       = ExponsN (U.zipWith (+) a a')
+    go _             _                  = undefined
+    ~slow   = evMake (zipWithExact (+) (exponsL nVars ev) (exponsL nVars ev'))
 
 evMinusMay      :: Int -> ExponVec -> ExponVec -> Maybe ExponVec
-evMinusMay nVars ev@(ExponVec d es) ev'@(ExponVec d' es')   =
-    if not (evDividesF nVars ev' ev) then Nothing else Just (evMinus es es')
+evMinusMay nVars ev ev'     | not (evDividesF nVars ev' ev)     = Nothing
+evMinusMay nVars ev@(ExponVec d es) ev'@(ExponVec d' es')
+    | perWord64 nVars d == perWord64 nVars (min d' td)  = Just (ExponVec td (go es es'))
+    | otherwise                                         = Just slow
   where
-    evMinus (Expons1 w)   (Expons1 w')                      =
-        ExponVec (d - d') (Expons1 (w - w'))
-    evMinus (Expons2 w v) (Expons2 w' v')   | nVars > perW  =
-        ExponVec td (Expons2 (w - w') (v - v'))
-      where
-        td      = d - d'
-        perW    = perWord64 nVars td
-    evMinus _             _                                 =
-        evMake (zipWithExact (-) (exponsL nVars ev) (exponsL nVars ev'))
+    td      = d - d'
+    go (Expons1 w)   (Expons1 w')       = Expons1 (w - w')
+    go (Expons2 w v) (Expons2 w' v')    = Expons2 (w - w') (v - v')
+    go (ExponsN a)   (ExponsN a')       = ExponsN (U.zipWith (-) a a')
+    go _             _                  = undefined
+    ~slow   = evMake (zipWithExact (-) (exponsL nVars ev) (exponsL nVars ev'))
 
 evDividesF      :: Int -> ExponVec -> ExponVec -> Bool
 -- ^ note args reversed from evMinusMay; really vars^ev1 `divides` vars^ev2
-evDividesF nVars ev@(ExponVec d es) ev'@(ExponVec d' es')   = d <= d' &&    -- for efficiency
-    expsDivs es es'
+evDividesF _ (ExponVec d _) (ExponVec d' _)     | d > d'    = False     -- for efficiency
+evDividesF nVars ev@(ExponVec d es) ev'@(ExponVec d' es')
+    | perW == perWord64 nVars d'    = go es es'
+    | otherwise                     = slow
   where
-    expsDivs (Expons1 w)   (Expons1 w')     = bytesDivs w w'
-    expsDivs (Expons2 w v) (Expons2 w' v')  = bytesDivs w w' && bytesDivs v v'
-    expsDivs _             _                =
-        and (zipWithExact (<=) (exponsL nVars ev) (exponsL nVars ev'))
+    perW    = perWord64 nVars d
+    go (Expons1 w)   (Expons1 w')       = bytesDivs w w'
+    go (Expons2 w v) (Expons2 w' v')    = bytesDivs w w' && bytesDivs v v'
+    go (ExponsN a)   (ExponsN a')       = U.ifoldr (\i e ~b -> e <= a' U.! i && b) True a
+    go _             _                  = undefined
+    ~slow   = and (zipWithExact (<=) (exponsL nVars ev) (exponsL nVars ev'))
     bytesDivs w w'      = w <= w' && (w' - w) .&. mask `xor` w .&. mask `xor` w' .&. mask == 0
       where     -- check if any bytes subtracted in (w' - w) cause borrowing from any mask bits
-        perW        = perWord64 nVars d
         mask        = if perW == 8 then 0x0101_0101_0101_0100 else 0x0001_0001_0001_0000
 
 evLCMF          :: Int -> Op2 ExponVec  -- really Least Common Multiple of vars^ev1 and vars^ev2
 evLCMF nVars ev ev'     = evMake (zipWithExact max (exponsL nVars ev) (exponsL nVars ev'))
 
-gRevLex         :: Cmp ExponVec
--- ^ The variables go from most main (variable 0) to least main, in little-endian order.
-gRevLex (ExponVec d es) (ExponVec d' es')       =
-    case compare d d' of
-        EQ      -> cmpExps es es'
-          where
-            cmpExps (Expons1 w)   (Expons1 w')     = compare w' w
-            cmpExps (Expons2 w v) (Expons2 w' v')  = case compare w' w of
-                EQ      -> compare v' v
-                other   -> other
-            cmpExps (ExponsN a)   (ExponsN a')     =
-                assert (bounds a == bounds a') (go (numElements a - 1))
-              where
-                go i    =
-                    if i < 0 then EQ else
-                    let c   = compare (unsafeAt a' i) (unsafeAt a i)
-                    in  if c /= EQ then c else go (i - 1)
-            cmpExps _             _                = undefined
-        other   -> other
+cmpExpsSameShape                                :: Cmp Expons
+-- lexicographic comparison, assuming the same nVars and (perWord64 nVars td)
+cmpExpsSameShape (Expons1 w)   (Expons1 w')     = compare w w'
+cmpExpsSameShape (Expons2 w v) (Expons2 w' v')  = compare w w' <> compare v v'
+cmpExpsSameShape (ExponsN a)   (ExponsN a')     = compare a a'
+cmpExpsSameShape _             _                = undefined
+
+evGrRevLexCmp   :: Cmp ExponVec
+-- ^ The variables go from least main (variable 0) to most main, in big-endian order.
+evGrRevLexCmp (ExponVec d es) (ExponVec d' es') = compare d d' <> cmpExpsSameShape es' es
+
+evGrLexCmp      :: Cmp ExponVec
+-- ^ The variables go from most main (variable 0) to least main, in big-endian order.
+evGrLexCmp (ExponVec d es) (ExponVec d' es')    = compare d d' <> cmpExpsSameShape es es'
+
+evLexCmpF       :: Int -> Cmp ExponVec
+-- ^ The variables go from most main (variable 0) to least main, in big-endian order.
+evLexCmpF nVars ev@(ExponVec d es) ev'@(ExponVec d' es')
+    | perWord64 nVars d == perWord64 nVars d'   = cmpExpsSameShape es es'
+    | otherwise                                 = compare (exponsL nVars ev) (exponsL nVars ev')
+
+epEvCmpF            :: Int -> StdEvCmp -> Cmp ExponVec
+epEvCmpF nVars      = \case
+    LexCmp      -> evLexCmpF nVars
+    GrLexCmp    -> evGrLexCmp
+    GrRevLexCmp -> evGrRevLexCmp
 
 
 type EPoly c    = SparseSum c ExponVec
@@ -164,7 +174,8 @@ type EPolyUniv c        = UnivL Ring (RingTgtXs c) (->) (EPoly c)
 data EPolyOps c     = EPolyOps {
     nVars               :: Int,
     evCmp               :: Cmp ExponVec,
-    epUniv              :: EPolyUniv c,
+    epUniv              :: EPolyUniv c,     -- ^ The vars are in big-endian order. That is,
+        -- the most main vars are first for LexCmp or GrLexCmp, and least main for GrRevLexCmp.
     ssOROps             :: SSOverRingOps c ExponVec,
     epTimesNZMonom      :: EPoly c -> ExponVec -> c -> EPoly c,     -- ^ the @c@ is nonzero
     epTimesMonom        :: EPoly c -> ExponVec -> c -> EPoly c
@@ -225,32 +236,43 @@ epOps cR nVars evCmp    = EPolyOps { .. }
             foldr1 tR.times (cToT c : zipWithExact (rExpt tR) xTs (exponsL nVars ev))
 
 
+data EvVarSs    = EvVarSs { descVarSs :: [String], nVars :: Int, isRev :: Bool }
+-- ^ @descVarSs@ lists more main variables first, and each @varS@ has precedence > '^'.
+
+evVarSs                     :: [String] -> Cmp ExponVec -> EvVarSs
+evVarSs descVarSs evCmp     = EvVarSs { descVarSs, nVars, isRev }
+  where
+    nVars           = length descVarSs
+    isRev           = nVars > 0 && evCmp (evMake es) (evMake (reverse es)) == LT
+      where
+        ~es     = 1 : replicate (nVars - 1) 0
+
+evShowPrecF                 :: EvVarSs -> ShowPrec ExponVec
+evShowPrecF (EvVarSs { descVarSs, nVars, isRev }) prec ev   =
+    productSPrec powSP prec (zip descVarSs es)
+  where
+    es              = (if isRev then reverse else id) (exponsL nVars ev)
+    powSP prec1 (varS, e)   = varPowShowPrec varS prec1 e
+
 epGBPOps        :: forall c. Cmp ExponVec -> Bool -> Ring c -> [String] -> ShowPrec c -> Bool ->
                     GBPolyOps ExponVec (SSTerm c ExponVec) (EPoly c)
-{- ^ In @ep58GBPOps evCmp isGraded cR varSs cShowPrec useSugar@, @varSs@ lists more main
+{- ^ In @ep58GBPOps evCmp isGraded cR descVarSs cShowPrec useSugar@, @descVarSs@ lists more main
     variables first, and each @varS@ has precedence > '^'. -}
-epGBPOps evCmp isGraded cR varSs cShowPrec useSugar     = GBPolyOps { numTerms = length, .. }
+epGBPOps evCmp isGraded cR descVarSs cShowPrec useSugar     =
+    GBPolyOps { numTerms = length, .. }
   where
-    nVars               = length varSs
+    evSs@(EvVarSs { nVars, isRev })     = evVarSs descVarSs evCmp
     evDivides           = evDividesF nVars
     evLCM               = evLCMF nVars
     evTotDeg            = (.totDeg)
     nEvGroups           = nVars
     evGroup             = exponsL nVars
-    isRev               = nVars > 0 && evCmp (evMake es) (evMake (reverse es)) == GT
-      where
-        ~es         = 1 : replicate (nVars - 1) 0
-    evShow ev           = concat (zipWith pow varSs es)
-      where
-        es          = (if isRev then id else reverse) (exponsL nVars ev)
-        pow varS e  = case e of
-            0   -> ""
-            1   -> varS
-            _   -> varS ++ '^' : show e
+    evShowPrec          = evShowPrecF evSs
     EPolyOps { epUniv, ssOROps }    = epOps cR nVars evCmp
-    UnivL pR (RingTgtXs _cToP _xs) _pUnivF  = epUniv
-    SSOverRingOps { monicize }  = ssOROps
+    UnivL pR (RingTgtXs _cToP xs) _pUnivF   = epUniv
+    descVarPs           = if isRev then reverse xs else xs
     leadEvNZ            = sparseSum undefined (\_ ev _ -> ev)
+    SSOverRingOps { monicizeU }     = ssOROps
     extraSPairs _ _ _   = []
     sPoly f g (SPair { m })     = minus pR.ag (shift f) (shift g)
       where
@@ -260,4 +282,16 @@ epGBPOps evCmp isGraded cR varSs cShowPrec useSugar     = GBPolyOps { numTerms =
         ssFoldr (\ _ ev n -> max ev.totDeg n) 0
     cons                = ssCons
     unconsNZ            = ssUnconsNZ
-    pShow               = ssShowPrec (const evShow) cShowPrec 0
+    pShow               = ssShowPrec evShowPrec cShowPrec 0
+
+epCountZeros        :: Ring c -> [c] -> EPolyOps c -> [EPoly c] -> Int
+-- ^ fastest if the first polynomials are short or have few zeros
+epCountZeros cR cElts (EPolyOps { nVars, epUniv = UnivL _ _ epUnivF }) ps   = go [] nVars
+  where
+    evalAt cs   = epUnivF cR (RingTgtXs id cs)
+    go cs 0     = if all (cR.isZero . evalAt cs) ps then 1 else 0
+    go cs n     =
+        sum $ (if n < minPar then map else parMap rseq) (\c -> go (c : cs) (n - 1)) cElts
+    nCElts      = length cElts
+    minPar      = if nCElts < 2 then maxBound else max (nVars + 1 - depth 1000) (depth 500)
+    depth n     = floor (logBase @Double (fromIntegral nCElts) n)

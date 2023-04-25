@@ -1,8 +1,10 @@
+{-# LANGUAGE DataKinds #-}
+
 {- |  This module helps test the "Algebra" module and its clients.  -}
 
 module Math.Algebra.General.TestAlgebra (
-    PropertyIO, property, propertyOnce,
-    TestRel, diffWith, TestOps(..), ShowGen, testOps, testOps0, genVis,
+    PropertyIO, property, propertyOnce, Range,
+    TestRel, diffWith, TestOps(..), ShowGen, testOps0, tCheckBool, genVis,
     sameFun1TR, sameFunAABTR,
     symmetricProp, commutativeProp, antiSymmetricProp, associativeProp, identityProp,
     homomPT, endomPT,
@@ -10,7 +12,8 @@ module Math.Algebra.General.TestAlgebra (
     monoidProps,  abelianGroupProps, ringProps, ringHomomProps, fieldProps,
     moduleProps, rModProps, modRProps, rAlgProps,
     zzExpGen, zzGen, zzTestOps,
-    pairTestOps, listShowWith, listTestOps, listTestEq,
+    pairTestOps,
+    listShowWith, listTestOps, listTestEq, allPT, isSortedBy, slTestOps,
     readsProp,
     checkGroup, checkAll,
     testAlgebra
@@ -19,14 +22,18 @@ module Math.Algebra.General.TestAlgebra (
 import Math.Algebra.General.Algebra hiding (assert)
 
 import Hedgehog (Gen, Property, PropertyName, PropertyT, Range,
-    (===), annotate, annotateShow, assert, checkParallel, cover, diff, discard, forAllWith,
-    property, withDiscards, withTests)
+    (===), annotate, annotateShow, assert, checkParallel, cover, diff, discard, failure,
+    forAllWith, property, withDiscards, withTests)
 import qualified Hedgehog as Hh
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
-import Control.Monad (liftM2, when, zipWithM_)
+import GHC.Records
+
+import Control.Monad (unless, when)
+import Data.Foldable (toList)
 import Data.String (fromString)
+import qualified StrictList2 as SL
 import Text.Show (showListWith)
 
 
@@ -39,7 +46,7 @@ instance Show (ShowWith a) where
 
 type PropertyIO     = PropertyT IO
 -- ^ A @(PropertyIO a)@ produces an @a@ during a test. A @(PropertyIO ())@ runs a (part of a)
--- ^ test.
+-- test.
 
 propertyOnce        :: PropertyIO () -> Property
 -- ^ a property with no random nonconstant generators, so it's only run once
@@ -53,23 +60,40 @@ diffWith            :: (a -> String) -> (a -> a -> Bool) -> TestRel a
 diffWith aShow rel a b      = diff (ShowWith aShow a) (rel `on` (.val)) (ShowWith aShow b)
 
 data TestOps a      = TestOps {
-    tShow   :: a -> String,
-    gen     :: Gen a,       -- ^ optional
-    tEq     :: TestRel a    -- ^ optional
+    tSP         :: ShowPrec a,
+    tCheck      :: [String] -> a -> PropertyIO (),
+                    -- ^ @tCheck notes a@ checks @a@ for invariants beyond just type-correctness
+    gen         :: Gen a,       -- ^ optional
+    eq          :: EqRel a      -- ^ optional
 }
-type ShowGen        = TestOps   -- ^ doesn't use 'tEq'
-
-testOps             :: (a -> String) -> Gen a -> EqRel a -> TestOps a
-testOps tShow gen eq    = TestOps { tEq = diffWith tShow eq, .. }
+type ShowGen        = TestOps   -- ^ doesn't use 'eq'
+instance HasField "tShow"   (TestOps a) (a -> String)   where
+    getField (TestOps { tSP })  = tSP 0
+instance HasField "tEq"     (TestOps a) (TestRel a)     where
+    getField tT@(TestOps { tCheck, eq }) x y    = do
+        tCheck [] x
+        tCheck [] y
+        diffWith tT.tShow eq x y
 
 testOps0            :: (Eq a, Show a) => Gen a -> TestOps a
--- ^ 'TestOps' using 'show' and '(==)'
-testOps0 gen        = testOps show gen (==)
+-- ^ 'TestOps' using 'Show' and 'Eq', and no invariant checking
+testOps0 gen        = TestOps tSP (\_ _ -> pure ()) gen (==)
+  where
+    tSP prec a  = showsPrec prec a ""
+
+tCheckBool          :: [String] -> Bool -> PropertyIO ()
+tCheckBool notes ok =
+    unless ok $ do
+        mapM_ annotate notes
+        failure
 
 genVis              :: ShowGen a -> PropertyIO a
 {- ^ Generate a visible (showable) random value for a property test. The value will be shown if
     the test fails. -}
-genVis (TestOps { tShow, gen })     = forAllWith tShow gen
+genVis aT           = do
+    a       <- forAllWith aT.tShow aT.gen
+    aT.tCheck [] a
+    pure a
 
 
 sameFun1TR          :: ShowGen a -> TestRel b -> TestRel (a -> b)
@@ -179,8 +203,7 @@ monoidProps gT requiredFlags (Group { .. })     =
         [commutativeProp gT op | hasEIBit monFlags Abelian]
   where
     flagsOk         = propertyOnce $ do
-        annotateShow [monFlags, requiredFlags]
-        assert (hasEIBits monFlags requiredFlags)
+        diff monFlags hasEIBits requiredFlags
     isIdentity      = property $ do
         a       <- genVis gT
         isIdent a === (a `eq` ident)
@@ -206,7 +229,7 @@ bDivProps rShow mT (Module { .. })  =
         y       <- genVis mT
         m       <- genVis mT
         let (q, r)  = quoRemF y m
-        annotateShow $ [rShow q, mT.tShow r]
+        annotateShow [rShow q, mT.tShow r]
         mT.tEq y (ag.plus (scale q m) r)
 
 ringProps               :: forall r. TestOps r -> RingFlags -> Ring r ->
@@ -225,8 +248,7 @@ ringProps rT reqRingFlags rR@(Ring { .. })  =
   where
     AbelianGroup { .. }     = ag
     ringFlagsOk     = propertyOnce $ do
-        annotateShow [rFlags, reqRingFlags]
-        assert (hasEIBits rFlags reqRingFlags)
+        diff rFlags hasEIBits reqRingFlags
     rand            = genVis rT
     leftDistrib     = property $ do
         a       <- rand
@@ -304,6 +326,10 @@ rAlgProps rT rR aT reqAFlags (RAlg { .. })  =
         sameFun1TR aT aT.tEq (scale r) (ra *~)
 
 
+zzShowPrec              :: ShowPrec Integer
+-- ^ 'timesSPrec' is smart about parenthesizing numbers, including negative numbers.
+zzShowPrec prec n       = parensIf (n < 0 && exptPrec < prec) (show n)
+
 zzExpGen                :: Integer -> Gen Integer
 -- ^ @zzExpGen lim@ is an exponential generator with origin 0; @lim@ must be >= 0
 zzExpGen lim            = Gen.integral (Range.exponentialFrom 0 (- lim) lim)
@@ -312,38 +338,63 @@ zzGen                   :: Gen Integer
 zzGen                   = zzExpGen (2 ^ (98 :: Int))
 
 zzTestOps               :: TestOps Integer
-zzTestOps               = testOps0 zzGen
+zzTestOps               = (testOps0 zzGen) { tSP = zzShowPrec }
+
 
 showToShows             :: (a -> String) -> a -> ShowS
 showToShows aShow a     = (aShow a ++)
 
+
 pairTestOps             :: TestOps a -> TestOps b -> TestOps (a, b)
-pairTestOps aT bT       = TestOps { .. }
+pairTestOps aT bT       = TestOps (const tShow) tCheck gen (pairEq aT.eq bT.eq)
   where
-    tShow (a, b)    = pairShows (showToShows aT.tShow) (showToShows bT.tShow) (a, b) ""
-    gen             = liftM2 ( , ) aT.gen bT.gen
-    tEq x@(a, b) y@(c, d)   = do
-        annotate $ tShow x
-        annotate $ tShow y
-        aT.tEq a c
-        bT.tEq b d
+    tShow p         = pairShows (showToShows aT.tShow) (showToShows bT.tShow) p ""
+    tCheck notes p@(a, b)   = do
+        aT.tCheck notes1 a
+        bT.tCheck notes1 b
+      where
+        notes1  = tShow p : notes
+    gen             = liftA2 ( , ) aT.gen bT.gen
+
 
 listShowWith            :: (a -> String) -> [a] -> String
 listShowWith aShow as   = showListWith (showToShows aShow) as ""
 
-listTestOps             :: Range Int -> TestOps a -> TestOps [a]
-listTestOps lenRange aT     = TestOps { .. }
+listTestOps                 :: Range Int -> TestOps a -> TestOps [a]
+listTestOps lenRange aT     = TestOps (const tShow) tCheck gen (liftEq aT.eq)
   where
     tShow           = listShowWith aT.tShow
+    tCheck notes as = mapM_ (aT.tCheck (tShow as : notes)) as
     gen             = Gen.list lenRange aT.gen
-    tEq as bs   = do
-        annotate $ tShow as
-        annotate $ tShow bs
-        length as === length bs
-        zipWithM_ aT.tEq as bs
 
 listTestEq              :: TestOps a -> TestRel [a]
 listTestEq aT           = (listTestOps undefined aT).tEq
+
+allPT                   :: (a -> String) -> Pred a -> [a] -> PropertyIO ()
+allPT aShow p as        = do
+    let qs          = map p as
+    unless (and qs) $ do
+        annotate $ listShowWith aShow as
+        annotateShow qs
+        failure
+
+-- |  The 'isSortedBy' function returns 'True' iff the predicate returns true
+-- for all adjacent pairs of elements in the list.
+isSortedBy              :: (a -> a -> Bool) -> [a] -> Bool
+-- from Data.List.Ordered
+isSortedBy lte          = loop
+  where
+    loop []         = True
+    loop [_]        = True
+    loop (x:y:zs)   = (x `lte` y) && loop (y:zs)
+
+
+slTestOps               :: Range Int -> TestOps a -> TestOps (SL.List a)
+slTestOps lenRange aT   = TestOps (const tShow) tCheck gen (SL.eqBy aT.eq)
+  where
+    tShow           = listShowWith aT.tShow . toList
+    tCheck notes as = mapM_ (aT.tCheck (tShow as : notes)) as
+    gen             = SL.fromList <$> Gen.list lenRange aT.gen
 
 
 readsProp               :: TestOps a -> ReadS a -> (PropertyName, Property)
@@ -363,7 +414,7 @@ checkGroup name props   = checkParallel $ Hh.Group (fromString name) props
 
 checkAll                :: [IO Bool] -> IO Bool
 -- ^ like 'Control.Monad.Extra.andM', but doesn't short-circuit (it always runs all the tests),
--- ^    and it prints the results.
+-- and it prints the results.
 checkAll checks         = do    -- liftM and (sequence checks)
     oks         <- sequence checks
     print oks

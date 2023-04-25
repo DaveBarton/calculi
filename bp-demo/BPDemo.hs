@@ -7,7 +7,7 @@ import Math.Algebra.Commutative.GroebnerBasis
 import Math.Algebra.Commutative.BinPoly
 
 -- import Control.Monad (when)
-import Data.Foldable (foldl', toList)
+import Data.Foldable (toList)
 -- import qualified Data.Sequence as Seq
 import Data.Word (Word64)
 
@@ -19,12 +19,12 @@ import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 
 demoOps             :: Int -> StdEvCmp ->
                         (GBPolyOps EV58 EV58 (BinPoly EV58), BPOtherOps EV58 Word64)
-demoOps nVars sec   = bp58Ops evCmp isGraded varSs useSugar
+demoOps nVars sec   = bp58Ops evCmp isGraded descVarSs useSugar
   where
     evCmp           = evCmp58 sec
     isGraded        = secIsGraded sec
     xVarSs          = ['X' : show n | n <- [1 :: Int ..]]
-    varSs           = take nVars (map (: []) ['a' .. 'z'] ++ xVarSs)
+    descVarSs       = take nVars (map (: []) ['a' .. 'z'] ++ xVarSs)
     useSugar        = False
 
 bpDemo                  :: Int -> Int -> IO ()
@@ -52,7 +52,7 @@ bpDemo nCores gbTrace   = do
     shorter p q     = if numTerms p <= numTerms q then p else q
     plus1 arg@(sm, gs) g    =
         let g1  = smA.bModBy True sm g
-        in  if pR.isZero g1 then arg else (smA.plusGens 0 sm [g1], (shorter g1 g) : gs)
+        in  if pR.isZero g1 then arg else (smA.plusGens 0 sm [g1], shorter g1 g : gs)
     (_recSm1, revSend)  = foldl' plus1 (gbIdeal, []) toReduce
     
     -- @@ choose a name, nVars, and gens, commenting out the other examples:

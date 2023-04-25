@@ -11,7 +11,7 @@ module Math.Algebra.Linear.SparseVector (
     -- * SparseVector
     SparseVector(..), SparseVectorUniv,
     svZero, pICToSV, svIsZero, svSize, svMapC, svMapNZFC, svFoldr',
-    svAGUniv, svDotWith, SVOverRingOps(..), svOverRingOps, svSwap,
+    svAGUniv, SVCoordOps(..), svCoordOps, svDotWith, SVOverRingOps(..), svOverRingOps, svSwap,
     svShowPrec,
     
     -- * SparseMatrix
@@ -22,9 +22,10 @@ import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
 import Math.Algebra.General.SparseSum (SparseSumUniv)
 
+import Control.Monad.Extra (pureIf)
 import Data.IntMap.Strict (IntMap)
 import qualified Data.IntMap.Strict as IM
-import Data.Maybe (isNothing)
+import Data.Maybe (fromMaybe, isNothing)
 
 
 -- * SparseVector
@@ -75,6 +76,16 @@ svAGUniv (AbelianGroup _cFlags eq plus _zero isZero neg)    = UnivL svAG (TgtArr
     iCToSV          = pICToSV isZero
     univF tAG (TgtArrsF iCToT)  = svFoldr' tAG.plus tAG.zero iCToT
 
+data SVCoordOps c   = SVCoordOps {
+    coord           :: Int -> SparseVector c -> c,
+    replaceC        :: Int -> c -> Op1 (SparseVector c)
+}
+svCoordOps                          :: AbelianGroup c -> SVCoordOps c
+svCoordOps (AbelianGroup { .. })    = SVCoordOps { .. }
+  where
+    coord i v   = fromMaybe zero (v.im IM.!? i)
+    replaceC i c    = SV . (if isZero c then IM.delete i else IM.insert i c) . (.im)
+
 svDotWith       :: (c -> c1 -> c2) -> AbelianGroup c2 -> SparseVector c -> SparseVector c1 -> c2
 svDotWith f (AbelianGroup { plus, zero }) (SV m) (SV m')    =
     IM.foldr' plus zero (IM.intersectionWith f m m')
@@ -82,26 +93,26 @@ svDotWith f (AbelianGroup { plus, zero }) (SV m) (SV m')    =
 data SVOverRingOps c    = SVOverRingOps {
     nzcTimes        :: c -> Op1 (SparseVector c),   -- ^ the @c@ is nonzero
     cTimes          :: c -> Op1 (SparseVector c),
-    monicize        :: Int -> Op1 (SparseVector c),
-        -- ^ @(monicize i v)@ requires that the @i@'th coefficient of @v@ is a unit
+    monicizeU       :: Int -> Op1 (SparseVector c),
+        -- ^ @(monicizeU i v)@ requires that the @i@'th coefficient of @v@ is a unit
     timesNZC        :: c -> Op1 (SparseVector c),   -- ^ the @c@ is nonzero
     timesC          :: c -> Op1 (SparseVector c)
 }
 svOverRingOps                   :: forall c. Ring c -> SVOverRingOps c
 svOverRingOps cR@(Ring { .. })  = SVOverRingOps { .. }
   where
-    isZero      = ag.isIdent
+    isZero      = cR.isZero
     nzcTimes
         | hasEIBit rFlags NoZeroDivisors    = \c -> svMapNZFC (c `times`)
         | otherwise                         = \c -> svMapC isZero (c `times`)
     cTimes c v  = if isZero c then svZero else nzcTimes c v
-    monicize i v@(SV m)     =
+    monicizeU i v@(SV m)    =
         let c       = m IM.! i  -- check for c = 1 for speed
         in  if rIsOne cR c then v else svMapNZFC (rInv cR c `times`) v
     timesNZC
         | hasEIBit rFlags NoZeroDivisors    = \c -> svMapNZFC (`times` c)
         | otherwise                         = \c -> svMapC isZero (`times` c)
-    timesC c v    = if isZero c then svZero else timesNZC c v
+    timesC c v  = if isZero c then svZero else timesNZC c v
 
 svSwap          :: Int -> Int -> Op1 (SparseVector c)
 -- ^ swaps two coefficients
@@ -113,10 +124,9 @@ svSwap i j v@(SV m)     =
 
 
 svShowPrec      :: ShowPrec Int -> ShowPrec c -> ShowPrec (SparseVector c)
-svShowPrec iSP cSP prec v@(SV m)  =
-    let s   = svFoldr' plusS "0" (\i c -> timesS (cSP multPrec c) (iSP multPrec i)) v
-    in  if prec > multPrec || prec > addPrec && length (IM.splitRoot m) > 1
-        then '(':s++")" else s
+svShowPrec iSP cSP prec v   = sumSPrec termSP prec (IM.toList v.im)
+  where
+    termSP prec1 (i, c) = timesSPrec cSP iSP prec1 c i
 
 
 -- * SparseMatrix
@@ -144,8 +154,16 @@ scmOps cR maxN  = SCMOps { .. }
   where
     cIsZero         = cR.isZero
     UnivL vAG (TgtArrsF _iCToV) _vUnivF     = svAGUniv cR.ag
+    SVCoordOps { .. }   = svCoordOps cR.ag
     vOverCRingA     = svOverRingOps cR
-    vBDiv _doFull v _w  = (cR.zero, v) -- @@@ improve
+    vBDiv doFull v@(SV vm) (SV wm)  = fromMaybe (cR.zero, v) $ do
+        (i, wc)     <- IM.lookupMin wm
+        vc          <- if doFull then vm IM.!? i else
+                        do (vi, c) <- IM.lookupMin vm; pureIf (vi == i) c
+        let (q, cr) = cR.bDiv doFull vc wc
+        pureIf (not (cIsZero q))    -- for speed
+            (q, vAG.plus (replaceC i cr v)
+                         (vOverCRingA.timesNZC (cR.neg q) (SV (IM.delete i wm))))
     vModR           = Module vAG vOverCRingA.timesC vBDiv
     UnivL ag (TgtArrsF _jVToMat) _vvUnivF   = svAGUniv vAG
     scmTimesV       = svDotWith (flip vOverCRingA.timesNZC) vAG

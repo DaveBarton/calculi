@@ -15,7 +15,7 @@
 # Specify additional command line arguments
 #
 # - arguments: [--color, --cpp-simple, -XQuasiQuotes]
-
+- arguments: [-XOverloadedRecordDot]
 
 # Control which extensions/flags/modules/functions can be used
 #
@@ -57,6 +57,7 @@
 #
 # Generalise map to fmap, ++ to <>
 # - group: {name: generalise, enabled: true}
+- group: {name: future, enabled: true}
 
 
 # Ignore some builtin hints

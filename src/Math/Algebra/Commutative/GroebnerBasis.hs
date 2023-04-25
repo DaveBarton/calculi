@@ -15,16 +15,16 @@ module Math.Algebra.Commutative.GroebnerBasis (
 
 import Math.Algebra.General.Algebra
 
-import Control.Monad (forM, unless, when)
+import Control.Monad (forM, unless, void, when)
 import Control.Monad.Extra (ifM, orM, whenM, whileM)
-import Data.Array.IArray (Array, (!), listArray)
-import Data.Foldable (find, foldl', minimumBy, toList)
+import Data.Foldable (find, minimumBy, toList)
 import Data.Int (Int64)
 import Data.List (elemIndex, findIndices, groupBy, sortBy)
 import Data.List.Extra (chunksOf)
 import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
 import qualified Data.Sequence as Seq
 import Data.Tuple.Extra (dupe, fst3)
+import qualified Data.Vector as V
 import Numeric (showFFloat)
 import StrictList2 (pattern (:!))
 import qualified StrictList2 as SL
@@ -32,10 +32,13 @@ import qualified StrictList2 as SL
 import Control.Concurrent (ThreadId, forkOn, killThread, myThreadId, threadCapability)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO,
     writeTVar)
+-- import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Monad.STM (atomically, retry)
 import Control.Parallel.Strategies (parListChunk, rseq, using)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.IORef.Extra (atomicModifyIORef'_, atomicWriteIORef')
+-- import Data.Primitive.PrimVar (PrimVar, atomicReadInt, fetchAddInt, newPrimVar)
+import qualified Control.Concurrent.Counter as C
 import System.IO.Unsafe (unsafePerformIO)
 
 import Data.Time.Clock.System (SystemTime(..), getSystemTime)
@@ -52,11 +55,11 @@ data SubmoduleOps r m sm    = SubmoduleOps {
     zeroMd      :: sm,                  -- ^ zero module
     plusGens    :: Int -> sm -> [m] -> sm,  -- ^ @plusGens gbTrace@, add any generators
     stdGens     :: Bool -> sm -> Seq.Seq m,     -- ^ \"standard\" generators,
-                    -- ^ @stdGens doFullReduce sm@
+                    -- @stdGens doFullReduce sm@
     bModBy      :: Bool -> sm -> Op1 m  -- ^ @bModBy doFullReduce sm m@
 }
 
-fromGens        :: (SubmoduleOps r m sm) -> Int -> [m] -> sm
+fromGens        :: SubmoduleOps r m sm -> Int -> [m] -> sm
 -- ^ @fromGens smA gbTrace gens@
 fromGens smA gbTrace    = smA.plusGens gbTrace smA.zeroMd
 
@@ -83,6 +86,10 @@ inc ref n       = when (n /= 0) $ atomicModifyIORef'_ ref (+ n)
 
 inc1TVar        :: TVar Int -> IO ()
 inc1TVar var    = atomically $ modifyTVar' var (+ 1)
+
+-- fetchAddInt_        :: PrimMonad m => PrimVar (PrimState m) Int -> Int -> m ()
+fetchAddInt_        :: C.Counter -> Int -> IO ()
+fetchAddInt_ var    = void . C.add var
 
 slPop           :: TVar (SL.List a) -> IO (Maybe a)
 slPop esVar     = atomically $ do
@@ -162,10 +169,11 @@ data GBPolyOps ev term p    = GBPolyOps {
     evTotDeg    :: ev -> Word,
     nEvGroups   :: Int,             -- ^ # of groups of exponents
     evGroup     :: ev -> [Word],    -- ^ totDeg in each group
-    evShow      :: ev -> String,    -- ^ e.g. for debugging or logging
+    evShowPrec  :: ShowPrec ev,     -- ^ e.g. for debugging or logging
     pR          :: Ring p,
+    descVarPs   :: [p],             -- ^ more main variables are listed first
     leadEvNZ    :: p -> ev,         -- ^ the argument must be nonzero
-    monicize    :: Op1 p,           -- ^ the argument must be nonzero, with a unit leading coef
+    monicizeU   :: Op1 p,           -- ^ the argument must be nonzero, with a unit leading coef
     extraSPairs :: ev -> Int -> Word -> [SPair ev],     -- ^ @extraSPairs ev j h@
     sPoly       :: p -> p -> SPair ev -> p, -- ^ @sPoly f g sp@ assumes @f@ and @g@ are monic
     homogDeg0   :: p -> Word,       -- ^ max totDeg, or 0 for the 0 polynomial
@@ -212,9 +220,9 @@ updatePairs (GBPolyOps { evCmp, evDivides, evLCM, evTotDeg, extraSPairs, useSuga
         in  SPair i j (gi.dh + evTotDeg ev) ev
     t               = length gMGis
     tEv             = tGi.ev
-    itMGis          = map (fmap (giLcm tGi)) gMGis    :: [Maybe (GBGenInfo ev)]
-    itmcs           = map (fmap (.ev)) itMGis               :: [Maybe ev]     -- lcms
-    itmcsA          = listArray (0, t - 1) itmcs            :: Array Int (Maybe ev)
+    itMGis          = map (fmap (giLcm tGi)) gMGis      :: [Maybe (GBGenInfo ev)]
+    itmcs           = map (fmap (.ev)) itMGis           :: [Maybe ev]     -- lcms
+    itmcsV          = V.fromListN t itmcs               :: V.Vector (Maybe ev)
     divEq ev c      = assert (evDivides ev c) (evTotDeg ev == evTotDeg c)
     skipIQs         = zipWith skipQ gMGis itmcs     -- newly redundant gens
       where
@@ -224,7 +232,7 @@ updatePairs (GBPolyOps { evCmp, evDivides, evLCM, evTotDeg, extraSPairs, useSuga
     skipIJCs        = SL.filter canSkip ijcs
       where             -- criterion B_ijk
         canSkip (SPair i j _ c)     = i >= 0 && evDivides tEv c && ne i c && ne j c
-        ne i c                      = maybe False (\itc -> not (divEq itc c)) (itmcsA ! i)
+        ne i c                      = maybe False (\itc -> not (divEq itc c)) (itmcsV V.! i)
     itcs            = catMaybes (zipWith (\i -> fmap (giToSp i t)) [0..] itMGis)  :: [SPair ev]
     -- "sloppy" sugar method:
     itcss           = groupBy (cmpEq lcmCmp) (sortBy lcmCmp itcs)
@@ -233,13 +241,12 @@ updatePairs (GBPolyOps { evCmp, evDivides, evLCM, evTotDeg, extraSPairs, useSuga
       where
         firstDiv c  = find (\ itcs1 -> evDivides (itcsToC itcs1) c) itcss
         noDivs c    = divEq (itcsToC (fromJust (firstDiv c))) c
-    gMEvsA          = listArray (0, t - 1) (map (fmap (.ev)) gMGis)
-                        :: Array Int (Maybe ev)
+    gMEvsV          = V.fromListN t (map (fmap (.ev)) gMGis)    :: V.Vector (Maybe ev)
     bestH           = if useSugar then minimumBy hCmp else head
     itcs'           = mapMaybe (\gp -> if any buch2 gp then Nothing else Just (bestH gp)) itcss'
       where             -- criterion F_jk and Buchberger's 2nd criterion (gi and gt rel. prime)
         buch2 (SPair i j _ c)     = assert (j == t)
-            (evTotDeg (fromJust (gMEvsA ! i)) + evTotDeg tEv == evTotDeg c)
+            (evTotDeg (fromJust (gMEvsV V.! i)) + evTotDeg tEv == evTotDeg c)
     addITCs         = SL.fromList
                         (sortBy hEvCmp (extraSPairs tEv t (evTotDeg tEv + tGi.dh) ++ itcs'))
 
@@ -273,8 +280,8 @@ data KGsOps p       = KGsOps {
     gkgsReplace :: EPolyHDeg p -> EPolyHDeg p -> Op1 (GapsKerGens p),
     gkgsReduce      :: GapsKerGens p -> Bool -> p -> (p, Int),
         -- reduce a polynomial, counting steps
-    gkgsTopReduce   :: IO (WithNGens (GapsKerGens p)) -> IORef Int -> EPolyHDeg p ->
-                        IO (WithNGens (EPolyHDeg p)),
+    gkgsTopReduce   :: IO (WithNGens (GapsKerGens p)) -> EPolyHDeg p ->
+                        IO (WithNGens (EPolyHDeg p), Int),
         -- top-reduce a (gh, kN)
     foldReduce      :: forall f. Foldable f => f p -> p -> (Bool, p, Int),
         -- fully reduce by folding (not kgs), except stop and return True if/when a deg > 0
@@ -408,18 +415,17 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
         rHDeg       = if pIsZero q then pHDeg else max pHDeg (homogDeg0 q + gHDeg)
         nSteps      = numTerms q
 
-    gkgsTopReduce           :: IO (WithNGens (GapsKerGens p)) -> IORef Int -> EPolyHDeg p ->
-                                IO (WithNGens (EPolyHDeg p))
+    gkgsTopReduce           :: IO (WithNGens (GapsKerGens p)) -> EPolyHDeg p ->
+                                IO (WithNGens (EPolyHDeg p), Int)
     -- top-reduce a (gh, kN)
-    gkgsTopReduce kerVar nRedStepsRef   = go
+    gkgsTopReduce kerVar    = go 0
       where
-        go ph@(EPolyHDeg p _)   = do
+        go nRedSteps ph@(EPolyHDeg p _)     = do
             WithNGens ker nGens     <- kerVar
             let go1 gh      = do
-                    let (rh, nSteps)    = sugarReduce ph gh
-                    -- @@@ inc nRedStepsRef nSteps
-                    go rh
-            maybe (pure (WithNGens ph nGens)) go1 (gkgsFindReducer p ker)
+                    let (rh, nSteps1)   = sugarReduce ph gh
+                    go (nRedSteps + nSteps1) rh
+            maybe (pure (WithNGens ph nGens, nRedSteps)) go1 (gkgsFindReducer p ker)
 
     foldReduce              :: forall f. Foldable f => f p -> p -> (Bool, p, Int)
     -- fully reduce by folding (not kgs), except stop and return True if/when a deg > 0 quotient
@@ -445,7 +451,7 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
         if pIsZero p then Nothing else
         let pEv     = leadEvNZ p
             mgh     = find (\gh -> evDivides (leadEvNZ gh.p) pEv) ghs
-                -- @@@ improve to find best reducer!?
+                -- @@ improve to find best reducer!?
         in  fmap (sugarReduce ph) mgh
 
 
@@ -461,7 +467,7 @@ gbTSummary          = 0x01  -- ^ a short summary at the end of a run
 gbTProgressChars    = 0x02  -- ^ total degree for each s-poly reduction result
 gbTProgressInfo     = 0x04  -- ^ info when adding or removing a generator
 gbTResults          = 0x08  -- ^ output final generators
-gbTQueues           = 0x10  -- ^ info about threads and their queues ("dprRsS", "rg")
+gbTQueues           = 0x10  -- ^ info about threads and queues ("dprRsS", "rg")
 gbTProgressDetails  = 0x20  -- ^ details relating to selection strategy
 
 printThreadCapabilities     :: String -> [ThreadId] -> IO ()
@@ -488,10 +494,10 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
     let KGsOps { .. }   = kgsOps gbpA
     gkgsRef         <- newTVarIO (WithNGens gbi0.gkgs (length gbi0.gbGhs))
     genHsRef        <- newTVarIO gbi0.gbGhs :: IO (TVar (Seq.Seq (EPolyHDeg p)))
-    nRedStepsRef    <- newIORef 0           :: IO (IORef Int)
-    nSPairsRedRef   <- newIORef 0           :: IO (IORef Int)
+    nRedStepsRef    <- C.new (0 :: Int)
+    nSPairsRedRef   <- C.new (0 :: Int)
     let _gbTQueues1 = gbTrace .&. gbTQueues /= 0 && nCores > 1
-        topReduce   = gkgsTopReduce (readTVarIO gkgsRef) nRedStepsRef
+        topReduce   = gkgsTopReduce (readTVarIO gkgsRef)
         endReduce_n :: Int -> EPolyHDeg p -> IO (WithNGens (EPolyHDeg p))
         reduce2 p
             | pIsZero p     = pure pZero
@@ -499,10 +505,11 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
                 WithNGens (g0kgs@(G1KGs 0 _) :! _) _    <- readTVarIO gkgsRef
                 let (!cd, !t)       = unconsNZ p
                     (!t', !nSteps)  = gkgsReduce (SL.singleton g0kgs) True t
-                -- @@@ inc nRedStepsRef nSteps
+                when (gbTrace .&. gbTSummary /= 0) $ fetchAddInt_ nRedStepsRef nSteps
                 pure (cd `cons` t')
         reduce_n gh = do        -- top reduce by all gens, then fully reduce by 0 sugar gap gens
-            WithNGens (EPolyHDeg g1 h1) kN  <- topReduce gh
+            (WithNGens (EPolyHDeg g1 h1) kN, !nSteps)   <- topReduce gh
+            when (gbTrace .&. gbTSummary /= 0) $ fetchAddInt_ nRedStepsRef nSteps
             g2                              <- reduce2 g1
             endReduce_n kN (EPolyHDeg g2 h1)
         gap0NZ (EPolyHDeg g h)  =
@@ -512,19 +519,19 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
             let kN'     = Seq.length ghs
             if pIsZero gh.p then pure (WithNGens gh kN')
             else if kN >= kN' then
-                pure (WithNGens (EPolyHDeg (monicize gh.p) gh.h) kN)
+                pure (WithNGens (EPolyHDeg (monicizeU gh.p) gh.h) kN)
             else if 3 * nEvGroups * (kN' - kN) > kN' {- @@ tune -} then reduce_n gh
             else
                 let endGHs      = Seq.drop kN ghs
                     mghn        = foldTopReduce1 endGHs gh
                     endRed1 (ph, nSteps)    = do
-                        -- @@@ inc nRedStepsRef nSteps
+                        when (gbTrace .&. gbTSummary /= 0) $ fetchAddInt_ nRedStepsRef nSteps
                         reduce_n ph
                     endRed2 (EPolyHDeg g h) = do
                         let g0s                     = mapMaybe gap0NZ (toList endGHs)
                             (!cd, !t)               = unconsNZ g
                             (!todo, !t', !nSteps)   = foldReduce g0s t
-                        -- @@@ inc nRedStepsRef nSteps
+                        when (gbTrace .&. gbTSummary /= 0) $ fetchAddInt_ nRedStepsRef nSteps
                         p       <- (if todo then reduce2 else pure) (cd `cons` t')
                         endReduce_n kN' (EPolyHDeg p h)
                 in  maybe (endRed2 gh) endRed1 mghn
@@ -556,7 +563,8 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
                 if useSugar && gHDeg /= evTotDeg (leadEvNZ g) then pure ((g1, j) : t') else do
                     let (q, r)  = pR.bDiv True g1 g
                     if pIsZero q then pure ((g1, j) : t') else do
-                        -- @@@ inc nRedStepsRef (numTerms q)
+                        when (gbTrace .&. gbTSummary /= 0) $
+                            fetchAddInt_ nRedStepsRef (numTerms q)
                         when (gbTrace .&. gbTQueues /= 0) $
                             if evTotDeg (leadEvNZ q) == 0 then inc rNTraceRef 1 else putChar 'R'
                         r'          <- if evTotDeg (leadEvNZ q) == 0 then pure r else reduce2 r
@@ -679,7 +687,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
                         show h ++ ", lcm of heads " ++ evShow c
             when (gbTrace .&. gbTProgressDetails /= 0) $ putStrLn s
             traceEvent ("  newG" ++ show (i, j)) $ pure ()
-            -- @@@ inc nSPairsRedRef 1
+            when (gbTrace .&. gbTSummary /= 0) $ fetchAddInt_ nSPairsRedRef 1
             ghs     <- readTVarIO genHsRef
             let f   = if i < 0 then pZero else (Seq.index ghs i).p
             ghn     <- reduce_n (EPolyHDeg (sPoly f (Seq.index ghs j).p sp) h)
@@ -752,9 +760,9 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
     when (gbTrace .&. gbTSummary /= 0) $ do
         t           <- cpuElapsedStr cpuTime0 sysTime0 mRTSStats0
         putStrLn $ "Groebner Basis CPU/Elapsed Times: " ++ t
-        nSPairsRed  <- readIORef nSPairsRedRef
+        nSPairsRed  <- C.get nSPairsRedRef
         putStrLn $ "# SPairs reduced = " ++ show nSPairsRed
-        nRedSteps   <- readIORef nRedStepsRef
+        nRedSteps   <- C.get nRedStepsRef
         putStrLn $ "# reduction steps (quotient terms) = " ++ show nRedSteps
             -- Macaulay just counts top-reduced
         ghs         <- readTVarIO genHsRef
@@ -791,9 +799,10 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
   where
     pZero           = pR.zero
     pIsZero         = pR.isZero
+    evShow          = evShowPrec 0
     pShowEV p
         | pIsZero p         = "0"
-        | numTerms p < 10   = pShow (monicize p)
+        | numTerms p < 10   = pShow (monicizeU p)
         | otherwise         = evShow (leadEvNZ p) ++ "+... (" ++ show (numTerms p) ++ " terms)"
     hEvCmp          = spCmp evCmp useSugar      :: Cmp (SPair ev)
 

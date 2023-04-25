@@ -24,9 +24,9 @@ common deps
     default-language:   GHC2021
     default-extensions: DuplicateRecordFields LambdaCase MonoLocalBinds NoFieldSelectors
                         OverloadedRecordDot PatternSynonyms RecordWildCards
-    other-extensions:   DataKinds, Strict
+    other-extensions:   DataKinds, Strict, ViewPatterns
     ghc-options:        -Wall -Wcompat -Wno-incomplete-uni-patterns -feager-blackholing
-    build-depends:      base >= 4.9 && < 5, extra >= 1.6 && < 1.8, containers == 0.6.*
+    build-depends:      base >= 4.9 && < 5, containers == 0.6.*, extra >= 1.6 && < 1.8
 
 library
     import:             deps
@@ -34,29 +34,33 @@ library
     exposed-modules:
         Math.Algebra.General.Algebra
         Math.Algebra.Category.Category
-        Math.Algebra.Commutative.Field.ZModP32
+        Math.Algebra.Commutative.Field.ZModPW
         Math.Algebra.Linear.SparseVector
         Math.Algebra.General.SparseSum
         Math.Algebra.Commutative.UPoly
         Math.Algebra.Commutative.GroebnerBasis
         Math.Algebra.Commutative.EPoly
+        Math.Algebra.Commutative.VMPoly
         Math.Algebra.Commutative.BinPoly
         Math.Algebra.Commutative.GBDemo
         Math.Prob.Random
         StrictList2
 
     build-depends:
-        array == 0.5.*,
-        -- constraints >= 0.11 && < 0.14,
-            -- note 'implied' added in 0.13
+        -- fmt >= 0.4,
         mod,
         parallel >= 3.2,
+        poly >= 0.5.1, finite-typelits, vector-sized,
+        -- primitive >= 0.8,
+            -- @@ replace atomic-counter with primitive 0.8 when vector-sized allows it
+        atomic-counter,
         random >= 1.2.1 && < 1.3,
-        -- reflection >= 2.1.6 && < 2.2,
         stm >= 2.4 && < 2.6,
         -- strict >= 0.4,
         strict-list,
-        time >= 1.9.3 && < 2
+        -- text,
+        time >= 1.9.3 && < 2,
+        vector
 
     hs-source-dirs:     src
 
@@ -82,8 +86,10 @@ test-suite calculi-test
 
     other-modules:
         Math.Algebra.General.TestAlgebra
-        Math.Algebra.Commutative.Field.TestZModP32
+        Math.Algebra.Commutative.Field.TestZModPW
+        Math.Algebra.General.TestSparseSum
         Math.Algebra.Commutative.TestUPoly
+        Math.Algebra.Commutative.TestGroebnerBasis
         Math.Algebra.Commutative.TestEPoly
         Math.Algebra.Commutative.TestBinPoly
 

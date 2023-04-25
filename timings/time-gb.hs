@@ -10,6 +10,7 @@ import Data.Time.Clock (getCurrentTime)
 import Data.Time.LocalTime (getCurrentTimeZone, localDay, utcToLocalTime)
 
 import Data.Version (showVersion)
+import System.Environment (getArgs)
 import System.Info (arch, compilerName, os)
 import System.Info (fullCompilerVersion)
 
@@ -25,6 +26,7 @@ import System.IO (hFlush, stderr, stdout)
 main    :: IO ()
 main    = do
     nCores      <- getNumCapabilities
+    args        <- getArgs
     
     now         <- getCurrentTime
     tz          <- getCurrentTimeZone
@@ -36,9 +38,7 @@ main    = do
     
     doneMVar    <- newEmptyMVar
     _           <- forkOn 0 $ do
-        -- for gbTrace bits, see Math/Algebra/Commutative/GroebnerBasis.hs:
-        let gbTrace     = gbTSummary -- @@@ .|. gbTQueues
-        mapM_ (\ex -> ex nCores gbTrace) [katsura8, cyclic7, jason210]
+        gbDemo nCores args
         hFlush stdout
         hFlush stderr
         putMVar doneMVar ()

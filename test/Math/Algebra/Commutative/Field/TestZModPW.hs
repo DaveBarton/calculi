@@ -1,35 +1,38 @@
-{- |  This module tests the "ZModP32" module.  -}
+{- |  This module tests the "ZModPW" module.  -}
 
-module Math.Algebra.Commutative.Field.TestZModP32 (
-    zpwTestOps, testZModP32
+module Math.Algebra.Commutative.Field.TestZModPW (
+    zpwTestOps, testZModPW
 ) where
 
 import Math.Algebra.General.Algebra hiding (assert)
-import Math.Algebra.Commutative.Field.ZModP32
+import Math.Algebra.Commutative.Field.ZModPW
 
 import Math.Algebra.General.TestAlgebra
 
-import Hedgehog ((===), annotateShow, assert)
+import Hedgehog ((===), diff)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
-import Data.Mod.Word (Mod)
+import Data.Mod.Word (unMod)
 import GHC.TypeNats (KnownNat, natVal)
 
 
 zpwTestOps              :: forall p. KnownNat p => TestOps (Mod p)
 -- ^ caller shows @p@
-zpwTestOps              = TestOps tShow gen (===)
+zpwTestOps              = TestOps (const tShow) tCheck gen (==)
   where
     (zpField, balRep)   = zzModPW @p
     tShow           = show . balRep
-    gen             = fmap zpField.fromZ (Gen.integral (Range.constantFrom 0 (- lim) lim))
+    tCheck notes x  = tCheckBool (show x : notes) (unMod x < pW)
+    gen             = zpField.fromZ <$> Gen.integral (Range.constantFrom 0 (- lim) lim)
     p               = fromIntegral (natVal (Proxy :: Proxy p))
+    pW              = fromIntegral p :: Word
     lim             = p `quot` 2
+
 
 test1                   :: Integer -> IO Bool
 test1 p                 = case someNatVal (fromInteger p) of
- SomeNat (Proxy :: Proxy p)     -> checkGroup ("ZModP32 " ++ show p) props
+ SomeNat (Proxy :: Proxy p)     -> checkGroup ("ZModPW " ++ show p) props
   where
     (zpField, balRep)   = zzModPW @p
     zpT             = zpwTestOps @p
@@ -44,12 +47,11 @@ test1 p                 = case someNatVal (fromInteger p) of
     balRepIsSmall   = property $ do
         x       <- genVis zpT
         let n   = balRep x
-        annotateShow n
-        assert $ abs n <= lim
+        diff (abs n) (<=) lim
         -- if p == 2, could also specify & check (balRep zpField.one), i.e. 1 or -1
 
-testZModP32             :: IO Bool
-testZModP32             = checkAll $ map test1 primes
+testZModPW              :: IO Bool
+testZModPW              = checkAll $ map test1 primes
   where
     e2 n            = 2 ^ (n :: Int)
     primes          =

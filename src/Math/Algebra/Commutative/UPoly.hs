@@ -90,9 +90,4 @@ upOps cR        = UPolyOps { .. }
 
 upShowPrec      :: String -> ShowPrec c -> ShowPrec (UPoly c)
 -- ^ varS prec > '^'
-upShowPrec varS = ssShowPrec dSP
-  where
-    dSP _prec d = case d of
-        0   -> "1"
-        1   -> varS
-        _   -> varS ++ '^' : show d
+upShowPrec varS = ssShowPrec (varPowShowPrec varS)

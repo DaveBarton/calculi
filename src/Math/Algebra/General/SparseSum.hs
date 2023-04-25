@@ -7,17 +7,18 @@
 -}
 
 module Math.Algebra.General.SparseSum (
-    SSTerm, SparseSum, pattern SSNZ, pattern SSZero, SparseSumUniv,
+    SSTerm(..), SparseSum, pattern SSNZ, pattern SSZero, SparseSumUniv,
     ssIsZero, ssDegNZ, ssHeadCoef, ssTail, sparseSum, ssCons, ssUnconsNZ,
     ssLexCmp, ssDegCmp,
     ssLead, ssMapC, ssMapNZFC, ssShift, ssShiftMapC, ssShiftMapNZFC, ssFoldr, ssNumTerms,
     ssAGUniv, ssDotWith, SSOverRingOps(..), ssOverRingOps,
-    ssShowPrec
+    ssTermShowPrec, ssShowPrec, varPowShowPrec
 ) where
 
 import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
 
+import Data.Foldable (toList)
 import StrictList2 (pattern (:!))
 import qualified StrictList2 as SL
 
@@ -177,8 +178,8 @@ ssDotWith dCmp f (AbelianGroup { plus, zero })    = dot
 data SSOverRingOps c d  = SSOverRingOps {
     nzcTimes        :: c -> Op1 (SparseSum c d),    -- ^ the @c@ is nonzero
     cTimes          :: c -> Op1 (SparseSum c d),
-    monicize        :: Op1 (SparseSum c d),
-        -- ^ @(monicize s)@ requires that @s@ is nonzero, and its leading coefficient is a unit
+    monicizeU       :: Op1 (SparseSum c d),
+        -- ^ @(monicizeU s)@ requires that @s@ is nonzero, and its leading coefficient is a unit
     timesNZC        :: c -> Op1 (SparseSum c d),    -- ^ the @c@ is nonzero
     timesC          :: c -> Op1 (SparseSum c d),
     ssTimesNZMonom  :: Op2 d -> SparseSum c d -> d -> c -> SparseSum c d,
@@ -196,7 +197,7 @@ ssOverRingOps cR@(Ring { .. })  = SSOverRingOps { .. }
         | hasEIBit rFlags NoZeroDivisors    = \c -> ssMapNZFC (c `times`)
         | otherwise                         = \c -> ssMapC isZero (c `times`)
     cTimes c s  = if isZero c then SSZero else nzcTimes c s
-    monicize s  =
+    monicizeU s =
         let c       = ssHeadCoef s  -- check for c = 1 for speed
         in  if rIsOne cR c then s else ssMapNZFC (rInv cR c `times`) s
     timesNZC
@@ -213,8 +214,15 @@ ssOverRingOps cR@(Ring { .. })  = SSOverRingOps { .. }
         sToTimesDC      = ssTimesNZMonom dOp2
 
 
-ssShowPrec      :: ShowPrec d -> ShowPrec c -> ShowPrec (SparseSum c d)
-ssShowPrec dSP cSP prec x   =
-    let s = ssFoldr (\ c d st -> plusS (timesS (cSP multPrec c) (dSP multPrec d)) st) "0" x
-    in  if prec > addPrec && not (ssIsZero x) && not (ssIsZero (ssTail x)) || prec > multPrec
-            then '(':s++")" else s
+ssTermShowPrec                  :: ShowPrec d -> ShowPrec c -> ShowPrec (SSTerm c d)
+ssTermShowPrec dSP cSP prec cd  = timesSPrec cSP dSP prec cd.c cd.d
+
+ssShowPrec              :: ShowPrec d -> ShowPrec c -> ShowPrec (SparseSum c d)
+ssShowPrec dSP cSP prec = sumSPrec (ssTermShowPrec dSP cSP) prec . toList
+
+varPowShowPrec          :: (Integral d, Show d) => String -> ShowPrec d
+-- ^ varS prec > '^'
+varPowShowPrec varS prec d  = case d of
+    0   -> "1"
+    1   -> varS
+    _   -> parensIf (exptPrec < prec) (varS ++ '^' : show d)
