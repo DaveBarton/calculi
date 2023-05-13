@@ -1,4 +1,12 @@
 packages: ./*.cabal
 
-tests: True
-    -- sometimes needed to get cabal's solver to pick a plan that works for hedgehog
+-- tests: True
+    -- sometimes needed to get cabal's solver to pick a plan that works for hedgehog;
+    -- unnec?: https://cabal.readthedocs.io/en/stable/cabal-project.html#cfg-field-tests
+
+package poly
+    ghc-options:    -fspecialise-aggressively
+    optimization:   2
+
+package mod
+    flags: -semirings

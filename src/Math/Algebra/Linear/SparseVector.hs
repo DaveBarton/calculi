@@ -76,7 +76,7 @@ svAGUniv (AbelianGroup _cFlags eq plus _zero isZero neg)    = UnivL svAG (TgtArr
     iCToSV          = pICToSV isZero
     univF tAG (TgtArrsF iCToT)  = svFoldr' tAG.plus tAG.zero iCToT
 
-data SVCoordOps c   = SVCoordOps {
+data SVCoordOps c   = SVCoordOps {  -- @@ change to a class or toplevel functions
     coord           :: Int -> SparseVector c -> c,
     replaceC        :: Int -> c -> Op1 (SparseVector c)
 }
@@ -90,7 +90,7 @@ svDotWith       :: (c -> c1 -> c2) -> AbelianGroup c2 -> SparseVector c -> Spars
 svDotWith f (AbelianGroup { plus, zero }) (SV m) (SV m')    =
     IM.foldr' plus zero (IM.intersectionWith f m m')
 
-data SVOverRingOps c    = SVOverRingOps {
+data SVOverRingOps c    = SVOverRingOps {  -- @@ change to a class or toplevel functions
     nzcTimes        :: c -> Op1 (SparseVector c),   -- ^ the @c@ is nonzero
     cTimes          :: c -> Op1 (SparseVector c),
     monicizeU       :: Int -> Op1 (SparseVector c),
@@ -143,7 +143,7 @@ scmPDiag cIsZero n c    = if cIsZero c then svZero else
 scmCol          :: SparseColsMat c -> Int -> SparseVector c
 scmCol mat j    = IM.findWithDefault svZero j mat.im
 
-data SCMOps c   = SCMOps {
+data SCMOps c   = SCMOps {  -- @@ change to a class or toplevel functions?
     vModR           :: ModR c (SparseVector c),
     scmTimesV       :: SparseColsMat c -> Op1 (SparseVector c),
     scmRing         :: Ring (SparseColsMat c)
@@ -158,7 +158,7 @@ scmOps cR maxN  = SCMOps { .. }
     vOverCRingA     = svOverRingOps cR
     vBDiv doFull v@(SV vm) (SV wm)  = fromMaybe (cR.zero, v) $ do
         (i, wc)     <- IM.lookupMin wm
-        vc          <- if doFull then vm IM.!? i else
+        vc          <- if doFull.b then vm IM.!? i else
                         do (vi, c) <- IM.lookupMin vm; pureIf (vi == i) c
         let (q, cr) = cR.bDiv doFull vc wc
         pureIf (not (cIsZero q))    -- for speed

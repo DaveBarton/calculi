@@ -18,14 +18,13 @@ import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
 
 
 demoOps             :: Int -> StdEvCmp ->
-                        (GBPolyOps EV58 EV58 (BinPoly EV58), BPOtherOps EV58 Word64)
-demoOps nVars sec   = bp58Ops evCmp isGraded descVarSs useSugar
+                        (GBPolyOps EV58 (BinPoly EV58), BPOtherOps EV58 Word64)
+demoOps nVars sec   = bp58Ops evCmp isGraded descVarSs (UseSugar False)
   where
     evCmp           = evCmp58 sec
     isGraded        = secIsGraded sec
     xVarSs          = ['X' : show n | n <- [1 :: Int ..]]
     descVarSs       = take nVars (map (: []) ['a' .. 'z'] ++ xVarSs)
-    useSugar        = False
 
 bpDemo                  :: Int -> Int -> IO ()
 bpDemo nCores gbTrace   = do
@@ -40,18 +39,17 @@ bpDemo nCores gbTrace   = do
     -- To run a demo, first set the "@@" lines below the way you want.
 
     sec             = LexCmp   -- @@ LexCmp, GrLexCmp, or GrRevLexCmp
-    (gbpA@(GBPolyOps { pR, numTerms, pShow }), bpoA@(BPOtherOps { pRead }))
-                    = demoOps nVars sec
+    (gbpA@(GBPolyOps { pR, pShow }), bpoA@(BPOtherOps { pRead }))   = demoOps nVars sec
     smA@(SubmoduleOps { .. })   = gbiSmOps gbpA nCores
     
     initGensL       = map (map pRead) initGenSsL
     gbIdeal         = fromGens smA gbTrace (initGensL !! 1)
-    reducedGBGensSeq    = stdGens True gbIdeal
+    reducedGBGensSeq    = stdGens (IsDeep True) gbIdeal
     reducedGBGensL      = toList reducedGBGensSeq
     toReduce        = initGensL !! 0                -- @@ more 0-based indexing, sender
-    shorter p q     = if numTerms p <= numTerms q then p else q
+    shorter p q     = if length p <= length q then p else q
     plus1 arg@(sm, gs) g    =
-        let g1  = smA.bModBy True sm g
+        let g1  = smA.bModBy (IsDeep True) sm g
         in  if pR.isZero g1 then arg else (smA.plusGens 0 sm [g1], shorter g1 g : gs)
     (_recSm1, revSend)  = foldl' plus1 (gbIdeal, []) toReduce
     

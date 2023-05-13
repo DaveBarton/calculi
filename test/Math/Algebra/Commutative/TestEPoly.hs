@@ -58,7 +58,7 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
     ts              = take nVars (unfoldr (\b -> Just (b, nextT b)) (nToT 12345))
     epToT           = epUnivF cR (RingTgtXs id ts)
     descVarSs       = map (: []) (take nVars ['a' .. 'z'])
-    useSugar        = True  -- @@@
+    useSugar        = UseSugar True     -- @@@
     gbpA@(GBPolyOps { descVarPs, pShow })   =
         epGBPOps evCmp (secIsGraded sec) cR descVarSs (const cT.tShow) useSugar
     evT             = evTestOps evCmp descVarSs (Range.exponential 1 200_000)

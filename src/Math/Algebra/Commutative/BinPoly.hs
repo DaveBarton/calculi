@@ -25,7 +25,7 @@ module Math.Algebra.Commutative.BinPoly (
 ) where
 
 import Math.Algebra.General.Algebra
-import Math.Algebra.Commutative.GroebnerBasis (SPair(..), GBPolyOps(..), StdEvCmp(..))
+import Math.Algebra.Commutative.GroebnerBasis
 
 import Control.Monad.Extra (pureIf)
 import Data.Bits (bit, complement, countLeadingZeros, popCount, testBit, unsafeShiftL,
@@ -87,6 +87,19 @@ evCmp58             = \case
 type BinPoly ev     = SL.List ev
 -- ^ nonzero terms, in decreasing order
 
+instance GBEv EV58 where
+    evDivides _nVars v w    = v.w64 .&. mask58 .&. w.w64 == v.w64 .&. mask58
+    {-# INLINE evDivides #-}
+    evLCM _nVars v w    = fromBits58Only (v.w64 .|. w.w64)
+    {-# INLINE evLCM #-}
+    evTotDeg            = totDeg58
+    {-# INLINE evTotDeg #-}
+
+instance GBPoly EV58 EV58 SL.List (BinPoly EV58) where
+    leadEvNZ (ev :! _)  = ev
+    leadEvNZ SL.Nil     = undefined
+    {-# INLINE leadEvNZ #-}
+
 -- | For Boolean logic, we treat 1 as True and 0 as False.
 data BPOtherOps ev vals     = BPOtherOps {
     nVars           :: Int,
@@ -109,22 +122,19 @@ bpSortCancel evCmp evs  = cancelRev (sortBy evCmp (SL.toListReversed evs)) SL.Ni
     cancelRev [v] r         = v :! r
     cancelRev [] r          = r
 
-bp58Ops                         :: Cmp EV58 -> Bool -> [String] -> Bool ->
-                                    (GBPolyOps EV58 EV58 (BinPoly EV58), BPOtherOps EV58 Word64)
+bp58Ops                         :: Cmp EV58 -> IsGraded -> [String] -> UseSugar ->
+                                    (GBPolyOps EV58 (BinPoly EV58), BPOtherOps EV58 Word64)
 -- ^ In @bp58Ops evCmp isGraded descVarSs useSugar@, @descVarSs@ lists more main variables
 -- first.
 bp58Ops evCmp isGraded descVarSs useSugar   = assert (nVars <= 58)
-    (GBPolyOps { monicizeU = id, numTerms = length, .. }, BPOtherOps { .. })
+    (GBPolyOps { monicizeU = id, .. }, BPOtherOps { .. })
   where
     nVars               = length descVarSs
     
     evOne               = EV58 0
-    evLCM v w           = fromBits58Only (v.w64 .|. w.w64)
-    evTimes             = evLCM
-    evDivides v w       = v.w64 .&. mask58 .&. w.w64 == v.w64 .&. mask58
+    evTimes             = evLCM nVars
     evMaybeQuo          :: EV58 -> EV58 -> Maybe EV58
-    evMaybeQuo v w      = pureIf (evDivides w v) (fromBits58Only (v.w64 - w.w64))
-    evTotDeg            = totDeg58
+    evMaybeQuo v w      = pureIf (evDivides nVars w v) (fromBits58Only (v.w64 - w.w64))
     n4s                 = quot (nVars + 3) 4
     nEvGroups           = n4s * max (n4s - 1) 1
     evGroup v           = reverse [5 * pc4 i + pc4 j
@@ -148,27 +158,25 @@ bp58Ops evCmp isGraded descVarSs useSugar   = assert (nVars <= 58)
                 EQ  -> go r        t  u
         go r xs           SL.Nil        = SL.prependReversed r xs
         go r SL.Nil       ys            = SL.prependReversed r ys
-    bpAG                = abelianGroup (==) bpPlus SL.Nil SL.null id
+    bpAG                = abelianGroup (==) bpPlus SL.Nil null id
     bpRFlags            = eiBits [NotZeroRing, IsCommutativeRing]
     bpFromZ n           = if even (n :: Integer) then SL.Nil else SL.singleton evOne
     bpTimesEv bp ev     = if ev == evOne then bp else   -- for speed
-        let (rts, rfs)      = SL.partitionReversed (evDivides ev) bp  -- for speed
+        let (rts, rfs)      = SL.partitionReversed (evDivides nVars ev) bp  -- for speed
         in  bpPlus (SL.reverse rts) (bpSortCancel evCmp (fmap (evTimes ev) rfs))
     bpTimes vs ws       = bpSortCancel evCmp (SL.explodeReversed (\w -> fmap (evTimes w) vs) ws)
     bpDiv  doFull x (w :! u)    = go SL.Nil SL.Nil x
       where
         go qRev rRev (v :! t)
-            | Just qv   <- evMaybeQuo v w     =
+            | Just qv   <- evMaybeQuo v w           =
                 go (qv :! qRev) rRev (t `bpPlus` bpTimesEv u qv)
-            | doFull && evCmp v w == GT         = go qRev (v :! rRev) t
+            | doFull.b && evCmp v w == GT  = go qRev (v :! rRev) t
         go qRev rRev r                          = (SL.reverse qRev, SL.prependReversed rRev r)
     bpDiv _doFull x SL.Nil      = (SL.Nil, x)
     pR                  = Ring bpAG bpRFlags bpTimes (bpFromZ 1) bpFromZ bpDiv
     evBit i             = EV58 (0x0400_0000_0000_0000 .|. bit i)    -- single bit
     descVarPs           = map (SL.singleton . evBit) varBitJsDesc
     
-    leadEvNZ (ev :! _)  = ev
-    leadEvNZ SL.Nil     = undefined
     varBitJsAsc         = reverse varBitJsDesc
     extraSPairs v j h   = [SPair (i - nVars) j (h + 1) v | i <- varBitJsAsc, testBit v.w64 i]
     sPoly _f g (SPair  i _j _h _m)  | i < 0     = g `bpTimesEv` fromBits58 (bit (i + nVars))
@@ -176,11 +184,8 @@ bp58Ops evCmp isGraded descVarSs useSugar   = assert (nVars <= 58)
       where
         mult1 (v :! t)      = bpTimesEv t (fromJust (evMaybeQuo m v))
         mult1 _             = undefined
-    homogDeg0           = if isGraded then SL.match 0 (\v _ -> evTotDeg v) else
+    homogDeg0           = if isGraded.b then SL.match 0 (\v _ -> evTotDeg v) else
         foldl' (\d v -> max d (evTotDeg v)) 0
-    cons                = (:!)
-    unconsNZ (v :! t)   = (v, t)
-    unconsNZ SL.Nil     = undefined
     pShow               = pShowPrec 0
     
     evMainBit (EV58 w)  | isRev     = fromBits58 (w .&. (- w))
@@ -193,7 +198,7 @@ bp58Ops evCmp isGraded descVarSs useSugar   = assert (nVars <= 58)
     x ∨ y               = bpNot (bpNot x ∧ bpNot y)
     pAt p bs            = foldl' (\b v -> b /= evAt v bs) False p
     pShowPrec prec      = sumSPrec evShowPrec prec . toList
-    pRead               = (\ [(x,"")] -> x) . polynomReads pR (zip descVarSs descVarPs) -- @@ improve
+    pRead               = readSToRead $ polynomReads pR (zip descVarSs descVarPs)
 
 bpCountZeros        :: BPOtherOps EV58 Word64 -> [BinPoly EV58] -> Int
 -- ^ @1 <= nVars <= 58@; fastest if the first polynomials are short or have few zeros

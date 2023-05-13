@@ -10,11 +10,11 @@
 -}
 
 module StrictList2 (
-    module StrictList, pattern (:!), null, headMaybe, singleton, fromList, zipWithReversed,
+    module StrictList, pattern (:!), headMaybe, singleton, fromList, zipWithReversed,
     partitionReversed, eqBy, lexCmpBy, mergeBy, minusSorted, insertBy, deleteBy
 ) where
 
-import Prelude hiding (null, reverse, take, drop, filter, takeWhile, dropWhile, span, break)
+import Prelude hiding (reverse, take, drop, filter, takeWhile, dropWhile, span, break)
 import StrictList hiding (head, tail, last, init)   -- these 4 functions have nonstandard
     -- definitions when applied to the empty list
 
@@ -29,11 +29,6 @@ pattern h :! t      = Cons h t
 {-# COMPLETE (:!), Nil #-}
 
 
-null                :: List a -> Bool
--- ^ faster than 'null' from 'Foldable' ("StrictList" should override that)
-null (_ :! _)       = False
-null Nil            = True
-
 headMaybe           :: List a -> Maybe a
 headMaybe (h :! _)  = Just h
 headMaybe Nil       = Nothing
@@ -42,6 +37,7 @@ singleton           :: a -> List a
 singleton e         = e :! Nil
 
 fromList            :: [a] -> List a
+-- ^ 'fromListReversed' is faster, so better when convenient
 fromList            = reverse . fromListReversed
 
 zipWithReversed     :: (a -> b -> c) -> List a -> List b -> List c

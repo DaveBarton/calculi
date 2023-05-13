@@ -1,4 +1,4 @@
-cabal-version:      2.4
+cabal-version:      3.0
 name:               calculi
 version:            0.1.0.0
 synopsis:           Fast parallel calculations in pure mathematics, e.g. Gröbner Bases
@@ -13,25 +13,26 @@ license:            BSD-3-Clause
 license-file:       LICENSE
 author:             Dave Barton
 maintainer:         dbarton@mathscribe.com
-copyright:          Copyright (c) David R. Barton, 2022
+copyright:          Copyright (c) David R. Barton, 2022-2023
 
 category:           Math
 extra-source-files: CHANGELOG.md dirs.txt timings/timings.txt
 
-tested-with:        ghc ==9.2.4 ghc ==9.4.4
+tested-with:        ghc ==9.2.4 ghc ==9.4.4 ghc ==9.6.1
 
 common deps
     default-language:   GHC2021
     default-extensions: DuplicateRecordFields LambdaCase MonoLocalBinds NoFieldSelectors
                         OverloadedRecordDot PatternSynonyms RecordWildCards
-    other-extensions:   DataKinds, Strict, ViewPatterns
-    ghc-options:        -Wall -Wcompat -Wno-incomplete-uni-patterns -feager-blackholing
-    build-depends:      base >= 4.9 && < 5, containers == 0.6.*, extra >= 1.6 && < 1.8
+    other-extensions:   CPP, DataKinds, FunctionalDependencies, Strict, ViewPatterns
+    ghc-options:        -Wall -Wcompat -feager-blackholing
+    build-depends:      base >= 4.16 && < 5, containers == 0.6.*, extra >= 1.6 && < 1.8
 
 library
     import:             deps
     
     exposed-modules:
+        Data.Stack
         Math.Algebra.General.Algebra
         Math.Algebra.Category.Category
         Math.Algebra.Commutative.Field.ZModPW
@@ -49,8 +50,8 @@ library
     build-depends:
         -- fmt >= 0.4,
         mod,
-        parallel >= 3.2,
-        poly >= 0.5.1, finite-typelits, vector-sized,
+        parallel == 3.2.*,
+        poly >= 0.5.1, deepseq, finite-typelits, vector-sized,
         -- primitive >= 0.8,
             -- @@ replace atomic-counter with primitive 0.8 when vector-sized allows it
         atomic-counter,
@@ -80,9 +81,8 @@ executable bp-demo
 test-suite calculi-test
     import:             deps
     
-    type:               exitcode-stdio-1.0
-    
     main-is:            calculi-test.hs
+    type:               exitcode-stdio-1.0
 
     other-modules:
         Math.Algebra.General.TestAlgebra
@@ -103,9 +103,8 @@ test-suite calculi-test
 benchmark time-gb
     import:             deps
     
-    type:               exitcode-stdio-1.0
-    
     main-is:            time-gb.hs
+    type:               exitcode-stdio-1.0
 
     -- Modules included in this executable, other than Main.
     -- other-modules:
@@ -114,3 +113,11 @@ benchmark time-gb
 
     hs-source-dirs:     timings
     ghc-options:        -threaded -rtsopts "-with-rtsopts=-N -A64m -s"
+
+benchmark bench
+    import:             deps
+    main-is:            bench.hs
+    type:               exitcode-stdio-1.0
+    build-depends:      calculi, deepseq, poly, strict, tasty, tasty-bench, vector, vector-sized
+    hs-source-dirs:     timings
+    ghc-options:        -rtsopts -with-rtsopts=-T

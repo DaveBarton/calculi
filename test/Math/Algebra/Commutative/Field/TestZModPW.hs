@@ -30,10 +30,10 @@ zpwTestOps              = TestOps (const tShow) tCheck gen (==)
     lim             = p `quot` 2
 
 
-test1                   :: Integer -> IO Bool
-test1 p                 = case someNatVal (fromInteger p) of
- SomeNat (Proxy :: Proxy p)     -> checkGroup ("ZModPW " ++ show p) props
+test1                   :: SomeNat -> IO Bool
+test1 (SomeNat pProxy@(Proxy :: Proxy p))   = checkGroup ("ZModPW " ++ show p) props
   where
+    p               = fromIntegral $ natVal pProxy  :: Integer
     (zpField, balRep)   = zzModPW @p
     zpT             = zpwTestOps @p
     fromZ           = zpField.fromZ
@@ -51,7 +51,7 @@ test1 p                 = case someNatVal (fromInteger p) of
         -- if p == 2, could also specify & check (balRep zpField.one), i.e. 1 or -1
 
 testZModPW              :: IO Bool
-testZModPW              = checkAll $ map test1 primes
+testZModPW              = checkAll $ test1 . someNatVal <$> primes
   where
     e2 n            = 2 ^ (n :: Int)
     primes          =

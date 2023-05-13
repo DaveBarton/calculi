@@ -4,7 +4,7 @@ module Math.Algebra.Commutative.TestGroebnerBasis (
     groebnerBasisProps
 ) where
 
--- import Math.Algebra.General.Algebra hiding (assert)
+import Math.Algebra.General.Algebra hiding (assert)
 import Math.Algebra.Commutative.GroebnerBasis
 
 import Math.Algebra.General.TestAlgebra
@@ -17,10 +17,11 @@ import Data.Foldable (toList)
 import qualified Data.Sequence as Seq
 
 
-groebnerBasisProps      :: GBPolyOps ev term p -> ShowGen [p] -> ([p] -> Int) ->
-                            [(PropertyName, Property)]
+groebnerBasisProps      :: GBPoly ev term pf p => GBPolyOps ev p -> ShowGen [p] ->
+                            ([p] -> Int) -> [(PropertyName, Property)]
 -- currently checks original gens & s-pairs reduce to 0 using 'bModBy'; TODO add a bDivBy and
 -- test it & bModBy, and test the stdGens are in the original ideal
+{-# INLINABLE groebnerBasisProps #-}
 groebnerBasisProps gbpA@(GBPolyOps { .. }) halfInitGensSG countZeros    =
     [("Groebner Bases", gbProp)]
   where
@@ -30,14 +31,14 @@ groebnerBasisProps gbpA@(GBPolyOps { .. }) halfInitGensSG countZeros    =
       where
         f   = Seq.index gs i
         g   = Seq.index gs j
-        m   = evLCM (leadEvNZ f) (leadEvNZ g)
+        m   = evLCM nVars (leadEvNZ f) (leadEvNZ g)
     gbTrace         = 0
     gbProp          = withTests 10 $ property $ do
         gens0           <- genVis gsSG11
         gens1           <- genVis gsSG11
         nCores          <- forAll (scale11 (Gen.int (Range.linear 1 4)))
-        doRedGens       <- forAll (scale11 Gen.bool)
-        doFullMod       <- forAll (scale11 Gen.bool)
+        doRedGens       <- forAll (scale11 (IsDeep <$> Gen.bool))
+        doFullMod       <- forAll (scale11 (IsDeep <$> Gen.bool))
         let smA@(SubmoduleOps { .. })   = gbiSmOps gbpA nCores
             gbIdeal         = plusGens gbTrace (fromGens smA gbTrace gens0) gens1
             gbGens          = stdGens doRedGens gbIdeal

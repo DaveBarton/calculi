@@ -1,4 +1,4 @@
-{-# LANGUAGE DataKinds, Strict #-}
+{-# LANGUAGE CPP, DataKinds, Strict #-}
 
 {- |  This module defines the most common types of algebras, and simple functions using them.
     
@@ -36,7 +36,10 @@
 
 module Math.Algebra.General.Algebra (
     -- * Extend "Prelude"
-    foldl', liftA2,
+    foldl',
+#if ! MIN_VERSION_base(4, 18, 0)
+    liftA2,
+#endif
     
     -- * Common function types
     -- ** Pred
@@ -78,6 +81,7 @@ module Math.Algebra.General.Algebra (
     RingFlag(NotZeroRing, IsCommutativeRing, NoZeroDivisors, IsInversesRing), RingFlags,
     integralDomainFlags, divisionRingFlags, fieldFlags,
     -- ** Ring
+    IsDeep(IsDeep, b),
     Ring(Ring, ag, rFlags, times, one, fromZ, bDiv),
     rIsOne, exactQuo, nearQuo, smallRem, rInv, divides,
     rExpt, rSumL', rSumR, rProductL', rProductR,
@@ -86,7 +90,7 @@ module Math.Algebra.General.Algebra (
     
     -- * Modules and R-algebras
     -- ** Module, RMod, ModR
-    Module(Module, ag, scale, bDiv), RMod, ModR,
+    Module(Module, ag, scale, bDiv), IsLeftMod(IsLeftMod, b), RMod, ModR,
     pairMd, mdModF,
     -- ** RAlg
     RAlg(..),
@@ -104,15 +108,17 @@ module Math.Algebra.General.Algebra (
     Prec, applPrec, exptPrec, multPrec, addPrec, ShowPrec,
     parensIf, plusSPrec, sumSPrec, timesSPrec, productSPrec,
     trimStart,
-    zzReads, agReads, rngReads, polynomReads
+    readSToRead, zzReads, agReads, rngReads, polynomReads
 ) where
 
 import GHC.Records
 
+#if ! MIN_VERSION_base(4, 18, 0)
 import Control.Applicative (liftA2)     -- unnecesary in base 4.18+, since in Prelude
+#endif
 import Control.Exception (assert)
 import Data.Bits (Bits, FiniteBits, (.&.), (.|.), bit, finiteBitSize, testBit, zeroBits)
-import Data.Char (isDigit)
+import Data.Char (isDigit, isSpace)
 import Data.Function (on)
 import Data.Functor.Classes (liftCompare, liftEq)
 import Data.List (foldl', stripPrefix)
@@ -388,6 +394,8 @@ fieldFlags          = divisionRingFlags .|. eiBit IsCommutativeRing
 
 -- ** Ring
 
+newtype IsDeep      = IsDeep { b :: Bool }  deriving Show
+
 {- | A @(Ring ag (*~) one fromZ bDiv)@ must satisfy the axioms below. Examples include the
     integers ℤ, and other rings of algebraic numbers, polynomials, n x n matrices, etc. -}
 data Ring a         = Ring {
@@ -397,8 +405,8 @@ data Ring a         = Ring {
         -- normally associative
     one     :: a,           -- ^ @(one *.) = (*. one) = id@
     fromZ   :: Integer -> a,    -- ^ the unique ring homomorphism from Z to this ring
-    bDiv    :: Bool -> a -> a -> (a, a)     {- ^ @bDiv doFull y m = (q, r) => y = m*q + r@ and
-        @r@'s \"size\" is (attempted to be) minimized. If @doFull@, then all of @r@ is
+    bDiv    :: IsDeep -> a -> a -> (a, a)    {- ^ @bDiv doFull y m = (q, r) => y = m*q + r@ and
+        @r@'s \"size\" is (attempted to be) minimized. If @doFull.b@, then all of @r@ is
         minimized; else just its \"topmost\" nonzero \"term\" is. (Words such as \"size\" have
         meanings that vary by context. Also in general, the results of @bDiv@ may not be
         uniquely determined by these requirements.) -}
@@ -425,15 +433,15 @@ rIsOne          :: Ring a -> Pred a
 rIsOne aR       = aR.eq aR.one
 
 exactQuo        :: Ring a -> Op2 a
--- ^ exact quotient, i.e. division (@bDiv False@) should have zero remainder
+-- ^ exact quotient, i.e. division (@bDiv (IsDeep False)@) should have zero remainder
 exactQuo rR y m =
-    let (q, r)      = rR.bDiv False y m
+    let (q, r)      = rR.bDiv (IsDeep False) y m
     in  if rR.isZero r then q else error "division is not exact"
 
-nearQuo                 :: Ring a -> Bool -> Op2 a
+nearQuo                 :: Ring a -> IsDeep -> Op2 a
 -- ^ > nearQuo rR doFull y m = fst (rR.bDiv doFull y m)
 nearQuo rR doFull y m   = fst (rR.bDiv doFull y m)
-smallRem                :: Ring a -> Bool -> Op2 a
+smallRem                :: Ring a -> IsDeep -> Op2 a
 -- ^ > smallRem rR doFull y m = snd (rR.bDiv doFull y m)
 smallRem rR doFull y m  = snd (rR.bDiv doFull y m)
 
@@ -443,7 +451,7 @@ rInv rR         = exactQuo rR rR.one
 
 divides         :: Ring a -> a -> a -> Bool
 -- ^ whether an element divides another element; note the arguments are reversed from division
-divides rR d y  = rR.isZero (snd (rR.bDiv False y d))
+divides rR d y  = rR.isZero (snd (rR.bDiv (IsDeep False) y d))
 
 rExpt           :: Integral b => Ring a -> a -> b -> a
 -- ^ exponentiation to an integral power
@@ -503,7 +511,7 @@ fieldGcd (Ring ag _ _ one _ _) x y  = if ag.isZero x && ag.isZero y then ag.zero
 data Module r m     = Module {
     ag          :: AbelianGroup m,
     scale       :: r -> Op1 m,
-    bDiv        :: Bool -> m -> m -> (r, m)
+    bDiv        :: IsDeep -> m -> m -> (r, m)
         -- ^ like 'bDiv' for a 'Ring' (as a right module over itself),
         -- @bDiv doFull y m = (q, r) => y = scale q m + r@,
 }
@@ -511,6 +519,8 @@ data Module r m     = Module {
 
     A /homomorphism of R-modules/ or /R-linear map/ @f :: M -> M'@ is an additive homomorphism
     that also satisfies @f (r \`scale\` m) = r \`scale\` f m@. -}
+
+newtype IsLeftMod   = IsLeftMod { b :: Bool }   deriving (Eq, Show)
 
 type RMod           = Module
 -- ^ a left module over R
@@ -523,7 +533,7 @@ pairMd rR aMd bMd   =
     Module (pairGp aMd.ag bMd.ag) (\r -> pairOp1 (aMd.scale r) (bMd.scale r)) pairBDiv
   where
     pairBDiv doFull (y, z) (m, n)
-        | aMd.ag.isZero m && doFull     =
+        | aMd.ag.isZero m && doFull.b   =
             let (q, r) = bMd.bDiv doFull z n
             in  (q, (y, r))
         | otherwise                     =
@@ -550,7 +560,7 @@ data RAlg r a       = RAlg {
     fromR       :: r -> a
 }
 
-algMd           :: RAlg r a -> (Bool -> a -> a -> (r, a)) -> Module r a
+algMd           :: RAlg r a -> (IsDeep -> a -> a -> (r, a)) -> Module r a
 -- ^ > algMd (RAlg { .. }) bDiv = Module aR.ag scale bDiv
 algMd (RAlg { .. })     = Module aR.ag scale
 
@@ -561,7 +571,7 @@ numAG           :: (Eq n, Num n) => AbelianGroup n
 -- ^ @n@ under addition
 numAG           = abelianGroup (==) (+) 0 (== 0) negate
 
-numRing         :: (Eq n, Num n) => RingFlags -> (Bool -> n -> n -> (n, n)) -> Ring n
+numRing         :: (Eq n, Num n) => RingFlags -> (IsDeep -> n -> n -> (n, n)) -> Ring n
 -- ^ @n@ as a 'Ring', @numRing rFlags bDiv@
 numRing rFlags  = Ring numAG rFlags (*) 1 fromInteger
 
@@ -571,11 +581,11 @@ zzAG            :: AbelianGroup Integer
 -- ^ the integers ℤ under addition
 zzAG            = numAG
 
-zzDiv           :: Bool -> Integer -> Integer -> (Integer, Integer)
+zzDiv           :: IsDeep -> Integer -> Integer -> (Integer, Integer)
 -- ^ integer division, rounding toward 0
 zzDiv _ n d
     | d == 0    = (0, n)
-    | d < 0     = let (q, r) = zzDiv False n (- d) in (- q, r)
+    | d < 0     = let (q, r) = zzDiv (IsDeep False) n (- d) in (- q, r)
     | otherwise = let (q, r) = divMod n d
                   in  if 2*r < d then (q, r) else (q + 1, r - d)
 
@@ -661,6 +671,13 @@ productSPrec aSP    = asSP
     asSP _prec []       = "1"
     asSP  prec (h : t)  = timesSPrec aSP asSP prec h t
 
+
+readSToRead     :: ReadS a -> String -> a
+-- ^ Use a @ReadS a@ to read a complete string.
+readSToRead aReads s    = case [x | (x, t) <- aReads s, all isSpace t] of
+    [x]     -> x
+    []      -> error ("Cannot parse: " ++ s)
+    _       -> error ("Ambiguous parse: " ++ s)
 
 zzReads         :: ReadS Integer
 -- ^ avoid using just @reads@ so e.g. @zzReads "2e+1" = [(2, "e+1")]@

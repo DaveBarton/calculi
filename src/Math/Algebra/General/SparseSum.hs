@@ -11,7 +11,9 @@ module Math.Algebra.General.SparseSum (
     ssIsZero, ssDegNZ, ssHeadCoef, ssTail, sparseSum, ssCons, ssUnconsNZ,
     ssLexCmp, ssDegCmp,
     ssLead, ssMapC, ssMapNZFC, ssShift, ssShiftMapC, ssShiftMapNZFC, ssFoldr, ssNumTerms,
-    ssAGUniv, ssDotWith, SSOverRingOps(..), ssOverRingOps,
+    ssAGUniv, ssFoldSort, ssDotWith,
+    ssNzdCTimes, ssCTimes, ssMonicizeU, ssTimesNzdC, ssTimesC, ssTimesNzdMonom, ssTimesMonom,
+        ssTimesNzds, ssTimes,
     ssTermShowPrec, ssShowPrec, varPowShowPrec
 ) where
 
@@ -19,6 +21,7 @@ import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
 
 import Data.Foldable (toList)
+import Data.List (sortBy)
 import StrictList2 (pattern (:!))
 import qualified StrictList2 as SL
 
@@ -88,13 +91,13 @@ ssLexCmp dCmp cZero cCmp        = ssCmp where
             let rel = ssHeadCoef s `cCmp` ssHeadCoef t
             in  if rel /= EQ then rel else ssCmp (ssTail s) (ssTail t)
 
-ssDegCmp        :: Cmp d -> Bool -> Cmp (SparseSum c d)
+ssDegCmp        :: Cmp d -> IsDeep -> Cmp (SparseSum c d)
 ssDegCmp dCmp deep s t
     | ssIsZero s        = if ssIsZero t then EQ else LT
     | ssIsZero t        = GT
     | otherwise         =
         let ord = dCmp (ssDegNZ s) (ssDegNZ t)
-        in  if ord /= EQ || not deep then ord else ssDegCmp dCmp deep (ssTail s) (ssTail t)
+        in  if ord /= EQ || not deep.b then ord else ssDegCmp dCmp deep (ssTail s) (ssTail t)
 
 ssLead          :: Pred c -> c -> d -> SparseSum c d -> SparseSum c d
 -- ^ @ssLead cIs0 c d s@ assumes @d > degree(s)@
@@ -163,6 +166,19 @@ ssAGUniv (AbelianGroup _cFlags eq plus _zero isZero neg) dCmp   =
         go SSZero       = vZero
         go (SSNZ c d t) = vPlus !$ dcToV d c !$ go t
 
+ssFoldSort      :: AbelianGroup c -> Cmp d -> [SSTerm c d] -> SparseSum c d
+-- ^ sorts and combines the terms; input terms may have coefs which are 0
+ssFoldSort (AbelianGroup _ _ cPlus _ cIsZero _) dCmp cds0   =
+    go SL.Nil (sortBy (dCmp `on` (.d)) cds0)
+  where
+    go done []          = done
+    go done (cd : t)    = go1 done cd.d cd.c t
+    go1 done d          = go2
+      where
+        go2 c (cd : t)
+            | dCmp d cd.d == EQ     = go2 (cPlus c cd.c) t
+        go2 c cds           = go (if cIsZero c then done else SSTerm c d :! done) cds
+
 ssDotWith       :: Cmp d -> (c -> c1 -> c2) -> AbelianGroup c2 ->
                         SparseSum c d -> SparseSum c1 d -> c2
 ssDotWith dCmp f (AbelianGroup { plus, zero })    = dot
@@ -175,43 +191,51 @@ ssDotWith dCmp f (AbelianGroup { plus, zero })    = dot
             LT -> dot s (ssTail s')
             EQ -> plus !$ (f !$ ssHeadCoef s !$ ssHeadCoef s') !$ dot (ssTail s) (ssTail s')
 
-data SSOverRingOps c d  = SSOverRingOps {
-    nzcTimes        :: c -> Op1 (SparseSum c d),    -- ^ the @c@ is nonzero
-    cTimes          :: c -> Op1 (SparseSum c d),
-    monicizeU       :: Op1 (SparseSum c d),
-        -- ^ @(monicizeU s)@ requires that @s@ is nonzero, and its leading coefficient is a unit
-    timesNZC        :: c -> Op1 (SparseSum c d),    -- ^ the @c@ is nonzero
-    timesC          :: c -> Op1 (SparseSum c d),
-    ssTimesNZMonom  :: Op2 d -> SparseSum c d -> d -> c -> SparseSum c d,
-        -- ^ assumes the @Op2 d@ is order-preserving in each argument, and the @c@ is nonzero
-    ssTimesMonom    :: Op2 d -> SparseSum c d -> d -> c -> SparseSum c d,
-        -- ^ assumes the @Op2 d@ is order-preserving in each argument
-    ssTimes         :: SparseSumUniv d c (SparseSum c d) -> Op2 d -> Op2 (SparseSum c d)
-        -- ^ assumes the @Op2 d@ is order-preserving in each argument
-}
-ssOverRingOps                   :: forall c d. Ring c -> SSOverRingOps c d
-ssOverRingOps cR@(Ring { .. })  = SSOverRingOps { .. }
+ssNzdCTimes     :: Ring c -> c -> Op1 (SparseSum c d)
+-- ^ the @c@ must not be a left zero divisor, i.e. @c*a = 0 => a = 0@
+ssNzdCTimes (Ring { times }) c  = ssMapNZFC (c `times`)
+
+ssCTimes        :: Ring c -> c -> Op1 (SparseSum c d)
+-- ^ If the @c@ is not a left zero divisor, then 'ssNzdCTimes' is faster.
+ssCTimes cR@(Ring { times }) c  = ssMapC cR.isZero (c `times`)
+
+ssMonicizeU     :: Ring c -> Op1 (SparseSum c d)
+-- ^ @(ssMonicizeU s)@ requires that @s@ is nonzero, and its leading coefficient is a unit
+ssMonicizeU cR@(Ring { times }) s   =
+    let c       = ssHeadCoef s  -- check for c = 1 for speed
+    in  if rIsOne cR c then s else ssMapNZFC (rInv cR c `times`) s
+
+ssTimesNzdC     :: Ring c -> c -> Op1 (SparseSum c d)
+-- ^ the @c@ must not be a right zero divisor, i.e. @a*c = 0 => a = 0@
+ssTimesNzdC (Ring { times }) c  = ssMapNZFC (`times` c)
+
+ssTimesC        :: Ring c -> c -> Op1 (SparseSum c d)
+-- ^ If the @c@ is not a right zero divisor, then 'ssTimesNzdC' is faster.
+ssTimesC cR@(Ring { times }) c  = ssMapC cR.isZero (`times` c)
+
+ssTimesNzdMonom     :: Ring c -> Op2 d -> SparseSum c d -> d -> c -> SparseSum c d
+-- ^ assumes the @Op2 d@ is order-preserving in each argument, and the @c@ is not a right zero
+-- divisor
+ssTimesNzdMonom (Ring { times }) dOp2 s d c     = ssShiftMapNZFC (`dOp2` d) (`times` c) s
+
+ssTimesMonom    :: Ring c -> Op2 d -> SparseSum c d -> d -> c -> SparseSum c d
+-- ^ assumes the @Op2 d@ is order-preserving in each argument. Also, if the @c@ is not a right
+-- zero divisor, then 'ssTimesNzdMonom' is faster.
+ssTimesMonom cR@(Ring { times }) dOp2 s d c     = ssShiftMapC cR.isZero (`dOp2` d) (`times` c) s
+
+ssTimesNzds     :: SparseSumUniv d c (SparseSum c d) -> Ring c -> Op2 d -> Op2 (SparseSum c d)
+-- ^ assumes the @Op2 d@ is order-preserving in each argument, and there are no nonzero right
+-- zero divisors in @cR@
+ssTimesNzds (UnivL ssAG _ univF) cR dOp2 s  = univF ssAG (TgtArrsF (sToTimesDC s))
   where
-    isZero      = ag.isIdent
-    nzcTimes
-        | hasEIBit rFlags NoZeroDivisors    = \c -> ssMapNZFC (c `times`)
-        | otherwise                         = \c -> ssMapC isZero (c `times`)
-    cTimes c s  = if isZero c then SSZero else nzcTimes c s
-    monicizeU s =
-        let c       = ssHeadCoef s  -- check for c = 1 for speed
-        in  if rIsOne cR c then s else ssMapNZFC (rInv cR c `times`) s
-    timesNZC
-        | hasEIBit rFlags NoZeroDivisors    = \c -> ssMapNZFC (`times` c)
-        | otherwise                         = \c -> ssMapC isZero (`times` c)
-    timesC c s    = if isZero c then SSZero else timesNZC c s
-    ssTimesNZMonom dOp2
-        | hasEIBit rFlags NoZeroDivisors    = \s d c -> ssShiftMapNZFC (`dOp2` d) (`times` c) s
-        | otherwise                         =
-            \s d c -> ssShiftMapC isZero (`dOp2` d) (`times` c) s
-    ssTimesMonom dOp2 s d c     = if isZero c then SSZero else ssTimesNZMonom dOp2 s d c
-    ssTimes (UnivL ssAG _ univF) dOp2 s     = univF ssAG (TgtArrsF (sToTimesDC s))
-      where
-        sToTimesDC      = ssTimesNZMonom dOp2
+    sToTimesDC      = ssTimesNzdMonom cR dOp2
+
+ssTimes         :: SparseSumUniv d c (SparseSum c d) -> Ring c -> Op2 d -> Op2 (SparseSum c d)
+-- ^ assumes the @Op2 d@ is order-preserving in each argument. Also, if there are no nonzero
+-- right zero divisors in @cR@, then 'ssTimesNzds' is faster.
+ssTimes (UnivL ssAG _ univF) cR dOp2 s  = univF ssAG (TgtArrsF (sToTimesDC s))
+  where
+    sToTimesDC      = ssTimesMonom cR dOp2
 
 
 ssTermShowPrec                  :: ShowPrec d -> ShowPrec c -> ShowPrec (SSTerm c d)

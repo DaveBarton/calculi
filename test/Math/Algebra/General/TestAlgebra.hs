@@ -223,7 +223,8 @@ abelianGroupProps gT    = monoidProps gT agFlags
 bDivProps               :: (r -> String) -> TestOps m -> Module r m ->
                             [(PropertyName, Property)]
 bDivProps rShow mT (Module { .. })  =
-    [("bDiv True", divProp (bDiv True)), ("bDiv False", divProp (bDiv False))]
+    [(fromString ("bDiv (" ++ show doFull ++ ")"), divProp (bDiv doFull))
+        | doFull <- IsDeep <$> [False, True]]
   where
     divProp quoRemF     = property $ do
         y       <- genVis mT
@@ -279,7 +280,7 @@ ringHomomProps sga aR bTestEq bR f  =
 fieldProps              :: TestOps r -> Field r -> [(PropertyName, Property)]
 fieldProps rT           = ringProps rT fieldFlags
 
-moduleProps             :: Bool -> ShowGen r -> Ring r -> TestOps m ->
+moduleProps             :: IsLeftMod -> ShowGen r -> Ring r -> TestOps m ->
                             Module r m -> [(PropertyName, Property)]
 moduleProps isLeftMod rT rR mT mM@(Module { .. })   =
     abelianGroupProps mT ag ++
@@ -294,7 +295,7 @@ moduleProps isLeftMod rT rR mT mM@(Module { .. })   =
         homomPT rT rR.plus mT.tEq ag.plus (`scale` m)
     identityM       = property $
         sameFun1TR mT mT.tEq (scale rR.one) id
-    (*~)            = (if isLeftMod then id else flip) rR.times
+    (*~)            = (if isLeftMod.b then id else flip) rR.times
     assocM          = property $ do
         a       <- genVis rT
         b       <- genVis rT
@@ -302,11 +303,11 @@ moduleProps isLeftMod rT rR mT mM@(Module { .. })   =
 
 rModProps               :: ShowGen r -> Ring r -> TestOps m ->
                             RMod r m -> [(PropertyName, Property)]
-rModProps               = moduleProps True
+rModProps               = moduleProps (IsLeftMod True)
 
 modRProps               :: ShowGen r -> Ring r -> TestOps m ->
                             ModR r m -> [(PropertyName, Property)]
-modRProps               = moduleProps False
+modRProps               = moduleProps (IsLeftMod False)
 
 rAlgProps               :: ShowGen r -> Ring r -> TestOps a -> RingFlags ->
                             RAlg r a -> [(PropertyName, Property)]

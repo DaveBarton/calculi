@@ -3,11 +3,10 @@
 {- |  Groebner Basis demo examples  -}
 
 module Math.Algebra.Commutative.GBDemo (
-    gbDemo,
+    gbDemo
 ) where
 
 import Math.Algebra.General.Algebra
-import Math.Algebra.General.SparseSum
 import Math.Algebra.Commutative.GroebnerBasis
 import Math.Algebra.Commutative.EPoly
 import Math.Algebra.Commutative.VMPoly
@@ -34,25 +33,18 @@ data GBExOpts   = GBExOpts {
     gbTrace         :: Int
 }
 
-epGbpA          :: forall p. KnownNat p => GBExOpts -> GBEx ->
-                    GBPolyOps ExponVec (SSTerm (Mod p) ExponVec) (EPoly (Mod p))
-epGbpA (GBExOpts { sec, noSugar }) (GBEx { descVarSs })     =
-    epGBPOps evCmp isGraded cField descVarSs (const (show . cBalRep)) (not noSugar)
+epGbpA          :: forall p. KnownNat p => StdEvCmp -> UseSugar -> [String] ->
+                    GBPolyOps ExponVec (EPoly (Mod p))
+epGbpA sec useSugar descVarSs   =
+    epGBPOps evCmp isGraded cField descVarSs (const (show . cBalRep)) useSugar
   where
     (cField, cBalRep)   = zzModPW @p
     nVars       = length descVarSs
     evCmp       = epEvCmpF nVars sec
     isGraded    = secIsGraded sec
 
-vmpGbpA         :: forall p n1. (KnownNat p, KnownNat n1) => GBExOpts ->
-                    GBPolyOps (VMPolyEV n1) (VMPolyModPwTerm n1 p) (VMPolyModPw n1 p)
--- n1 == nVars + 1
-vmpGbpA (GBExOpts { sec, noSugar })     = vmpModPwGbpOps @p @n1 isGraded (not noSugar)
-  where
-    isGraded    = if sec == GrRevLexCmp then error "VMPoly GrRevLexCmp is unimplemented" else
-                    secIsGraded sec
-
-gbDemo0         :: GBExOpts -> GBEx -> GBPolyOps ev term ep -> IO ()
+gbDemo0         :: GBPoly ev term pf ep => GBExOpts -> GBEx -> GBPolyOps ev ep -> IO ()
+{-# INLINABLE gbDemo0 #-}
 gbDemo0 (GBExOpts { sec, nCores, gbTrace }) (GBEx { name, descVarSs, genSs }) gbpA  = do
     putStrLn $ name ++ " " ++ show sec
     let _gbi    = fromGens smA gbTrace gens
@@ -60,16 +52,20 @@ gbDemo0 (GBExOpts { sec, nCores, gbTrace }) (GBEx { name, descVarSs, genSs }) gb
   where
     descVarPs   = gbpA.descVarPs
     smA         = gbiSmOps gbpA nCores
-    pRead       = (\ [(x,"")] -> x) . polynomReads gbpA.pR (zip descVarSs descVarPs)
+    pRead       = readSToRead $ polynomReads gbpA.pR (zip descVarSs descVarPs)
     gens        = map pRead genSs
 
 gbDemo1         :: GBExOpts -> GBEx -> IO ()
-gbDemo1 opts@(GBExOpts { useVMPoly }) ex@(GBEx { p, descVarSs })    =
+gbDemo1 opts@(GBExOpts { useVMPoly, sec, noSugar }) ex@(GBEx { p, descVarSs })  =
     case someNatVal (fromInteger p) of
  SomeNat (Proxy :: Proxy p)     -> case someNatVal (fromIntegral (length descVarSs) + 1) of
-  SomeNat (Proxy :: Proxy nVarsPlus1T)  ->
-    if useVMPoly then gbDemo0 opts ex (vmpGbpA @p @nVarsPlus1T opts)
-                 else gbDemo0 opts ex (epGbpA @p opts ex)
+  SomeNat (Proxy :: Proxy n1)  ->
+    if not useVMPoly then  gbDemo0 opts ex (epGbpA @p sec useSugar descVarSs) else case sec of
+        LexCmp          -> gbDemo0 opts ex (vmpModPwGbpOps @p @n1 @('IsGraded False) useSugar)
+        GrLexCmp        -> gbDemo0 opts ex (vmpModPwGbpOps @p @n1 @('IsGraded True ) useSugar)
+        GrRevLexCmp     -> error "VMPoly GrRevLexCmp is unimplemented"
+   where
+    useSugar    = UseSugar (not noSugar)
 
 
 showUsage       :: IO ()

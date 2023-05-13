@@ -32,7 +32,7 @@ test1 nVars sec = checkGroup ("BinPoly " ++ show nVars ++ " " ++ show sec) props
     isGraded        = secIsGraded sec
     xVarSs          = ['X' : show n | n <- [1 :: Int ..]]
     descVarSs       = take nVars (map (: []) ['a' .. 'z'] ++ xVarSs)
-    useSugar        = False -- @@ change to use Gen.bool
+    useSugar        = UseSugar False    -- @@ change to use Gen.bool
     (gbpA@(GBPolyOps { evShowPrec, pR, descVarPs }), bpoA@(BPOtherOps { pAt, pShowPrec }))  =
         bp58Ops evCmp isGraded descVarSs useSugar
     mask            = bit nVars - 1     :: Word64

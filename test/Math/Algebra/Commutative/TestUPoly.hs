@@ -32,8 +32,7 @@ testUPoly               = checkGroup "UPoly" props
   where
     -- should change to a noncommutative coef ring C with zero divisors, and check X commutes
     -- with it in C[X]:
-    UPolyOps { upUniv }     = upOps zzRing
-    UnivL zxRing (RingTgtX zToZX xZX) zxUnivF   = upUniv
+    UnivL zxRing (RingTgtX zToZX xZX) zxUnivF   = upUniv zzRing
     zxToT           = zxUnivF zzRing (RingTgtX id 12345)
     pT              =   -- polys of degree up to 10
         upTestOps zzRing (Range.linear 0 10) (zzTestOps { gen = zzExpGen 1_000_000 })
