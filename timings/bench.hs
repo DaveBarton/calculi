@@ -17,14 +17,12 @@ import Control.Monad ((<$!>))
 import Data.Bits (complement, shift, unsafeShiftL, unsafeShiftR)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List (transpose)
-import Data.Maybe (fromJust)
 import Data.Poly.Multi (toMultiPoly)
 import Data.Strict.Classes (toStrict)
 import qualified Data.Strict.Tuple as S
 import Data.Tuple.Extra (both)
 import qualified Data.Vector as PV
 import qualified Data.Vector.Unboxed as VU
-import qualified Data.Vector.Unboxed.Sized as EV
 import Data.Word (Word64)
 import StrictList2 (pattern (:!))
 import qualified StrictList2 as SL

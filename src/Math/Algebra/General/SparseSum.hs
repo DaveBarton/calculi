@@ -114,6 +114,7 @@ ssMapC is0 f    = go SSZero
 ssMapNZFC       :: (c -> c') -> SparseSum c d -> SparseSum c' d
 -- ^ assumes the @(c -> c')@ takes nonzero values to nonzero values
 ssMapNZFC f     = fmap (\cd@(SSTerm c _d) -> cd{ c = f c })
+{-# INLINE ssMapNZFC #-}
 
 ssShift         :: (d -> d') -> SparseSum c d -> SparseSum c d'
 -- ^ assumes the @(d -> d')@ is order-preserving
@@ -132,6 +133,7 @@ ssShiftMapNZFC  :: (d -> d') -> (c -> c') -> SparseSum c d -> SparseSum c' d'
 {- ^ assumes the @(d -> d')@ is order-preserving, and the @(c -> c')@ takes nonzero values to
     nonzero values -}
 ssShiftMapNZFC df cf    = fmap (\(SSTerm c d) -> SSTerm (cf c) (df d))
+{-# INLINE ssShiftMapNZFC #-}
 
 ssFoldr         :: (c -> d -> t -> t) -> t -> SparseSum c d -> t
 ssFoldr f       = foldr (\(SSTerm c d) -> f c d)

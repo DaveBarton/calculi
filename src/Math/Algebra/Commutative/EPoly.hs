@@ -175,6 +175,13 @@ instance GBPoly ExponVec (SSTerm c ExponVec) SL.List (EPoly c) where
     leadEvNZ        = sparseSum undefined (\_ ev _ -> ev)
     {-# INLINE leadEvNZ #-}
 
+{-# SPECIALIZE kgsOps ::
+    GBPolyOps ExponVec (EPoly c) -> KGsOps (SSTerm c ExponVec) (EPoly c) #-}
+{-# SPECIALIZE groebnerBasis :: GBPolyOps ExponVec (EPoly c) -> Int -> Int ->
+    GroebnerIdeal (EPoly c) -> [EPoly c] -> IO (GroebnerIdeal (EPoly c)) #-}
+{-# SPECIALIZE gbiSmOps :: GBPolyOps ExponVec (EPoly c) -> Int ->
+    SubmoduleOps (EPoly c) (EPoly c) (GroebnerIdeal (EPoly c)) #-}
+
 data RingTgtXs c t      = RingTgtXs (c -> t) [t]
 -- ^ a ring homomorphism C -> T, and a list of elements that commute with image(C)
 
@@ -214,10 +221,11 @@ epOps cR nVars evCmp    = EPolyOps { .. }
     epTimes
         | hasEIBit cR.rFlags NoZeroDivisors     = epTimesNzds
         | otherwise                             = ssTimes ssUniv cR (evPlus nVars)
-    epTimesMonom s d c
-        | cR.isZero c                           = SSZero
-        | hasEIBit cR.rFlags NoZeroDivisors     = ssTimesNzdMonom cR (evPlus nVars) s d c
-        | otherwise                             = ssTimesMonom cR (evPlus nVars) s d c
+    epTimesNzMonom
+        | hasEIBit cR.rFlags NoZeroDivisors     = ssTimesNzdMonom
+        | otherwise                             = ssTimesMonom
+    epTimesMonom s d c  = if cR.isZero c then SSZero else epTimesNzMonom cR (evPlus nVars) s d c
+
     ssLead'     = ssLead cIsZero
     epDiv _doFull p0 p1
         | epIsOne p1                    = (p0, SSZero)  -- for efficiency

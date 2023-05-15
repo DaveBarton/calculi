@@ -8,7 +8,8 @@
 
 module Math.Algebra.Commutative.GroebnerBasis (
     SubmoduleOps(..), fromGens,
-    UseSugar(..), SPair(..), GBEv(..), GBPoly(..), GBPolyOps(..), IsGraded(..),
+    UseSugar(..), SPair(..), GBEv(..), GBPoly(..), GBPolyOps(..),
+    KGsOps, kgsOps, groebnerBasis {- @@@ 3 -}, IsGraded(..),
     StdEvCmp(..), secIsGraded,
     gbTSummary, gbTProgressChars, gbTProgressInfo, gbTResults, gbTQueues, gbTProgressDetails,
     GroebnerIdeal, gbiSmOps
@@ -65,6 +66,7 @@ data SubmoduleOps r m sm    = SubmoduleOps {
 fromGens        :: SubmoduleOps r m sm -> Int -> [m] -> sm
 -- ^ @fromGens smA gbTrace gens@
 fromGens smA gbTrace    = smA.plusGens gbTrace smA.zeroMd
+{-# INLINABLE fromGens #-}
 
 
 evElts          :: [a] -> ()
