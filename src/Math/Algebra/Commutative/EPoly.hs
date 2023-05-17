@@ -87,71 +87,71 @@ exponsL nVars (ExponVec td es)  = case es of
         bytesL (n - 1) (w `unsafeShiftR` nBits) (fromIntegral (w .&. mask) : t)
 
 evPlus          :: Int -> Op2 ExponVec
-evPlus nVars ev@(ExponVec d es) ev'@(ExponVec d' es')
-    | perW == perWord64 nVars (min d d')    = ExponVec td (go es es')
-    | otherwise                             = slow
+evPlus nVars ev@(ExponVec d es) ev'@(ExponVec d' es')   = go es es'
   where
     td      = d + d'
     perW    = perWord64 nVars td
-    go (Expons1 w)   (Expons1 w')       = Expons1 (w + w')
-    go (Expons2 w v) (Expons2 w' v')    = Expons2 (w + w') (v + v')
-    go (ExponsN a)   (ExponsN a')       = ExponsN (U.zipWith (+) a a')
-    go _             _                  = undefined
-    ~slow   = evMake (zipWithExact (+) (exponsL nVars ev) (exponsL nVars ev'))
+    go (Expons1 w)   (Expons1 w')     | nVars <= perW   =
+        ExponVec td (Expons1 (w + w'))
+    go (Expons2 w v) (Expons2 w' v')  | nVars <= 2*perW =
+        ExponVec td (Expons2 (w + w') (v + v'))
+    go (ExponsN a)   (ExponsN a')                       =
+        ExponVec td (ExponsN (U.zipWith (+) a a'))
+    go _             _                                  =
+        evMake (zipWithExact (+) (exponsL nVars ev) (exponsL nVars ev'))
 
 evMinusMay      :: Int -> ExponVec -> ExponVec -> Maybe ExponVec
 evMinusMay nVars ev ev'     | not (evDividesF nVars ev' ev)     = Nothing
-evMinusMay nVars ev@(ExponVec d es) ev'@(ExponVec d' es')
-    | perWord64 nVars d == perWord64 nVars (min d' td)  = Just (ExponVec td (go es es'))
-    | otherwise                                         = Just slow
+evMinusMay nVars ev@(ExponVec d es) ev'@(ExponVec d' es')       = Just (evMinus es es')
   where
     td      = d - d'
-    go (Expons1 w)   (Expons1 w')       = Expons1 (w - w')
-    go (Expons2 w v) (Expons2 w' v')    = Expons2 (w - w') (v - v')
-    go (ExponsN a)   (ExponsN a')       = ExponsN (U.zipWith (-) a a')
-    go _             _                  = undefined
-    ~slow   = evMake (zipWithExact (-) (exponsL nVars ev) (exponsL nVars ev'))
+    evMinus (Expons1 w)   (Expons1 w')                      = ExponVec td (Expons1 (w - w'))
+    evMinus (Expons2 w v) (Expons2 w' v')   | nVars > perW  =
+        ExponVec td (Expons2 (w - w') (v - v'))
+      where
+        perW    = perWord64 nVars td
+    evMinus (ExponsN a)   (ExponsN a')                      =
+        ExponVec td (ExponsN (U.zipWith (-) a a'))
+    evMinus _             _                                 =
+        evMake (zipWithExact (-) (exponsL nVars ev) (exponsL nVars ev'))
 
 evDividesF      :: Int -> ExponVec -> ExponVec -> Bool
 -- ^ note args reversed from evMinusMay; really vars^ev1 `divides` vars^ev2
 evDividesF _ (ExponVec d _) (ExponVec d' _)     | d > d'    = False     -- for efficiency
-evDividesF nVars ev@(ExponVec d es) ev'@(ExponVec d' es')
-    | perW == perWord64 nVars d'    = go es es'
-    | otherwise                     = slow
+evDividesF nVars ev@(ExponVec d es) ev'@(ExponVec _ es')    = expsDivs es es'
   where
-    perW    = perWord64 nVars d
-    go (Expons1 w)   (Expons1 w')       = bytesDivs w w'
-    go (Expons2 w v) (Expons2 w' v')    = bytesDivs w w' && bytesDivs v v'
-    go (ExponsN a)   (ExponsN a')       = U.ifoldr (\i e ~b -> e <= a' U.! i && b) True a
-    go _             _                  = undefined
-    ~slow   = and (zipWithExact (<=) (exponsL nVars ev) (exponsL nVars ev'))
+    expsDivs (Expons1 w)   (Expons1 w')     = bytesDivs w w'
+    expsDivs (Expons2 w v) (Expons2 w' v')  = bytesDivs w w' && bytesDivs v v'
+    expsDivs (ExponsN a)   (ExponsN a')     = U.ifoldr (\i e ~b -> e <= a' U.! i && b) True a
+    expsDivs _             _                =
+        and (zipWithExact (<=) (exponsL nVars ev) (exponsL nVars ev'))
     bytesDivs w w'      = w <= w' && (w' - w) .&. mask `xor` w .&. mask `xor` w' .&. mask == 0
       where     -- check if any bytes subtracted in (w' - w) cause borrowing from any mask bits
+        perW        = perWord64 nVars d
         mask        = if perW == 8 then 0x0101_0101_0101_0100 else 0x0001_0001_0001_0000
 
 evLCMF          :: Int -> Op2 ExponVec  -- really Least Common Multiple of vars^ev1 and vars^ev2
 evLCMF nVars ev ev'     = evMake (zipWithExact max (exponsL nVars ev) (exponsL nVars ev'))
 
-cmpExpsSameShape                                :: Cmp Expons
--- lexicographic comparison, assuming the same nVars and (perWord64 nVars td)
-cmpExpsSameShape (Expons1 w)   (Expons1 w')     = compare w w'
-cmpExpsSameShape (Expons2 w v) (Expons2 w' v')  = compare w w' <> compare v v'
-cmpExpsSameShape (ExponsN a)   (ExponsN a')     = compare a a'
-cmpExpsSameShape _             _                = undefined
+cmpExps                                     :: Ordering -> Cmp Expons
+-- lexicographic comparison, assuming the same nVars
+cmpExps ~_   (Expons1 w)   (Expons1 w')     = compare w w'
+cmpExps ~_   (Expons2 w v) (Expons2 w' v')  = compare w w' <> compare v v'
+cmpExps ~_   (ExponsN a)   (ExponsN a')     = compare a a'
+cmpExps ~res _             _                = res    -- different shapes
 
 evGrRevLexCmp   :: Cmp ExponVec
 -- ^ The variables go from least main (variable 0) to most main, in big-endian order.
-evGrRevLexCmp (ExponVec d es) (ExponVec d' es') = compare d d' <> cmpExpsSameShape es' es
+evGrRevLexCmp (ExponVec d es) (ExponVec d' es') = compare d d' <> cmpExps undefined es' es
 
 evGrLexCmp      :: Cmp ExponVec
 -- ^ The variables go from most main (variable 0) to least main, in big-endian order.
-evGrLexCmp (ExponVec d es) (ExponVec d' es')    = compare d d' <> cmpExpsSameShape es es'
+evGrLexCmp (ExponVec d es) (ExponVec d' es')    = compare d d' <> cmpExps undefined es es'
 
 evLexCmpF       :: Int -> Cmp ExponVec
 -- ^ The variables go from most main (variable 0) to least main, in big-endian order.
-evLexCmpF nVars ev@(ExponVec d es) ev'@(ExponVec d' es')
-    | perWord64 nVars d == perWord64 nVars d'   = cmpExpsSameShape es es'
-    | otherwise                                 = compare (exponsL nVars ev) (exponsL nVars ev')
+evLexCmpF nVars ev@(ExponVec _ es) ev'@(ExponVec _ es')     =
+    cmpExps (compare (exponsL nVars ev) (exponsL nVars ev')) es es'
 
 epEvCmpF            :: Int -> StdEvCmp -> Cmp ExponVec
 epEvCmpF nVars      = \case
