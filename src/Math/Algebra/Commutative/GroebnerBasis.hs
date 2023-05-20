@@ -314,7 +314,6 @@ data GapKerGens p   = G1KGs { gap :: Word, _kgs :: KerGens p }
 type GapsKerGens p  = SL.List (GapKerGens p)    -- gaps increasing, 0 gap always present
 
 data KGsOps term p  = KGsOps {
-    gkgsEmpty   :: GapsKerGens p,
     gkgsInsert  :: EPolyHDeg p -> Op1 (GapsKerGens p),
     gkgsDelete  :: EPolyHDeg p -> Op1 (GapsKerGens p),
     gkgsReplace :: EPolyHDeg p -> EPolyHDeg p -> Op1 (GapsKerGens p),
@@ -331,6 +330,12 @@ data KGsOps term p  = KGsOps {
         -- do 1 folding step if there's a top-reducer
 }
 
+kgsEmpty            :: Int -> KerGens p
+kgsEmpty nEvGroups  = Seq.replicate nEvGroups SL.Nil
+
+gkgsEmpty           :: Int -> GapsKerGens p
+gkgsEmpty nEvGroups = SL.singleton (G1KGs 0 (kgsEmpty nEvGroups))
+
 kgsOps          :: forall ev term pf p. GBPoly ev term pf p => GBPolyOps ev p -> KGsOps term p
 {-# INLINABLE kgsOps #-}
 kgsOps (GBPolyOps { .. })   = KGsOps { .. }
@@ -339,12 +344,6 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
     pIsZero     = pR.isZero
     topDiv      = pR.bDiv (IsDeep False)
     
-    kgsEmpty            :: KerGens p
-    kgsEmpty            = Seq.replicate nEvGroups SL.Nil
-    
-    gkgsEmpty           :: GapsKerGens p
-    gkgsEmpty           = SL.singleton (G1KGs 0 kgsEmpty)
-
     kgsSepCmp           :: Cmp (SizedEPoly p)
     kgsSepCmp (SizedEPoly n1 p1) (SizedEPoly n2 p2)   =
         n1 `compare` n2 <> evCmp (leadEvNZ p1) (leadEvNZ p2)
@@ -371,7 +370,7 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
         go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
             if gap == gap0 then G1KGs gap (kgsInsert p kgs0) :! t
             else if maybe True ((gap <) . (.gap)) (SL.headMaybe t) then
-                h :! G1KGs gap (kgsInsert p kgsEmpty) :! t
+                h :! G1KGs gap (kgsInsert p (kgsEmpty nEvGroups)) :! t
             else h :! go t
         go SL.Nil                           = undefined
 
@@ -859,8 +858,8 @@ gbiSmOps        :: GBPoly ev term pf p => GBPolyOps ev p -> Int ->
 {-# INLINABLE gbiSmOps #-}
 gbiSmOps gbpA nCores    = SubmoduleOps { .. }
   where
-    KGsOps { gkgsEmpty, gkgsReduce }    = kgsOps gbpA
-    zeroMd  = GroebnerIdeal gkgsEmpty Seq.empty Seq.empty Seq.empty
+    KGsOps { gkgsReduce }   = kgsOps gbpA
+    zeroMd  = GroebnerIdeal (gkgsEmpty gbpA.nEvGroups) Seq.empty Seq.empty Seq.empty
     plusGens gbTrace gbi0 newGens   =
         unsafePerformIO $ groebnerBasis gbpA nCores gbTrace gbi0 newGens
     stdGens doFullReduce gbi    = if doFullReduce.b then gbi.redGbGens else gbi.gbGens
