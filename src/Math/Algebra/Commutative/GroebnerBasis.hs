@@ -1,4 +1,5 @@
 {-# LANGUAGE FunctionalDependencies, Strict #-}
+{-# OPTIONS_GHC -ddump-to-file -ddump-simpl -dsuppress-all -dppr-case-as-let #-}
 
 {- |  This module defines functions for computing and using a Groebner Basis.
     
@@ -26,7 +27,7 @@ import Data.List (elemIndex, findIndices, groupBy, sortBy)
 import Data.List.Extra (chunksOf)
 import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
 import qualified Data.Sequence as Seq
-import Data.Stack (Stack(pushRev, pop))
+import Data.Stack (Stack(empty, pushRev, pop))
 import Data.Tuple.Extra (dupe, fst3, second)
 import qualified Data.Vector as V
 import Numeric (showFFloat)
@@ -183,6 +184,12 @@ class (GBEv ev, Coercible (pf term) p, Coercible p (pf term), Stack pf) =>
     leadEvNZ    :: p -> ev          -- ^ the argument must be nonzero
 -- ^ A polynomial's terms must be nonzero and have decreasing exponent vectors.
 
+pZero           :: forall ev term pf p. GBPoly ev term pf p => p
+pZero           = coerce (empty :: pf term)
+
+pIsZero         :: forall ev term pf p. GBPoly ev term pf p => p -> Bool
+pIsZero p       = null (coerce p :: pf term)
+
 numTerms        :: forall ev term pf p. GBPoly ev term pf p => p -> Int
 numTerms p      = length (coerce p :: pf term)
 {-# INLINE numTerms #-}
@@ -336,12 +343,33 @@ kgsEmpty nEvGroups  = Seq.replicate nEvGroups SL.Nil
 gkgsEmpty           :: Int -> GapsKerGens p
 gkgsEmpty nEvGroups = SL.singleton (G1KGs 0 (kgsEmpty nEvGroups))
 
+{-# SCC kgsFindReducer #-}
+kgsFindReducer          :: GBPoly ev term pf p => (ev -> [Word]) -> p -> KerGens p -> Maybe p
+-- returns the best (shortest) top-reducer, if any
+kgsFindReducer evGroup p kgs    =
+    if pIsZero p then Nothing else
+    let nVars   = Seq.length kgs
+        pEv     = leadEvNZ p
+        npsF bnp                   SL.Nil                               = bnp
+        npsF bnp@(SizedEPoly bn _) (ng@(SizedEPoly n ~g) :! ~t)
+            | bn <= n   = bnp
+            | otherwise = npsF (if evDivides nVars (leadEvNZ g) pEv then ng else bnp) t
+        {-# INLINE npsF #-}
+        esF bnp _  SL.Nil   = bnp
+        esF bnp pe ((ENPs e ~nps) :! ~t)
+            | pe < e    = bnp
+            | otherwise = esF ({- # SCC npsF # -} npsF bnp nps) pe t
+        {-# INLINE esF #-}
+        vF bnp (pe, enpss)      = {- # SCC esF # -} esF bnp pe enpss
+        resSep  = foldl' vF (SizedEPoly (maxBound :: Int) pZero)
+                    (zip (evGroup pEv) (toList kgs))
+    in  if resSep.n < (maxBound :: Int) then Just resSep.p else Nothing
+{-# INLINABLE kgsFindReducer #-}
+
 kgsOps          :: forall ev term pf p. GBPoly ev term pf p => GBPolyOps ev p -> KGsOps term p
 {-# INLINABLE kgsOps #-}
 kgsOps (GBPolyOps { .. })   = KGsOps { .. }
   where
-    pZero       = pR.zero
-    pIsZero     = pR.isZero
     topDiv      = pR.bDiv (IsDeep False)
     
     kgsSepCmp           :: Cmp (SizedEPoly p)
@@ -407,31 +435,13 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
     gkgsReplace             :: EPolyHDeg p -> EPolyHDeg p -> Op1 (GapsKerGens p)
     gkgsReplace ph ph' gkgs = gkgsInsert ph' (gkgsDelete ph gkgs)
 
-    {-# SCC kgsFindReducer #-}
-    kgsFindReducer          :: p -> KerGens p -> Maybe p
-    -- returns the best (shortest) top-reducer, if any
-    kgsFindReducer p kgs    =
-        if pIsZero p then Nothing else
-        let pEv     = leadEvNZ p
-            npsF bnp                   SL.Nil                               = bnp
-            npsF bnp@(SizedEPoly bn _) (ng@(SizedEPoly n ~g) :! ~t)
-                | bn <= n   = bnp
-                | otherwise = npsF (if evDivides nVars (leadEvNZ g) pEv then ng else bnp) t
-            esF bnp _  SL.Nil   = bnp
-            esF bnp pe ((ENPs e ~nps) :! ~t)
-                | pe < e    = bnp
-                | otherwise = esF (npsF bnp nps) pe t
-            vF bnp (pe, enpss)      = esF bnp pe enpss
-            resSep  = foldl' vF (SizedEPoly (maxBound :: Int) pZero)
-                        (zip (evGroup pEv) (toList kgs))
-        in  if resSep.n < (maxBound :: Int) then Just resSep.p else Nothing
-
     gkgsFindReducer         :: p -> GapsKerGens p -> Maybe (EPolyHDeg p)
     -- returns the best (least sugar gap, then shortest) top-reducer, if any
     gkgsFindReducer p gkgs  = listToMaybe (mapMaybe find1 (toList gkgs))
       where
         find1 (G1KGs gap kgs)   =   -- if not useSugar.b, then h can be wrong:
-            fmap (\g -> EPolyHDeg g (evTotDeg (leadEvNZ g) + gap)) (kgsFindReducer p kgs)
+            fmap (\g -> EPolyHDeg g (evTotDeg (leadEvNZ g) + gap))
+                (kgsFindReducer evGroup p kgs)
 
     gkgsReduce              :: GapsKerGens p -> IsDeep -> SL.List term -> p -> (p, Int)
     -- reduce a polynomial, counting steps, and prependReversed
@@ -842,8 +852,6 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
             Seq.fromList (fmap fullReduce2NZ (toList gbGens) `using` parListChunk 10 rseq)
     pure $ GroebnerIdeal { gkgs, gbGhs, gbGens, redGbGens }
   where
-    pZero           = pR.zero
-    pIsZero         = pR.isZero
     evShow          = evShowPrec 0
     pShowEV p
         | pIsZero p         = "0"

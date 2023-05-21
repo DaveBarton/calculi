@@ -1,4 +1,6 @@
 {-# LANGUAGE Strict #-}
+{-# OPTIONS_GHC -ddump-to-file -ddump-simpl -dsuppress-all -dppr-case-as-let -ddump-stg-cg 
+    -ddump-cmm -dsuppress-uniques -ddump-stg-final #-}
 
 {- |  An 'EPoly' is an \"Expanded\" or \"Exponent Vector\" Polynomial. That is, each term
     consists of a coefficient and an exponent vector ('ExponVec').
@@ -129,6 +131,7 @@ evDividesF nVars ev@(ExponVec d es) ev'@(ExponVec _ es')    = expsDivs es es'
       where     -- check if any bytes subtracted in (w' - w) cause borrowing from any mask bits
         perW        = perWord64 nVars d
         mask        = if perW == 8 then 0x0101_0101_0101_0100 else 0x0001_0001_0001_0000
+{-# INLINABLE evDividesF #-}
 
 evLCMF          :: Int -> Op2 ExponVec  -- really Least Common Multiple of vars^ev1 and vars^ev2
 evLCMF nVars ev ev'     = evMake (zipWithExact max (exponsL nVars ev) (exponsL nVars ev'))
