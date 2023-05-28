@@ -22,7 +22,7 @@ import Math.Algebra.General.Algebra
 
 
 pattern (:!)        :: a -> List a -> List a
-infixr 5  :!
+infixr 5  :!        -- same as (:)
 pattern h :! t      = Cons h t
 {-# INLINE (:!) #-}
 

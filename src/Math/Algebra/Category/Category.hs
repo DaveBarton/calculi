@@ -32,10 +32,10 @@
 module Math.Algebra.Category.Category (
     -- * Categories and functors
     Unit1(..), Unit2(..), FlipTF(..),
-    -- ** Category
-    Category(..), catOpp, typesCat,
-    -- ** Functor
-    Functor(..), listFunctor,
+    -- ** MathCategory
+    MathCategory(..), catOpp, typesCat,
+    -- ** MathFunctor
+    MathFunctor(..), listFunctor,
     
     -- * Universal Properties
     -- $univProp
@@ -50,7 +50,6 @@ module Math.Algebra.Category.Category (
     -- $abelianCat
 ) where
 
-import Prelude hiding (Functor)
 import Math.Algebra.General.Algebra
 
 import Data.Kind (Type)
@@ -66,29 +65,30 @@ data Unit2 a b  = Unit2
 newtype FlipTF f b a    = FlipTF (f a b)
 
 
--- ** Category
+-- ** MathCategory
 
--- | A @(Category (.:) idArr)@
-data Category (obj :: k -> Type) (arr :: k -> k -> Type)   = Category {
+-- | A @(MathCategory (.:) idArr)@ (Mathematical Category)
+data MathCategory (obj :: k -> Type) (arr :: k -> k -> Type)   = MathCategory {
     catDot  :: forall a b c. arr b c -> arr a b -> arr a c,
         -- ^ @f .: (g .: h) = (f .: g) .: h@
     catId   :: forall a. obj a -> arr a a   -- ^ @(idArr t) .: f = f .: (idArr s) = f@
 }
 
-catOpp          :: Category obj arr -> Category obj (FlipTF arr)
+catOpp          :: MathCategory obj arr -> MathCategory obj (FlipTF arr)
 -- ^ \"opposite category\"
-catOpp cat      = Category (\ (FlipTF f) (FlipTF g) -> FlipTF (catDot cat g f))
+catOpp cat      = MathCategory (\ (FlipTF f) (FlipTF g) -> FlipTF (catDot cat g f))
                     (FlipTF . catId cat)
 
-typesCat        :: Category Unit1 (->)
+typesCat        :: MathCategory Unit1 (->)
 -- ^ the category of Haskell types and functions
-typesCat        = Category (.) (const id)
+typesCat        = MathCategory (.) (const id)
 
 
--- ** Functor
+-- ** MathFunctor
 
--- | A @(Functor objF arrF)@ maps a @(Category obj arr)@ to a @(Category obj' arr')@ naturally.
-data Functor obj arr tF obj' arr'       = Functor {
+-- | A @(MathFunctor objF arrF)@ (Mathematical Functor) maps a @(MathCategory obj arr)@ to a
+-- @(MathCategory obj' arr')@ naturally.
+data MathFunctor obj arr tF obj' arr'   = MathFunctor {
     ftrObjF :: forall a. obj a -> obj' (tF a),
     ftrArrF :: forall a b. arr a b -> arr' (tF a) (tF b)    -- ^ commutes with @.:@, takes
         -- @idArr@ to @idArr'@
@@ -96,9 +96,9 @@ data Functor obj arr tF obj' arr'       = Functor {
 -- ^ A /contravariant functor/ from @C@ to @D@ is a (normal \"covariant\") functor from
 -- @catOpp C@ to @D@.
 
-listFunctor     :: Functor Unit1 (->) [] Unit1 (->)
--- ^ example Functor, from typesCat to typesCat
-listFunctor     = Functor (const Unit1) map
+listFunctor     :: MathFunctor Unit1 (->) [] Unit1 (->)
+-- ^ example MathFunctor, from typesCat to typesCat
+listFunctor     = MathFunctor (const Unit1) map
 
 
 -- * Universal Properties
@@ -140,7 +140,7 @@ newtype TgtArrsF arr b i t      = TgtArrsF (i -> arr b t)
 {- | An @(AdditiveCat cat homAG prod2 zeroObj ~ker ~coker)@ must satisfy the axioms below. Note
     that in a general /additive category/, @ker@ and @coker@ may be undefined. -}
 data AdditiveCat obj arr prod2TF z cokTF        = AdditiveCat {
-    acCat       :: Category obj arr,
+    acCat       :: MathCategory obj arr,
     
     acHomAG     :: forall a b. obj a -> obj b -> AbelianGroup (arr a b),
         -- ^ @.:@ is bilinear
@@ -158,7 +158,7 @@ data AdditiveCat obj arr prod2TF z cokTF        = AdditiveCat {
 
 acSum2          :: AdditiveCat obj arr prod2TF z cokTF ->
     obj b -> obj c -> UnivL obj (TgtArrs2 arr b c) arr (prod2TF b c)
-acSum2 (AdditiveCat (Category (.:) idArr) homAG prod2 _ _ _) bObj cObj  =
+acSum2 (AdditiveCat (MathCategory (.:) idArr) homAG prod2 _ _ _) bObj cObj  =
     UnivL bcObj (TgtArrs2 bToBc cToBc) sumUnivF
   where UnivR bcObj (SrcArrs2 bcToB bcToC) prodUnivF    = prod2 bObj cObj
         bToBc   = prodUnivF bObj (SrcArrs2 (idArr bObj) (homAG bObj cObj).zero)

@@ -37,7 +37,7 @@ testUPoly               = checkGroup "UPoly" props
     pT              =   -- polys of degree up to 10
         upTestOps zzRing (Range.linear 0 10) (zzTestOps { gen = zzExpGen 1_000_000 })
             (integralPowT "X" (Range.linear 0 10))
-    monom c d       = ssLead zzRing.isZero c d SSZero
+    monom c d       = ssLead zzRing.isZero c d ssZero
     
     props           = ringProps pT zeroBits zxRing
                         ++ ringHomomProps zzTestOps zzRing pT.tEq zxRing zToZX

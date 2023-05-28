@@ -21,7 +21,7 @@ import Data.Maybe (fromJust, fromMaybe)
 import Data.Mod.Word (Mod)
 import Data.Poly.Multi (MultiPoly(..), VMultiPoly, monomial, scale, unMultiPoly)
 import Data.Proxy (Proxy(Proxy))
-import Data.Stack (RVector(..), pushRev, pop)
+import Data.Stack (VRStack(..), pushRev, pop)
 import Data.Tuple.Extra (first, second)
 import Data.Typeable (Typeable, tyConName, typeRep, typeRepFingerprint, typeRepTyCon)
 import GHC.TypeNats (KnownNat, Nat, SomeNat(SomeNat), natVal, someNatVal)
@@ -72,9 +72,9 @@ vmpEvFromExps es    = {-# SCC vmpEvFromExps #-} VMPolyEV $ fromJust $ EV.toSized
     td      = VU.sum es
 
 instance (KnownNat n1, Typeable g) => GBEv (VMPolyEV n1 g) where
-    evDivides _nVars    = {-# SCC evDivides #-} VU.eqBy (<=) `on` EV.fromSized . (.ev)
+    evDivides _nVars    = VU.eqBy (<=) `on` EV.fromSized . (.ev)
     {-# INLINABLE evDivides #-}
-    evLCM _nVars v w    = {-# SCC evLCM #-} vmpEvFromExps (VU.zipWith max (vmpEvExps v) (vmpEvExps w))
+    evLCM _nVars v w    = vmpEvFromExps (VU.zipWith max (vmpEvExps v) (vmpEvExps w))
     {-# INLINABLE evLCM #-}
     evTotDeg            =
         (if isGradedTB (Proxy @g) then VU.head else VU.last) . EV.fromSized . (.ev)
@@ -84,7 +84,7 @@ type VMPolyModPwTerm (n1 :: Nat) (p :: Nat)     = (EV.Vector n1 Word, Mod p)
 
 newtype VMPolyModPw (n1 :: Nat) (p :: Nat) (g :: IsGraded)  =
     VMPolyModPw { poly :: VMultiPoly n1 (Mod p) }
-    deriving (Show, Num, NFData)
+    deriving (Eq, Show, NFData)
 
 vmpFromPV       :: PV.Vector (EV.Vector n1 Word, Mod p) -> VMPolyModPw n1 p g
 vmpFromPV       = VMPolyModPw . MultiPoly
@@ -93,7 +93,7 @@ vmpToPV         :: VMPolyModPw n1 p g -> PV.Vector (EV.Vector n1 Word, Mod p)
 vmpToPV         = unMultiPoly . (.poly)
 
 instance (KnownNat p, KnownNat n1, Typeable g) =>
-        GBPoly (VMPolyEV n1 g) (VMPolyModPwTerm n1 p) RVector (VMPolyModPw n1 p g) where
+        GBPoly (VMPolyEV n1 g) (VMPolyModPwTerm n1 p) VRStack (VMPolyModPw n1 p g) where
     leadEvNZ        = VMPolyEV . fst . PV.last . vmpToPV
     {-# INLINABLE leadEvNZ #-}
 
@@ -104,8 +104,8 @@ vmpModPwGbpOps  :: forall p n1 g. (KnownNat p, KnownNat n1, Typeable g) => UseSu
 vmpModPwGbpOps useSugar     = {-# SCC vmpModPwGbpOps #-} GBPolyOps { .. }
   where
     toEVG ev        = VMPolyEV ev :: VMPolyEV n1 g
-    toRV            :: VMultiPoly n1 (Mod p) -> RVector (VMPolyModPwTerm n1 p)
-    toRV            = RVector . unMultiPoly
+    toRV            :: VMultiPoly n1 (Mod p) -> VRStack (VMPolyModPwTerm n1 p)
+    toRV            = VRStack . unMultiPoly
     fromRV          = MultiPoly . (.v)
     polyPop         = (second fromRV <$>) . pop . toRV
     polyPushRev r   = fromRV . pushRev r . toRV
@@ -143,7 +143,7 @@ vmpModPwGbpOps useSugar     = {-# SCC vmpModPwGbpOps #-} GBPolyOps { .. }
       where
         c       = recip . snd . PV.last . vmpToPV $ p
     extraSPairs _ _ _   = []
-    sPoly f g (SPair { m })     = {-# SCC sPoly #-} shift f - shift g
+    sPoly f g (SPair { m })     = {-# SCC sPoly #-} minus pR.ag (shift f) (shift g)
       where
         shift p     = {-# SCC shift #-} vmpFromPV . PV.map (first (d +)) . PV.init . vmpToPV $ p
           where

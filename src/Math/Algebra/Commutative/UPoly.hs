@@ -16,6 +16,8 @@ import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
 import Math.Algebra.General.SparseSum
 
+import Data.Bifunctor (bimap)
+
 
 type UPoly c    = SparseSum c Integer
 -- ^ normally we require (and assume) exponents >= 0
@@ -29,7 +31,7 @@ type UPolyUniv c        = UnivL Ring (RingTgtX c) (->) (UPoly c)
 
 
 upDeg           :: UPoly c -> Integer
-upDeg p         = if ssIsZero p then -1 else ssDegNZ p
+upDeg           = sparseSum (-1) (\_ d _ -> d)
 
 upUniv          :: forall c. Ring c -> UPolyUniv c
 upUniv cR       = UnivL cxRing (RingTgtX cToCx x) cxUnivF
@@ -40,8 +42,8 @@ upUniv cR       = UnivL cxRing (RingTgtX cToCx x) cxUnivF
     cToCx       = dcToSS 0
     cxFlags     = eiBits [NotZeroRing, IsCommutativeRing, NoZeroDivisors] .&. cR.rFlags
     cxRing      = Ring ssAG cxFlags cxTimes (cToCx cR.one) (cToCx . cR.fromZ) cxDiv
-    cxIsOne (SSNZ c 0 SSZero)   = cEq c cR.one
-    cxIsOne _                   = False     -- note wrong for 0 Ring, just cxIsOne => (== one)
+    cxIsOne     = sparseSum False (\ ~c d ~t -> d == 0 && cEq c cR.one && null t)
+        -- note wrong for 0 Ring, just cxIsOne => (== one)
     cxTimesNzds p q
         | cxIsOne p     = q     -- for efficiency
         | cxIsOne q     = p     -- for efficiency
@@ -50,36 +52,34 @@ upUniv cR       = UnivL cxRing (RingTgtX cToCx x) cxUnivF
         | hasEIBit cR.rFlags NoZeroDivisors     = cxTimesNzds
         | otherwise                             = ssTimes ssUniv cR (+)
     upTimesMonom s d c
-        | cR.isZero c                           = SSZero
+        | cR.isZero c                           = ssZero
         | hasEIBit cR.rFlags NoZeroDivisors     = ssTimesNzdMonom cR (+) s d c
         | otherwise                             = ssTimesMonom cR (+) s d c
+    
     ssLead'     = ssLead cIsZero
-    cxDiv _doFull p0 p1
-        | cxIsOne p1  = (p0, SSZero)    -- for efficiency
-        | ssIsZero p1       = (SSZero, p0)
-    cxDiv  doFull p0 p1     = cxDiv' p0
-      where
-        d1  = ssDegNZ p1
-        c1  = ssHeadCoef p1
-        ~t1 = ssTail p1
-        cxDiv' p    =
-            if ssIsZero p || ssDegNZ p < d1 then (SSZero, p) else
-            let d   = ssDegNZ p
-                qd  = d - d1
-                (qc, rc)    = cR.bDiv doFull (ssHeadCoef p) c1
-                -- want p = (c1*x^d1 + t1) * (qc*x^qd + q2) + (rc*x^d + r2):
-                ~p' = ssAG.plus !$ ssTail p !$ upTimesMonom t1 qd (cNeg qc)
-                ~qr2    = if doFull.b || cIsZero rc then cxDiv' p' else (SSZero, p')
-            in  (ssLead' qc qd (fst qr2), ssLead' rc d (snd qr2))
-    cxUnivF     :: Ring t -> RingTgtX c t -> UPoly c -> t
-    cxUnivF tR (RingTgtX cToT xT) p     = case p of     -- uses Horner's rule
-        SSZero          -> tR.zero
-        SSNZ c' d' r'   -> cxToT (cToT c') d' r'
+    cxDiv doFull p0 p1  = if cxIsOne p1 then (p0, ssZero) else  -- for efficiency
+                            case pop p1 of
+        Nothing                     -> (ssZero, p0)
+        Just (SSTerm !c1 !d1, t1)   -> {-# SCC cxDiv' #-} cxDiv' p0
           where
-            (*~)                    = tR.times
-            cxToT t 0 SSZero        = t
-            cxToT t d SSZero        = t *~ expt1 (*~) xT d
-            cxToT t d (SSNZ c e r)  = cxToT (tR.plus (t *~ expt1 (*~) xT (d - e)) (cToT c)) e r
+            cxDiv' p    = case pop p of
+                Nothing             -> (ssZero, p)
+                Just (SSTerm c !d, t)
+                    | d < d1        -> (ssZero, p)
+                    | otherwise     ->
+                        let qd  = d - d1
+                            (qc, rc)    = cR.bDiv doFull c c1
+                            -- want p = (c1*x^d1 + t1) * (qc*x^qd + q2) + (rc*x^d + r2):
+                            ~p'     = ssAG.plus !$ t !$ upTimesMonom t1 qd (cNeg qc)
+                            qr2     = if doFull.b || cIsZero rc then cxDiv' p' else (ssZero, p')
+                        in  bimap (ssLead' qc qd) (ssLead' rc d) qr2
+    cxUnivF     :: Ring t -> RingTgtX c t -> UPoly c -> t
+    cxUnivF tR (RingTgtX cToT xT)   = sparseSum tR.zero (cxToT . cToT)  -- uses Horner's rule
+      where
+        (*~)        = tR.times
+        -- cxToT t d p = t*xT^d + p(xT), d > degree(p)
+        cxToT t d   = sparseSum (if d == 0 then t else t *~ expt1 (*~) xT d)
+            (\c e -> cxToT (tR.plus (t *~ expt1 (*~) xT (d - e)) (cToT c)) e)
     -- @@ use _ssUnivF !?
 
 -- @@ -> RMod, RAlg (if R comm.), R[X] * M[X] ?

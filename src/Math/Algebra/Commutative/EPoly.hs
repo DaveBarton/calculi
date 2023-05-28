@@ -1,6 +1,4 @@
 {-# LANGUAGE Strict #-}
-{-# OPTIONS_GHC -ddump-to-file -ddump-simpl -dsuppress-all -dppr-case-as-let -ddump-stg-cg 
-    -ddump-cmm -dsuppress-uniques -ddump-stg-final #-}
 
 {- |  An 'EPoly' is an \"Expanded\" or \"Exponent Vector\" Polynomial. That is, each term
     consists of a coefficient and an exponent vector ('ExponVec').
@@ -21,6 +19,7 @@ import Math.Algebra.Category.Category
 import Math.Algebra.General.SparseSum
 import Math.Algebra.Commutative.GroebnerBasis
 
+import Data.Bifunctor (bimap)
 import Data.Bits (xor, unsafeShiftL, unsafeShiftR)
 import Data.Maybe (fromJust)
 import qualified Data.Vector.Unboxed as U
@@ -201,7 +200,7 @@ data EPolyOps c     = EPolyOps {
 
 
 headTotDeg      :: EPoly c -> Integer
-headTotDeg p    = if ssIsZero p then -1 else fromIntegral (ssDegNZ p).totDeg
+headTotDeg      = sparseSum (-1) (\_ ev _ -> fromIntegral ev.totDeg)
 
 epOps                   :: forall c. Ring c -> Int -> Cmp ExponVec -> EPolyOps c
 epOps cR nVars evCmp    = EPolyOps { .. }
@@ -215,8 +214,8 @@ epOps cR nVars evCmp    = EPolyOps { .. }
     epFlags     = eiBits [NotZeroRing, IsCommutativeRing, NoZeroDivisors] .&. cR.rFlags
     epRing      = Ring ssAG epFlags epTimes (cToEp cR.one) (cToEp . cR.fromZ) epDiv
     epUniv      = UnivL epRing (RingTgtXs cToEp xs) epUnivF
-    epIsOne (SSNZ c ev SSZero)  = ev.totDeg == 0 && cEq c cR.one
-    epIsOne _                   = False     -- note wrong for 0 Ring, just epIsOne => (== one)
+    epIsOne     = sparseSum False (\ ~c ev ~t -> ev.totDeg == 0 && cEq c cR.one && null t)
+        -- note wrong for 0 Ring, just cxIsOne => (== one)
     epTimesNzds p q
         | epIsOne p     = q     -- for efficiency
         | epIsOne q     = p     -- for efficiency
@@ -227,30 +226,35 @@ epOps cR nVars evCmp    = EPolyOps { .. }
     epTimesNzMonom
         | hasEIBit cR.rFlags NoZeroDivisors     = ssTimesNzdMonom
         | otherwise                             = ssTimesMonom
-    epTimesMonom s d c  = if cR.isZero c then SSZero else epTimesNzMonom cR (evPlus nVars) s d c
+    {- epTimesMonom s d c  =
+        if cR.isZero c then ssZero else epTimesNzMonom cR (evPlus nVars) s d c -}
+    minusTimesMonom p s d c     =   -- p - s*c*vars^d
+        if cR.isZero c then p else
+            ssAG.plus !$ p !$ epTimesNzMonom cR (evPlus nVars) s d (cNeg c)
+    {-# INLINE minusTimesMonom #-}
 
     ssLead'     = ssLead cIsZero
-    epDiv _doFull p0 p1
-        | epIsOne p1                    = (p0, SSZero)  -- for efficiency
-    epDiv _doFull p0 SSZero             = (SSZero, p0)
-    epDiv  doFull p0 (SSNZ c1 ev1 ~t1)  = {-# SCC epDiv' #-} epDiv' p0
-      where
-        epDiv' p@SSZero                     = (SSZero, p)
-        epDiv' p
-            | evCmp (ssDegNZ p) ev1 == LT   = (SSZero, p)
-        epDiv' p@(SSNZ c ev ~t)             =
-            case evMinusMay nVars ev ev1 of
-                Nothing     -> -- {-# SCC "sub-top-epDiv'" #-}
-                    if not doFull.b then (SSZero, p) else
-                    let (q2, r2) = epDiv' t
-                    in (q2, SSNZ c ev r2)
-                Just qd     -> -- {-# SCC "top-etc-epDiv'" #-}
-                    let (qc, rc)    = cR.bDiv doFull c c1
-                        -- want p = (c1*x^ev1 + t1) * (qc*x^qd + q2) + (rc*x^ev + r2):
-                        ~p'         = {-# SCC "epDiv'-+-qM*" #-} ssAG.plus !$ t
-                                        !$ epTimesMonom t1 qd (cNeg qc)
-                        ~qr2    = if doFull.b || cIsZero rc then epDiv' p' else (SSZero, p')
-                    in  (ssLead' qc qd (fst qr2), ssLead' rc ev (snd qr2))
+    epDiv doFull p0 p1  = if epIsOne p1 then (p0, ssZero) else  -- for efficiency
+                            case pop p1 of
+        Nothing                     -> (ssZero, p0)
+        Just (SSTerm !c1 !ev1, t1)  -> {-# SCC epDiv' #-} epDiv' p0
+          where
+            epDiv' p    = case pop p of
+                Nothing                     -> (ssZero, p)
+                Just (SSTerm c !ev, t)
+                    | evCmp ev ev1 == LT    -> (ssZero, p)
+                    | otherwise             -> case evMinusMay nVars ev ev1 of
+                        Nothing     -> -- {-# SCC "sub-top-epDiv'" #-}
+                            if not doFull.b then (ssZero, p) else
+                            let (q2, r2) = epDiv' t
+                            in  (q2, SSTerm c ev .: r2)
+                        Just qd     -> -- {-# SCC "top-etc-epDiv'" #-}
+                            let (qc, rc)    = cR.bDiv doFull c c1
+                                -- want p = (c1*x^ev1 + t1) * (qc*x^qd + q2) + (rc*x^ev + r2):
+                                ~p'     = {-# SCC "epDiv'-+-qM*" #-} minusTimesMonom t t1 qd qc
+                                qr2     = if doFull.b || cIsZero rc then epDiv' p' else
+                                            (ssZero, p')
+                            in  bimap (ssLead' qc qd) (ssLead' rc ev) qr2
     epUnivF     :: Ring t -> RingTgtXs c t -> EPoly c -> t
     epUnivF tR (RingTgtXs cToT xTs)     = ssUnivF tR.ag (TgtArrsF dcToT)
       where
@@ -284,7 +288,7 @@ epGBPOps evCmp isGraded cR descVarSs cShowPrec useSugar     = GBPolyOps { .. }
   where
     evSs@(EvVarSs { nVars, isRev })     = evVarSs descVarSs evCmp
     nEvGroups           = nVars
-    evGroup             = exponsL nVars
+    evGroup             = (if isRev then reverse else id) . exponsL nVars
     evShowPrec          = evShowPrecF evSs
     EPolyOps { epUniv } = epOps cR nVars evCmp
     UnivL pR (RingTgtXs _cToP xs) _pUnivF   = epUniv
@@ -293,10 +297,10 @@ epGBPOps evCmp isGraded cR descVarSs cShowPrec useSugar     = GBPolyOps { .. }
     extraSPairs _ _ _   = []
     sPoly f g (SPair { m })     = minus pR.ag (shift f) (shift g)
       where
-        shift (SSNZ _ ev t) = ssShift (evPlus nVars (fromJust (evMinusMay nVars m ev))) t
-        shift _             = undefined
+        shift       = sparseSum undefined
+            (\ _ ev t -> ssShift (evPlus nVars (fromJust (evMinusMay nVars m ev))) t)
     homogDeg0           = if isGraded.b then sparseSum 0 (\_ ev _ -> evTotDeg ev) else
-        ssFoldr (\ _ ev n -> max ev.totDeg n) 0
+        foldl' (\acc (SSTerm _ !ev) -> max acc ev.totDeg) 0
     pShow               = ssShowPrec evShowPrec cShowPrec 0
 
 epCountZeros        :: Ring c -> [c] -> EPolyOps c -> [EPoly c] -> Int

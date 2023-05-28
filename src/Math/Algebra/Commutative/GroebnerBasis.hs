@@ -1,5 +1,4 @@
 {-# LANGUAGE FunctionalDependencies, Strict #-}
-{-# OPTIONS_GHC -ddump-to-file -ddump-simpl -dsuppress-all -dppr-case-as-let #-}
 
 {- |  This module defines functions for computing and using a Groebner Basis.
     
@@ -179,7 +178,7 @@ class GBEv ev where
     evLCM       :: Int -> Op2 ev    -- ^ Least Common Multiple, given @nVars@
     evTotDeg    :: ev -> Word
 
-class (GBEv ev, Coercible (pf term) p, Coercible p (pf term), Stack pf) =>
+class (GBEv ev, Coercible (pf term) p, Stack pf) =>
         GBPoly ev term pf p | p -> pf, p -> term, p -> ev where
     leadEvNZ    :: p -> ev          -- ^ the argument must be nonzero
 -- ^ A polynomial's terms must be nonzero and have decreasing exponent vectors.
@@ -203,7 +202,7 @@ prependReversed r p = coerce (pushRev r (coerce p :: pf term))
 {-
 cons            :: forall ev term pf p. GBPoly ev term pf p => term -> Op1 p
 -- ^ The first argument must be nonzero and more main than the second argument.
-cons t p        = coerce (push t (coerce p :: pf term))
+cons t p        = coerce (t .: (coerce p :: pf term))
 {-# INLINE cons #-}
 -}
 
@@ -358,9 +357,9 @@ kgsFindReducer evGroup p kgs    =
         esF bnp _  SL.Nil   = bnp
         esF bnp pe ((ENPs e ~nps) :! ~t)
             | pe < e    = bnp
-            | otherwise = esF ({- # SCC npsF # -} npsF bnp nps) pe t
+            | otherwise = esF (npsF bnp nps) pe t
         {-# INLINE esF #-}
-        vF bnp (pe, enpss)      = {- # SCC esF # -} esF bnp pe enpss
+        vF bnp (pe, enpss)      = esF bnp pe enpss
         resSep  = foldl' vF (SizedEPoly (maxBound :: Int) pZero)
                     (zip (evGroup pEv) (toList kgs))
     in  if resSep.n < (maxBound :: Int) then Just resSep.p else Nothing
