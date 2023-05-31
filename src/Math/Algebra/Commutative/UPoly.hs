@@ -41,20 +41,20 @@ upUniv cR       = UnivL cxRing (RingTgtX cToCx x) cxUnivF
     x           = dcToSS 1 cR.one
     cToCx       = dcToSS 0
     cxFlags     = eiBits [NotZeroRing, IsCommutativeRing, NoZeroDivisors] .&. cR.rFlags
-    cxRing      = Ring ssAG cxFlags cxTimes (cToCx cR.one) (cToCx . cR.fromZ) cxDiv
+    nzds        = hasEIBit cR.rFlags NoZeroDivisors
+    cxRing      = Ring ssAG cxFlags (if nzds then cxTimesNzds else ssTimes ssUniv cR (+))
+                    (cToCx cR.one) (cToCx . cR.fromZ) cxDiv
     cxIsOne     = sparseSum False (\ ~c d ~t -> d == 0 && cEq c cR.one && null t)
         -- note wrong for 0 Ring, just cxIsOne => (== one)
     cxTimesNzds p q
         | cxIsOne p     = q     -- for efficiency
         | cxIsOne q     = p     -- for efficiency
         | otherwise     = ssTimesNzds ssUniv cR (+) p q
-    cxTimes
-        | hasEIBit cR.rFlags NoZeroDivisors     = cxTimesNzds
-        | otherwise                             = ssTimes ssUniv cR (+)
-    upTimesMonom s d c
-        | cR.isZero c                           = ssZero
-        | hasEIBit cR.rFlags NoZeroDivisors     = ssTimesNzdMonom cR (+) s d c
-        | otherwise                             = ssTimesMonom cR (+) s d c
+    minusTimesMonom p s d c     =   -- p - s*c*vars^d
+        if cR.isZero c then p else
+            ssAG.plus !$ p !$
+                (if nzds then ssTimesNzdMonom else ssTimesMonom) cR (+) s d (cNeg c)
+    {-# INLINE minusTimesMonom #-}
     
     ssLead'     = ssLead cIsZero
     cxDiv doFull p0 p1  = if cxIsOne p1 then (p0, ssZero) else  -- for efficiency
@@ -70,7 +70,7 @@ upUniv cR       = UnivL cxRing (RingTgtX cToCx x) cxUnivF
                         let qd  = d - d1
                             (qc, rc)    = cR.bDiv doFull c c1
                             -- want p = (c1*x^d1 + t1) * (qc*x^qd + q2) + (rc*x^d + r2):
-                            ~p'     = ssAG.plus !$ t !$ upTimesMonom t1 qd (cNeg qc)
+                            ~p'     = minusTimesMonom t t1 qd qc
                             qr2     = if doFull.b || cIsZero rc then cxDiv' p' else (ssZero, p')
                         in  bimap (ssLead' qc qd) (ssLead' rc d) qr2
     cxUnivF     :: Ring t -> RingTgtX c t -> UPoly c -> t

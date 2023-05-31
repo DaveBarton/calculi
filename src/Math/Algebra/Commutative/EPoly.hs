@@ -212,7 +212,10 @@ epOps cR nVars evCmp    = EPolyOps { .. }
     xs          = [dcToSS (evMake [if i == j then 1 else 0 | j <- inds]) cR.one | i <- inds]
     cToEp       = dcToSS evZero
     epFlags     = eiBits [NotZeroRing, IsCommutativeRing, NoZeroDivisors] .&. cR.rFlags
-    epRing      = Ring ssAG epFlags epTimes (cToEp cR.one) (cToEp . cR.fromZ) epDiv
+    nzds        = hasEIBit cR.rFlags NoZeroDivisors
+    epRing      = Ring ssAG epFlags
+                    (if nzds then epTimesNzds else ssTimes ssUniv cR (evPlus nVars))
+                    (cToEp cR.one) (cToEp . cR.fromZ) epDiv
     epUniv      = UnivL epRing (RingTgtXs cToEp xs) epUnivF
     epIsOne     = sparseSum False (\ ~c ev ~t -> ev.totDeg == 0 && cEq c cR.one && null t)
         -- note wrong for 0 Ring, just cxIsOne => (== one)
@@ -220,12 +223,7 @@ epOps cR nVars evCmp    = EPolyOps { .. }
         | epIsOne p     = q     -- for efficiency
         | epIsOne q     = p     -- for efficiency
         | otherwise     = ssTimesNzds ssUniv cR (evPlus nVars) p q
-    epTimes
-        | hasEIBit cR.rFlags NoZeroDivisors     = epTimesNzds
-        | otherwise                             = ssTimes ssUniv cR (evPlus nVars)
-    epTimesNzMonom
-        | hasEIBit cR.rFlags NoZeroDivisors     = ssTimesNzdMonom
-        | otherwise                             = ssTimesMonom
+    epTimesNzMonom  = if nzds then ssTimesNzdMonom else ssTimesMonom
     {- epTimesMonom s d c  =
         if cR.isZero c then ssZero else epTimesNzMonom cR (evPlus nVars) s d c -}
     minusTimesMonom p s d c     =   -- p - s*c*vars^d
