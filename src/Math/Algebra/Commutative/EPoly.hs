@@ -152,14 +152,15 @@ evGrLexCmp (ExponVec d es) (ExponVec d' es')    = compare d d' <> cmpExps undefi
 
 evLexCmpF       :: Int -> Cmp ExponVec
 -- ^ The variables go from most main (variable 0) to least main, in big-endian order.
-evLexCmpF nVars ev@(ExponVec _ es) ev'@(ExponVec _ es')     =
+evLexCmpF ~nVars ev@(ExponVec _ es) ev'@(ExponVec _ es')    =
     cmpExps (compare (exponsL nVars ev) (exponsL nVars ev')) es es'
 
 epEvCmpF            :: Int -> StdEvCmp -> Cmp ExponVec
-epEvCmpF nVars      = \case
+epEvCmpF ~nVars     = \case
     LexCmp      -> evLexCmpF nVars
     GrLexCmp    -> evGrLexCmp
     GrRevLexCmp -> evGrRevLexCmp
+{-# INLINE epEvCmpF #-}
 
 
 type EPoly c    = SparseSum c ExponVec

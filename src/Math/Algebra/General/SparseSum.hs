@@ -143,12 +143,12 @@ ssAGUniv (AbelianGroup _cFlags eq plus _zero isZero neg) dCmp   =
     ssLead'     = ssLead isZero
     ssPlus x y  = case pop x of
         Nothing                         -> y
-        Just (xh@(SSTerm ~xc xd), ~xt)    -> case pop y of
+        Just (xh@(SSTerm xc xd), xt)    -> case pop y of
             Nothing                         -> x
-            Just (yh@(SSTerm ~yc yd), ~yt)   -> case xd `dCmp` yd of
+            Just (yh@(SSTerm yc !yd), yt)   -> case xd `dCmp` yd of
                 GT  -> xh .: xt `ssPlus` y
                 LT  -> yh .: x `ssPlus` yt
-                EQ  -> ssLead' (xc `plus` yc) xd (xt `ssPlus` yt)
+                EQ  -> ssLead' (xc `plus` yc) yd (xt `ssPlus` yt)
     {-# INLINABLE ssPlus #-}
     ssNeg       = ssMapNZFC neg
     ssEq x y    = case pop x of
