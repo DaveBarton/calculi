@@ -24,7 +24,7 @@ common deps
     default-language:   GHC2021
     default-extensions: DuplicateRecordFields LambdaCase MonoLocalBinds NoFieldSelectors
                         OverloadedRecordDot PatternSynonyms RecordWildCards
-    other-extensions:   CPP, DataKinds, FunctionalDependencies, Strict, ViewPatterns
+    other-extensions:   CPP DataKinds FunctionalDependencies Strict ViewPatterns
     ghc-options:        -Wall -Wcompat -feager-blackholing
     build-depends:      base >= 4.16 && < 5, containers == 0.6.*, extra >= 1.6 && < 1.8
 
@@ -32,7 +32,6 @@ library
     import:             deps
     
     exposed-modules:
-        Data.Stack
         Math.Algebra.General.Algebra
         Math.Algebra.Category.Category
         Math.Algebra.Commutative.Field.ZModPW
@@ -41,7 +40,7 @@ library
         Math.Algebra.Commutative.UPoly
         Math.Algebra.Commutative.GroebnerBasis
         Math.Algebra.Commutative.EPoly
-        Math.Algebra.Commutative.VMPoly
+        -- Math.Algebra.Commutative.VMPoly
         Math.Algebra.Commutative.BinPoly
         Math.Algebra.Commutative.GBDemo
         Math.Prob.Random
@@ -49,9 +48,10 @@ library
 
     build-depends:
         -- fmt >= 0.4,
+        -- inspection-testing >= 0.3,
         mod,
         parallel == 3.2.*,
-        poly >= 0.5.1, deepseq, finite-typelits, vector-sized,
+        -- poly >= 0.5.1, deepseq, finite-typelits, vector-sized,
         -- primitive >= 0.8,
             -- @@ replace atomic-counter with primitive 0.8 when vector-sized allows it
         atomic-counter,
@@ -118,6 +118,7 @@ benchmark bench
     import:             deps
     main-is:            bench.hs
     type:               exitcode-stdio-1.0
-    build-depends:      calculi, deepseq, poly, strict, tasty, tasty-bench, vector, vector-sized
+    build-depends:      calculi, deepseq, strict, tasty, tasty-bench
+                        -- , poly, vector, vector-sized
     hs-source-dirs:     timings
     ghc-options:        -rtsopts -with-rtsopts=-T

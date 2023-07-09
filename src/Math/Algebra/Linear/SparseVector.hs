@@ -10,8 +10,8 @@
 module Math.Algebra.Linear.SparseVector (
     -- * SparseVector
     SparseVector(..), SparseVectorUniv,
-    svZero, pICToSV, svIsZero, svSize, svMapC, svMapNZFC, svFoldr',
-    svAGUniv, SVCoordOps(..), svCoordOps, svDotWith, SVOverRingOps(..), svOverRingOps, svSwap,
+    svZero, pICToSV, svReplaceC, svIsZero, svCoord, svSize, svMapC, svMapNZFC, svFoldr',
+    svAGUniv, svDotWith, svTimesNzdC, svTimesC, svMonicizeU, svSwap,
     svShowPrec,
     
     -- * SparseMatrix
@@ -47,8 +47,14 @@ svZero          = SV IM.empty
 pICToSV         :: Pred c -> Int -> c -> SparseVector c
 pICToSV cIsZero i c     = if cIsZero c then svZero else SV (IM.singleton i c)
 
+svReplaceC              :: Pred c -> Int -> c -> Op1 (SparseVector c)
+svReplaceC cIsZero i c  = SV . (if cIsZero c then IM.delete i else IM.insert i c) . (.im)
+
 svIsZero        :: SparseVector c -> Bool
 svIsZero        = IM.null . (.im)
+
+svCoord             :: c -> Int -> SparseVector c -> c
+svCoord cZero i v   = fromMaybe cZero (v.im IM.!? i)
 
 svSize          :: SparseVector c -> Int
 -- ^ \(n\), the number of nonzero coefficients; \(O(n)\)
@@ -76,43 +82,23 @@ svAGUniv (AbelianGroup _cFlags eq plus _zero isZero neg)    = UnivL svAG (TgtArr
     iCToSV          = pICToSV isZero
     univF tAG (TgtArrsF iCToT)  = svFoldr' tAG.plus tAG.zero iCToT
 
-data SVCoordOps c   = SVCoordOps {  -- @@ change to a class or toplevel functions
-    coord           :: Int -> SparseVector c -> c,
-    replaceC        :: Int -> c -> Op1 (SparseVector c)
-}
-svCoordOps                          :: AbelianGroup c -> SVCoordOps c
-svCoordOps (AbelianGroup { .. })    = SVCoordOps { .. }
-  where
-    coord i v   = fromMaybe zero (v.im IM.!? i)
-    replaceC i c    = SV . (if isZero c then IM.delete i else IM.insert i c) . (.im)
-
 svDotWith       :: (c -> c1 -> c2) -> AbelianGroup c2 -> SparseVector c -> SparseVector c1 -> c2
 svDotWith f (AbelianGroup { plus, zero }) (SV m) (SV m')    =
     IM.foldr' plus zero (IM.intersectionWith f m m')
 
-data SVOverRingOps c    = SVOverRingOps {  -- @@ change to a class or toplevel functions
-    nzcTimes        :: c -> Op1 (SparseVector c),   -- ^ the @c@ is nonzero
-    cTimes          :: c -> Op1 (SparseVector c),
-    monicizeU       :: Int -> Op1 (SparseVector c),
-        -- ^ @(monicizeU i v)@ requires that the @i@'th coefficient of @v@ is a unit
-    timesNZC        :: c -> Op1 (SparseVector c),   -- ^ the @c@ is nonzero
-    timesC          :: c -> Op1 (SparseVector c)
-}
-svOverRingOps                   :: forall c. Ring c -> SVOverRingOps c
-svOverRingOps cR@(Ring { .. })  = SVOverRingOps { .. }
-  where
-    isZero      = cR.isZero
-    nzcTimes
-        | hasEIBit rFlags NoZeroDivisors    = \c -> svMapNZFC (c `times`)
-        | otherwise                         = \c -> svMapC isZero (c `times`)
-    cTimes c v  = if isZero c then svZero else nzcTimes c v
-    monicizeU i v@(SV m)    =
-        let c       = m IM.! i  -- check for c = 1 for speed
-        in  if rIsOne cR c then v else svMapNZFC (rInv cR c `times`) v
-    timesNZC
-        | hasEIBit rFlags NoZeroDivisors    = \c -> svMapNZFC (`times` c)
-        | otherwise                         = \c -> svMapC isZero (`times` c)
-    timesC c v  = if isZero c then svZero else timesNZC c v
+svTimesNzdC     :: Ring c -> c -> Op1 (SparseVector c)
+-- ^ the @c@ must not be a right zero divisor, i.e. @a*c = 0 => a = 0@
+svTimesNzdC (Ring { times }) c  = svMapNZFC (`times` c)
+
+svTimesC        :: Ring c -> c -> Op1 (SparseVector c)
+-- ^ If the @c@ is not a right zero divisor, then 'svTimesNzdC' is faster.
+svTimesC cR@(Ring { times }) c  = svMapC cR.isZero (`times` c)
+
+svMonicizeU     :: Ring c -> Int -> Op1 (SparseVector c)
+-- ^ @(svMonicizeU cR i v)@ requires that the @i@'th coefficient of @v@ is a unit (and nonzero)
+svMonicizeU cR@(Ring { times }) i v@(SV m)  =
+    let c       = m IM.! i  -- check for c = 1 for speed
+    in  if rIsOne cR c then v else svMapNZFC (`times` rInv cR c) v
 
 svSwap          :: Int -> Int -> Op1 (SparseVector c)
 -- ^ swaps two coefficients
@@ -143,7 +129,7 @@ scmPDiag cIsZero n c    = if cIsZero c then svZero else
 scmCol          :: SparseColsMat c -> Int -> SparseVector c
 scmCol mat j    = IM.findWithDefault svZero j mat.im
 
-data SCMOps c   = SCMOps {  -- @@ change to a class or toplevel functions?
+data SCMOps c   = SCMOps {
     vModR           :: ModR c (SparseVector c),
     scmTimesV       :: SparseColsMat c -> Op1 (SparseVector c),
     scmRing         :: Ring (SparseColsMat c)
@@ -154,19 +140,20 @@ scmOps cR maxN  = SCMOps { .. }
   where
     cIsZero         = cR.isZero
     UnivL vAG (TgtArrsF _iCToV) _vUnivF     = svAGUniv cR.ag
-    SVCoordOps { .. }   = svCoordOps cR.ag
-    vOverCRingA     = svOverRingOps cR
+    cNzds           = hasEIBit cR.rFlags NoZeroDivisors
+    timesNzC        = (if cNzds then svTimesNzdC else svTimesC) cR
+    timesNzdsC c v  = if cIsZero c then svZero else svTimesNzdC cR c v
     vBDiv doFull v@(SV vm) (SV wm)  = fromMaybe (cR.zero, v) $ do
         (i, wc)     <- IM.lookupMin wm
         vc          <- if doFull.b then vm IM.!? i else
                         do (vi, c) <- IM.lookupMin vm; pureIf (vi == i) c
         let (q, cr) = cR.bDiv doFull vc wc
         pureIf (not (cIsZero q))    -- for speed
-            (q, vAG.plus (replaceC i cr v)
-                         (vOverCRingA.timesNZC (cR.neg q) (SV (IM.delete i wm))))
-    vModR           = Module vAG vOverCRingA.timesC vBDiv
+            (q, vAG.plus (svReplaceC cIsZero i cr v)
+                         (timesNzC (cR.neg q) (SV (IM.delete i wm))))
+    vModR           = Module vAG (if cNzds then timesNzdsC else svTimesC cR) vBDiv
     UnivL ag (TgtArrsF _jVToMat) _vvUnivF   = svAGUniv vAG
-    scmTimesV       = svDotWith (flip vOverCRingA.timesNZC) vAG
+    scmTimesV       = flip (svDotWith timesNzC vAG)
     matFlags        = case maxN of
         0   -> eiBits [IsCommutativeRing, NoZeroDivisors, IsInversesRing]
         1   -> cR.rFlags

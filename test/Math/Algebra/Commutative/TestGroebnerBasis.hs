@@ -17,7 +17,7 @@ import Data.Foldable (toList)
 import qualified Data.Sequence as Seq
 
 
-groebnerBasisProps      :: GBPoly ev term pf p => GBPolyOps ev p -> ShowGen [p] ->
+groebnerBasisProps      :: GBPoly ev term p => GBPolyOps ev p -> ShowGen [p] ->
                             ([p] -> Int) -> [(PropertyName, Property)]
 -- currently checks original gens & s-pairs reduce to 0 using 'bModBy'; TODO add a bDivBy and
 -- test it & bModBy, and test the stdGens are in the original ideal

@@ -8,7 +8,7 @@
 
 module Math.Algebra.General.SparseSum (
     SSTerm(..), SparseSum, SparseSumUniv,
-    ssZero, (.:), pop, sparseSum, ssHead,
+    ssZero, pattern (:!), sparseSum, ssHead,
     ssLexCmp, ssDegCmp,
     ssLead, ssMapC, ssMapNZFC, ssShift, ssShiftMapC, ssShiftMapNZFC,
     ssAGUniv, ssFoldSort, ssDotWith,
@@ -24,8 +24,8 @@ import Data.Bifunctor (Bifunctor(first, second, bimap))
 import Data.Foldable (toList)
 import Data.List (sortBy)
 import Data.Maybe (fromJust)
-import Data.Stack (Stack(..))
 import GHC.Stack (HasCallStack)
+import StrictList2 (pattern (:!))
 import qualified StrictList2 as SL
 
 
@@ -45,9 +45,8 @@ instance Bifunctor SSTerm where
     {-# INLINE second #-}
 
 type SparseSum c d  = SL.List (SSTerm c d)
--- ^ a sorted list of non-\"zero\" terms, with \"degrees\" decreasing according to a total
--- order. More generally, every @Stack@ of @SSTerm@s in this module must have only nonzero
--- terms, with decreasing degrees (or "basis elements").
+-- ^ a sorted list of non-\"zero\" terms, with \"degrees\" (or "basis elements") decreasing
+-- according to a total order.
 
 type SparseSumUniv d c ss   = UnivL AbelianGroup (TgtArrsF (->) c d) (->) ss
 {- ^ an @AbelianGroup ss@, @dcToSS@ function, and a function for mapping to other
@@ -55,53 +54,50 @@ type SparseSumUniv d c ss   = UnivL AbelianGroup (TgtArrsF (->) c d) (->) ss
     copy of \(C\). -}
 
 
-ssZero              :: Stack s => s (SSTerm c d)
-ssZero              = empty
-{-# INLINE ssZero #-}
+ssZero              :: SparseSum c d
+ssZero              = SL.Nil
 
-sparseSum           :: Stack s => a -> (c -> d -> s (SSTerm c d) -> a) -> s (SSTerm c d) -> a
+sparseSum           :: a -> (c -> d -> SparseSum c d -> a) -> SparseSum c d -> a
 -- ^ like 'maybe' or 'either'
-sparseSum ~z ~f x   = maybe z (\(SSTerm c d, t) -> f c d t) (pop x)
+sparseSum ~z ~f x   = maybe z (\(SSTerm c d, t) -> f c d t) (SL.uncons x)
 {-# INLINE sparseSum #-}
 
-ssHead              :: (HasCallStack, Stack s) => s (SSTerm c d) -> SSTerm c d
-ssHead x            = fst (fromJust (pop x))
+ssHead              :: HasCallStack => SparseSum c d -> SSTerm c d
+ssHead x            = fst (fromJust (SL.uncons x))
 {-# INLINE ssHead #-}
 
-ssLexCmp        :: Stack s => Cmp d -> c -> Cmp c -> Cmp (s (SSTerm c d))
+ssLexCmp        :: Cmp d -> c -> Cmp c -> Cmp (SparseSum c d)
 -- ^ \"lexicographic\" comparison
 ssLexCmp bCmp cZero cCmp        = ssCmp
   where
-    ssCmp x y   = case pop x of
-        Nothing                     -> case pop y of
+    ssCmp x y   = case SL.uncons x of
+        Nothing                     -> case SL.uncons y of
             Nothing                     -> EQ
             Just (SSTerm !yc _, _)      -> cCmp cZero yc
-        Just (SSTerm xc xd, xt)     -> case pop y of
+        Just (SSTerm xc xd, xt)     -> case SL.uncons y of
             Nothing                     -> cCmp xc cZero
             Just (SSTerm yc !yd, yt)    -> case bCmp xd yd of
                 GT  -> cCmp xc cZero
                 LT  -> cCmp cZero yc
                 EQ  -> cCmp xc yc <> ssCmp xt yt
-{-# INLINABLE ssLexCmp #-}
 
-ssDegCmp        :: Stack s => Cmp d -> IsDeep -> Cmp (s (SSTerm c d))
+ssDegCmp        :: Cmp d -> IsDeep -> Cmp (SparseSum c d)
 ssDegCmp dCmp deep  = go
   where
-    go x y  = case pop x of
-        Nothing                 -> maybe EQ (const LT) (pop y)
-        Just (SSTerm _ xd, xt)  -> case pop y of
+    go x y  = case SL.uncons x of
+        Nothing                 -> maybe EQ (const LT) (SL.uncons y)
+        Just (SSTerm _ xd, xt)  -> case SL.uncons y of
             Nothing                 -> GT
             Just (SSTerm _ yd, yt)  ->
                 let dOrd    = dCmp xd yd
                 in  if dOrd /= EQ || not deep.b then dOrd else go xt yt
-{-# INLINABLE ssDegCmp #-}
 
-ssLead              :: Stack s => Pred c -> c -> d -> s (SSTerm c d) -> s (SSTerm c d)
+ssLead              :: Pred c -> c -> d -> SparseSum c d -> SparseSum c d
 -- ^ @ssLead cIs0 c d s@ assumes @d > degree(s)@
-ssLead cIs0 c ~d ~t = if cIs0 c then t else SSTerm c d .: t
+ssLead cIs0 c ~d ~t = if cIs0 c then t else SSTerm c d :! t
 {-# INLINE ssLead #-}
 
-ssMapC          :: Stack s => Pred c' -> (c -> c') -> s (SSTerm c d) -> s (SSTerm c' d)
+ssMapC          :: Pred c' -> (c -> c') -> SparseSum c d -> SparseSum c' d
 -- ^ @ssMapC is0 f x@ applies @f@ to each coefficient in @x@.
 ssMapC is0 f    = foldr k ssZero
   where
@@ -110,18 +106,17 @@ ssMapC is0 f    = foldr k ssZero
         c'      = f cd.c
 {-# INLINABLE ssMapC #-}
 
-ssMapNZFC       :: Stack s => (c -> c') -> s (SSTerm c d) -> s (SSTerm c' d)
+ssMapNZFC       :: (c -> c') -> SparseSum c d -> SparseSum c' d
 -- ^ assumes the @(c -> c')@ takes nonzero values to nonzero values
 ssMapNZFC f     = fmap (first f)
 {-# INLINE ssMapNZFC #-}
 
-ssShift         :: Stack s => (d -> d') -> s (SSTerm c d) -> s (SSTerm c d')
+ssShift         :: (d -> d') -> SparseSum c d -> SparseSum c d'
 -- ^ assumes the @(d -> d')@ is order-preserving
 ssShift f       = fmap (second f)
 {-# INLINE ssShift #-}
 
-ssShiftMapC     :: Stack s => Pred c' -> (d -> d') -> (c -> c') -> s (SSTerm c d) ->
-                    s (SSTerm c' d')
+ssShiftMapC     :: Pred c' -> (d -> d') -> (c -> c') -> SparseSum c d -> SparseSum c' d'
 -- ^ assumes the @(d -> d')@ is order-preserving
 ssShiftMapC is0 df cf   = foldr k ssZero
   where
@@ -130,7 +125,7 @@ ssShiftMapC is0 df cf   = foldr k ssZero
         c'      = cf cd.c
 {-# INLINABLE ssShiftMapC #-}
 
-ssShiftMapNZFC  :: Stack s => (d -> d') -> (c -> c') -> s (SSTerm c d) -> s (SSTerm c' d')
+ssShiftMapNZFC  :: (d -> d') -> (c -> c') -> SparseSum c d -> SparseSum c' d'
 {- ^ assumes the @(d -> d')@ is order-preserving, and the @(c -> c')@ takes nonzero values to
     nonzero values -}
 ssShiftMapNZFC df cf    = fmap (bimap cf df)
@@ -141,19 +136,18 @@ ssAGUniv (AbelianGroup _cFlags eq plus _zero isZero neg) dCmp   =
     UnivL ssAG (TgtArrsF dcToSS) univF
   where
     ssLead'     = ssLead isZero
-    ssPlus x y  = case pop x of
+    ssPlus x y  = case SL.uncons x of
         Nothing                         -> y
-        Just (xh@(SSTerm xc xd), xt)    -> case pop y of
+        Just (xh@(SSTerm xc xd), xt)    -> case SL.uncons y of
             Nothing                         -> x
             Just (yh@(SSTerm yc !yd), yt)   -> case xd `dCmp` yd of
-                GT  -> xh .: xt `ssPlus` y
-                LT  -> yh .: x `ssPlus` yt
+                GT  -> xh :! xt `ssPlus` y
+                LT  -> yh :! x `ssPlus` yt
                 EQ  -> ssLead' (xc `plus` yc) yd (xt `ssPlus` yt)
-    {-# INLINABLE ssPlus #-}
     ssNeg       = ssMapNZFC neg
-    ssEq x y    = case pop x of
+    ssEq x y    = case SL.uncons x of
         Nothing                     -> null y
-        Just (SSTerm xc xd, xt)     -> case pop y of
+        Just (SSTerm xc xd, xt)     -> case SL.uncons y of
             Nothing                     -> False
             Just (SSTerm yc yd, yt)     -> dCmp xd yd == EQ && eq xc yc && ssEq xt yt
     ssAG        = abelianGroup ssEq ssPlus ssZero null ssNeg
@@ -161,9 +155,8 @@ ssAGUniv (AbelianGroup _cFlags eq plus _zero isZero neg) dCmp   =
     univF (AbelianGroup _ _ vPlus vZero _ _) (TgtArrsF dcToV)   = go
       where
         go  = sparseSum vZero (\c d t -> vPlus !$ dcToV d c !$ go t)
-{-# INLINABLE ssAGUniv #-}
 
-ssFoldSort      :: Stack s => AbelianGroup c -> Cmp d -> [SSTerm c d] -> s (SSTerm c d)
+ssFoldSort      :: AbelianGroup c -> Cmp d -> [SSTerm c d] -> SparseSum c d
 -- ^ sorts and combines the terms; input terms may have coefs which are 0
 ssFoldSort (AbelianGroup _ _ cPlus _ cIsZero _) dCmp cds0   =
     go ssZero (sortBy (dCmp `on` (.d)) cds0)
@@ -174,22 +167,20 @@ ssFoldSort (AbelianGroup _ _ cPlus _ cIsZero _) dCmp cds0   =
       where
         go2 c (cd : t)
             | dCmp d cd.d == EQ     = go2 (cPlus c cd.c) t
-        go2 c cds           = go (if cIsZero c then done else SSTerm c d .: done) cds
-{-# INLINABLE ssFoldSort #-}
+        go2 c cds           = go (if cIsZero c then done else SSTerm c d :! done) cds
 
-ssDotWith       :: Stack s => Cmp d -> (c -> c1 -> c2) -> AbelianGroup c2 ->
-                        s (SSTerm c d) -> s (SSTerm c1 d) -> c2
+ssDotWith       :: Cmp d -> (c -> c1 -> c2) -> AbelianGroup c2 ->
+                        SparseSum c d -> SparseSum c1 d -> c2
 ssDotWith dCmp f (AbelianGroup { plus, zero })  = dot
   where
-    dot x y         = maybe zero xGo (pop x)
+    dot x y         = maybe zero xGo (SL.uncons x)
       where
-        xGo (SSTerm xc !xd, xt)     = maybe zero yGo (pop y)
+        xGo (SSTerm xc !xd, xt)     = maybe zero yGo (SL.uncons y)
           where
             yGo (SSTerm yc !yd, yt)     = case xd `dCmp` yd of
                 GT  -> dot xt y
                 LT  -> dot x yt
                 EQ  -> plus !$ (f !$ xc !$ yc) !$ dot xt yt
-{-# INLINABLE ssDotWith #-}
 
 ssNzdCTimes     :: Ring c -> c -> Op1 (SparseSum c d)
 -- ^ the @c@ must not be a left zero divisor, i.e. @c*a = 0 => a = 0@
@@ -243,7 +234,7 @@ ssTimes (UnivL ssAG _ univF) cR dOp2 s  = univF ssAG (TgtArrsF (sToTimesDC s))
 ssTermShowPrec                  :: ShowPrec d -> ShowPrec c -> ShowPrec (SSTerm c d)
 ssTermShowPrec dSP cSP prec cd  = timesSPrec cSP dSP prec cd.c cd.d
 
-ssShowPrec              :: Stack s => ShowPrec d -> ShowPrec c -> ShowPrec (s (SSTerm c d))
+ssShowPrec              :: ShowPrec d -> ShowPrec c -> ShowPrec (SparseSum c d)
 ssShowPrec dSP cSP prec = sumSPrec (ssTermShowPrec dSP cSP) prec . toList
 
 varPowShowPrec          :: (Integral d, Show d) => String -> ShowPrec d

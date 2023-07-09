@@ -36,7 +36,9 @@
 
 module Math.Algebra.General.Algebra (
     -- * Extend "Prelude"
+#if ! MIN_VERSION_base(4, 19, 0)
     foldl',
+#endif
 #if ! MIN_VERSION_base(4, 18, 0)
     liftA2,
 #endif
@@ -119,9 +121,12 @@ import Control.Applicative (liftA2)     -- unnecesary in base 4.18+, since in Pr
 import Control.Exception (assert)
 import Data.Bits (Bits, FiniteBits, (.&.), (.|.), bit, finiteBitSize, testBit, zeroBits)
 import Data.Char (isDigit, isSpace)
+#if ! MIN_VERSION_base(4, 19, 0)
+import Data.Foldable (foldl')           -- unnecesary in base 4.19+, since in Prelude
+#endif
 import Data.Function (on)
 import Data.Functor.Classes (liftCompare, liftEq)
-import Data.List (foldl', stripPrefix)
+import Data.List (stripPrefix)
 import Data.List.Extra (trimStart)
 import Data.Maybe (maybeToList)
 import Data.Tuple.Extra (second)

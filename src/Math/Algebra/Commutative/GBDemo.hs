@@ -9,11 +9,13 @@ module Math.Algebra.Commutative.GBDemo (
 import Math.Algebra.General.Algebra
 import Math.Algebra.Commutative.GroebnerBasis
 import Math.Algebra.Commutative.EPoly
-import Math.Algebra.Commutative.VMPoly
+-- import Math.Algebra.Commutative.VMPoly
 import Math.Algebra.Commutative.Field.ZModPW
 
 import Data.List (find)
 import GHC.TypeNats (KnownNat)
+
+-- import Test.Inspection (inspect, hasNoTypeClassesExcept)
 
 
 data GBEx       = GBEx {
@@ -43,8 +45,7 @@ epGbpA sec useSugar descVarSs   =
     evCmp       = epEvCmpF nVars sec
     isGraded    = secIsGraded sec
 
-gbDemo0         :: GBPoly ev term pf ep => GBExOpts -> GBEx -> GBPolyOps ev ep -> IO ()
-{-# INLINABLE gbDemo0 #-}
+gbDemo0         :: GBPoly ev term ep => GBExOpts -> GBEx -> GBPolyOps ev ep -> IO ()
 gbDemo0 (GBExOpts { sec, nCores, gbTrace }) (GBEx { name, descVarSs, genSs }) gbpA  = do
     putStrLn $ name ++ " " ++ show sec
     let _gbi    = fromGens smA gbTrace gens
@@ -59,13 +60,17 @@ gbDemo1         :: GBExOpts -> GBEx -> IO ()
 gbDemo1 opts@(GBExOpts { useVMPoly, sec, noSugar }) ex@(GBEx { p, descVarSs })  =
     case someNatVal (fromInteger p) of
  SomeNat (Proxy :: Proxy p)     -> case someNatVal (fromIntegral (length descVarSs) + 1) of
-  SomeNat (Proxy :: Proxy n1)  ->
+  SomeNat (Proxy :: Proxy n1)   ->
     if not useVMPoly then  gbDemo0 opts ex (epGbpA @p sec useSugar descVarSs) else case sec of
+        _               -> error "VMPoly is unimplemented"
+        {-
         LexCmp          -> gbDemo0 opts ex (vmpModPwGbpOps @p @n1 @('IsGraded False) useSugar)
         GrLexCmp        -> gbDemo0 opts ex (vmpModPwGbpOps @p @n1 @('IsGraded True ) useSugar)
-        GrRevLexCmp     -> error "VMPoly GrRevLexCmp is unimplemented"
+        GrRevLexCmp     -> error "VMPoly GrRevLexCmp is unimplemented" -}
    where
     useSugar    = UseSugar (not noSugar)
+
+-- inspect $ hasNoTypeClassesExcept 'gbDemo1 [''KnownNat]
 
 
 showUsage       :: IO ()
@@ -79,7 +84,7 @@ showUsage       = mapM_ putStrLn [
     "   --grlex     use graded lexicographic monomial ordering",
     "   --grrevlex  use graded reverse lexicographic monomial ordering (the default)",
     "   --nosugar   don't use the sugar (homogeneous degree) heuristic",
-    "   --poly      use the poly package (vector-backed polynomials) (work in progress!)",
+    -- "   --poly      use the poly package (vector-backed polynomials) (work in progress!)",
     "",
     "trace options:",
     "   --td        show the total degree of each s-poly reduction result",

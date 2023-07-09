@@ -17,6 +17,7 @@ import Math.Algebra.Category.Category
 import Math.Algebra.General.SparseSum
 
 import Data.Bifunctor (bimap)
+import qualified StrictList2 as SL
 
 
 type UPoly c    = SparseSum c Integer
@@ -58,11 +59,11 @@ upUniv cR       = UnivL cxRing (RingTgtX cToCx x) cxUnivF
     
     ssLead'     = ssLead cIsZero
     cxDiv doFull p0 p1  = if cxIsOne p1 then (p0, ssZero) else  -- for efficiency
-                            case pop p1 of
+                            case SL.uncons p1 of
         Nothing                     -> (ssZero, p0)
         Just (SSTerm !c1 !d1, t1)   -> {-# SCC cxDiv' #-} cxDiv' p0
           where
-            cxDiv' p    = case pop p of
+            cxDiv' p    = case SL.uncons p of
                 Nothing             -> (ssZero, p)
                 Just (SSTerm c !d, t)
                     | d < d1        -> (ssZero, p)

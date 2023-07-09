@@ -9,8 +9,7 @@
 module Math.Algebra.Commutative.GroebnerBasis (
     SubmoduleOps(..), fromGens,
     UseSugar(..), SPair(..), GBEv(..), GBPoly(..), GBPolyOps(..),
-    KGsOps, kgsOps, groebnerBasis {- @@@ 3 -}, IsGraded(..),
-    StdEvCmp(..), secIsGraded,
+    IsGraded(..), StdEvCmp(..), secIsGraded,
     gbTSummary, gbTProgressChars, gbTProgressInfo, gbTResults, gbTQueues, gbTProgressDetails,
     GroebnerIdeal, gbiSmOps
 ) where
@@ -19,15 +18,13 @@ import Math.Algebra.General.Algebra
 
 import Control.Monad (forM, unless, void, when)
 import Control.Monad.Extra (ifM, orM, whenM, whileM)
-import Data.Coerce (Coercible, coerce)
 import Data.Foldable (find, minimumBy, toList)
 import Data.Int (Int64)
 import Data.List (elemIndex, findIndices, groupBy, sortBy)
 import Data.List.Extra (chunksOf)
 import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
 import qualified Data.Sequence as Seq
-import Data.Stack (Stack(empty, pushRev, pop))
-import Data.Tuple.Extra (dupe, fst3, second)
+import Data.Tuple.Extra (dupe, fst3)
 import qualified Data.Vector as V
 import Numeric (showFFloat)
 import StrictList2 (pattern (:!))
@@ -66,7 +63,6 @@ data SubmoduleOps r m sm    = SubmoduleOps {
 fromGens        :: SubmoduleOps r m sm -> Int -> [m] -> sm
 -- ^ @fromGens smA gbTrace gens@
 fromGens smA gbTrace    = smA.plusGens gbTrace smA.zeroMd
-{-# INLINABLE fromGens #-}
 
 
 evElts          :: [a] -> ()
@@ -178,38 +174,22 @@ class GBEv ev where
     evLCM       :: Int -> Op2 ev    -- ^ Least Common Multiple, given @nVars@
     evTotDeg    :: ev -> Word
 
-class (GBEv ev, Coercible (pf term) p, Stack pf) =>
-        GBPoly ev term pf p | p -> pf, p -> term, p -> ev where
+class (GBEv ev, p ~ SL.List term) => GBPoly ev term p | p -> ev where
     leadEvNZ    :: p -> ev          -- ^ the argument must be nonzero
 -- ^ A polynomial's terms must be nonzero and have decreasing exponent vectors.
 
-pZero           :: forall ev term pf p. GBPoly ev term pf p => p
-pZero           = coerce (empty :: pf term)
+pZero           :: GBPoly ev term p => p
+pZero           = SL.Nil
 
-pIsZero         :: forall ev term pf p. GBPoly ev term pf p => p -> Bool
-pIsZero p       = null (coerce p :: pf term)
+pIsZero         :: GBPoly ev term p => p -> Bool
+pIsZero         = null
 
-numTerms        :: forall ev term pf p. GBPoly ev term pf p => p -> Int
-numTerms p      = length (coerce p :: pf term)
-{-# INLINE numTerms #-}
+numTerms        :: GBPoly ev term p => p -> Int
+numTerms        = length
 
-prependReversed     :: forall ev term pf p. GBPoly ev term pf p => SL.List term -> Op1 p
--- ^ The first argument must be a list of nonzero terms with /ascending/ mainness, and that are
--- more main than the second argument.
-prependReversed r p = coerce (pushRev r (coerce p :: pf term))
-{-# INLINE prependReversed #-}
-
-{-
-cons            :: forall ev term pf p. GBPoly ev term pf p => term -> Op1 p
--- ^ The first argument must be nonzero and more main than the second argument.
-cons t p        = coerce (t .: (coerce p :: pf term))
-{-# INLINE cons #-}
--}
-
-unconsNZ        :: forall ev term pf p. GBPoly ev term pf p => p -> (term, p)
+unconsNZ        :: GBPoly ev term p => p -> (term, p)
 -- ^ The argument must be nonzero.
-unconsNZ p      = second coerce (fromJust (pop (coerce p :: pf term)))
-{-# INLINE unconsNZ #-}
+unconsNZ        = fromJust . SL.uncons
 
 data GBPolyOps ev p     = GBPolyOps {
     nVars       :: Int,
@@ -242,7 +222,7 @@ data EPolyHDeg p    = EPolyHDeg { p :: p, h :: Word }   -- poly and "sugar" homo
 
 data GBGenInfo ev   = GBGenInfo { ev :: ev, dh :: Word }
 
-giNew               :: GBPoly ev term pf p => EPolyHDeg p -> GBGenInfo ev
+giNew               :: GBPoly ev term p => EPolyHDeg p -> GBGenInfo ev
 -- p /= 0, h is "sugar" (homog) degree
 {-# INLINABLE giNew #-}
 giNew (EPolyHDeg p h)   =
@@ -250,7 +230,7 @@ giNew (EPolyHDeg p h)   =
     in  GBGenInfo ev (h - evTotDeg ev)
 
 {-# SCC updatePairs #-}
-updatePairs     :: forall ev term pf p. GBPoly ev term pf p => GBPolyOps ev p ->
+updatePairs     :: forall ev term p. GBPoly ev term p => GBPolyOps ev p ->
                     [Maybe (GBGenInfo ev)] -> SortedSPairs ev -> GBGenInfo ev ->
                     ([Int], SortedSPairs ev, SortedSPairs ev)
 {-# INLINABLE updatePairs #-}
@@ -343,7 +323,7 @@ gkgsEmpty           :: Int -> GapsKerGens p
 gkgsEmpty nEvGroups = SL.singleton (G1KGs 0 (kgsEmpty nEvGroups))
 
 {-# SCC kgsFindReducer #-}
-kgsFindReducer          :: GBPoly ev term pf p => (ev -> [Word]) -> p -> KerGens p -> Maybe p
+kgsFindReducer          :: GBPoly ev term p => (ev -> [Word]) -> p -> KerGens p -> Maybe p
 -- returns the best (shortest) top-reducer, if any
 kgsFindReducer evGroup p kgs    =
     if pIsZero p then Nothing else
@@ -365,7 +345,7 @@ kgsFindReducer evGroup p kgs    =
     in  if resSep.n < (maxBound :: Int) then Just resSep.p else Nothing
 {-# INLINABLE kgsFindReducer #-}
 
-kgsOps          :: forall ev term pf p. GBPoly ev term pf p => GBPolyOps ev p -> KGsOps term p
+kgsOps          :: forall ev term p. GBPoly ev term p => GBPolyOps ev p -> KGsOps term p
 {-# INLINABLE kgsOps #-}
 kgsOps (GBPolyOps { .. })   = KGsOps { .. }
   where
@@ -446,13 +426,13 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
     -- reduce a polynomial, counting steps, and prependReversed
     gkgsReduce gkgs doFull  = go 0
       where
-        go nRedSteps rev p      = if pIsZero p then (prependReversed rev p, nRedSteps) else
+        go nRedSteps rev p      = if pIsZero p then (SL.prependReversed rev p, nRedSteps) else
                                   maybe go2 go1 (gkgsFindReducer p gkgs)
           where
             go1 gh  =
                 let (q, r)      = topDiv p gh.p
                 in  go (nRedSteps + numTerms q) rev r
-            ~go2    = if not doFull.b then (prependReversed rev p, nRedSteps) else
+            ~go2    = if not doFull.b then (SL.prependReversed rev p, nRedSteps) else
                 let (!cd, !t)   = unconsNZ p
                 in  go nRedSteps (cd :! rev) t
 
@@ -475,19 +455,19 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
                     go (nRedSteps + nSteps1) rh
             maybe (pure (WithNGens ph nGens, nRedSteps)) go1 (gkgsFindReducer p ker)
 
-    foldReduce      :: forall f. Foldable f => f p -> SL.List term -> p -> (Bool, p, Int)
+    foldReduce      :: Foldable f => f p -> SL.List term -> p -> (Bool, p, Int)
     -- fully reduce by folding (not kgs), except stop and return True if/when a deg > 0
     -- quotient, and prependReversed
     foldReduce g0s  = go 0  -- all g0s /= 0, with gap 0
       where
         go nRedSteps rev p      =
-            if pIsZero p then (False, prependReversed rev p, nRedSteps) else
+            if pIsZero p then (False, SL.prependReversed rev p, nRedSteps) else
             let pEv     = leadEvNZ p
                 mg      = find (\g -> evDivides nVars (leadEvNZ g) pEv) g0s
                 useG g  =
                     let (q, r)      = topDiv p g
                     in  if evTotDeg (leadEvNZ q) > 0
-                        then (True, prependReversed rev r, nRedSteps + numTerms q)
+                        then (True, SL.prependReversed rev r, nRedSteps + numTerms q)
                         else go (nRedSteps + 1) rev r
                 ~go2    =
                     let (!cd, !t)   = unconsNZ p
@@ -536,7 +516,7 @@ data GroebnerIdeal p    = GroebnerIdeal {
     redGbGens   :: ~(Seq.Seq p)     -- fully reduced Groebner Basis generators
 }
 
-groebnerBasis   :: forall ev term pf p. GBPoly ev term pf p => GBPolyOps ev p -> Int -> Int ->
+groebnerBasis   :: forall ev term p. GBPoly ev term p => GBPolyOps ev p -> Int -> Int ->
                     GroebnerIdeal p -> [p] -> IO (GroebnerIdeal p)
 {-# INLINABLE groebnerBasis #-}
 groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
@@ -859,7 +839,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
     hEvCmp          = spCmp evCmp useSugar      :: Cmp (SPair ev)
 
 
-gbiSmOps        :: GBPoly ev term pf p => GBPolyOps ev p -> Int ->
+gbiSmOps        :: GBPoly ev term p => GBPolyOps ev p -> Int ->
                     SubmoduleOps p p (GroebnerIdeal p)
 -- ^ @gbiSmOps gbpA nCores@
 {-# INLINABLE gbiSmOps #-}

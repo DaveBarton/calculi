@@ -93,12 +93,14 @@ instance GBEv EV58 where
     evLCM _nVars v w    = fromBits58Only (v.w64 .|. w.w64)
     {-# INLINE evLCM #-}
     evTotDeg            = totDeg58
-    {-# INLINE evTotDeg #-}
 
-instance GBPoly EV58 EV58 SL.List (BinPoly EV58) where
+instance GBPoly EV58 EV58 (BinPoly EV58) where
     leadEvNZ (ev :! _)  = ev
     leadEvNZ SL.Nil     = undefined
     {-# INLINE leadEvNZ #-}
+
+{-# SPECIALIZE gbiSmOps :: GBPolyOps EV58 (BinPoly EV58) -> Int ->
+    SubmoduleOps (BinPoly EV58) (BinPoly EV58) (GroebnerIdeal (BinPoly EV58)) #-}
 
 -- | For Boolean logic, we treat 1 as True and 0 as False.
 data BPOtherOps ev vals     = BPOtherOps {

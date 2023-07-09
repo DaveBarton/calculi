@@ -10,29 +10,28 @@ import Math.Algebra.Commutative.GroebnerBasis
 import Math.Algebra.Commutative.UPoly
 import Math.Algebra.Commutative.EPoly
 import Math.Algebra.Commutative.BinPoly
-import Math.Algebra.Commutative.VMPoly
+-- import Math.Algebra.Commutative.VMPoly
 
 import Control.DeepSeq (force)
 import Control.Monad ((<$!>))
 import Data.Bits (complement, shift, unsafeShiftL, unsafeShiftR)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List (transpose)
-import Data.Poly.Multi (toMultiPoly)
+-- import Data.Poly.Multi (toMultiPoly)
 import Data.Strict.Classes (toStrict)
 import qualified Data.Strict.Tuple as S
 import Data.Tuple.Extra (both)
-import qualified Data.Vector as PV
-import qualified Data.Vector.Unboxed as VU
+-- import qualified Data.Vector as PV
+-- import qualified Data.Vector.Unboxed as VU
 import Data.Word (Word64)
-import StrictList2 (pattern (:!))
 import qualified StrictList2 as SL
 
 
 main            :: IO ()
 main            = defaultMain $ map (uncurry bgroup) [
     ("StrictList", benchesStrictList),
-    ("UPoly", benchesUPoly), ("EPoly", benchesEPoly), ("BinPoly", benchesBinPoly),
-    ("VMPoly", benchesVMPoly)
+    ("UPoly", benchesUPoly), ("EPoly", benchesEPoly), ("BinPoly", benchesBinPoly)
+    -- , ("VMPoly", benchesVMPoly)
     {- , @@ other modules -}
     ]
 
@@ -174,6 +173,7 @@ benchesBinPoly  = concat [plusBenches, timesBenches, divBenches]
                         <$> [5, 10, 20, 30]
     divNameF        = op2SF (showSize 4 4) " / " (showSize 2 2)
 
+{-
 benchesVMPoly   :: [Benchmark]
 benchesVMPoly   = concatMap concat . transpose $ map ptdBs [3, 6, 9, 12]
   where
@@ -197,3 +197,4 @@ benchesVMPoly   = concatMap concat . transpose $ map ptdBs [3, 6, 9, 12]
         divBenches      = bench2Whnf (force . divDeep' pR) divNameF (poly 3 . (+ 1)) (poly 2)
                             <$> [1 .. if nVars < 9 then 1 else 0]
         divNameF        = op2SF (showSize . (+ 1)) " / " showSize
+-}

@@ -168,20 +168,13 @@ type EPoly c    = SparseSum c ExponVec
 
 instance GBEv ExponVec where
     evDivides       = evDividesF
-    {-# INLINE evDivides #-}
     evLCM           = evLCMF
-    {-# INLINE evLCM #-}
     evTotDeg        = (.totDeg)
-    {-# INLINE evTotDeg #-}
 
-instance GBPoly ExponVec (SSTerm c ExponVec) SL.List (EPoly c) where
+instance GBPoly ExponVec (SSTerm c ExponVec) (EPoly c) where
     leadEvNZ        = sparseSum undefined (\_ ev _ -> ev)
     {-# INLINE leadEvNZ #-}
 
-{-# SPECIALIZE kgsOps ::
-    GBPolyOps ExponVec (EPoly c) -> KGsOps (SSTerm c ExponVec) (EPoly c) #-}
-{-# SPECIALIZE groebnerBasis :: GBPolyOps ExponVec (EPoly c) -> Int -> Int ->
-    GroebnerIdeal (EPoly c) -> [EPoly c] -> IO (GroebnerIdeal (EPoly c)) #-}
 {-# SPECIALIZE gbiSmOps :: GBPolyOps ExponVec (EPoly c) -> Int ->
     SubmoduleOps (EPoly c) (EPoly c) (GroebnerIdeal (EPoly c)) #-}
 
@@ -234,11 +227,11 @@ epOps cR nVars evCmp    = EPolyOps { .. }
 
     ssLead'     = ssLead cIsZero
     epDiv doFull p0 p1  = if epIsOne p1 then (p0, ssZero) else  -- for efficiency
-                            case pop p1 of
+                            case SL.uncons p1 of
         Nothing                     -> (ssZero, p0)
         Just (SSTerm !c1 !ev1, t1)  -> {-# SCC epDiv' #-} epDiv' p0
           where
-            epDiv' p    = case pop p of
+            epDiv' p    = case SL.uncons p of
                 Nothing                     -> (ssZero, p)
                 Just (SSTerm c !ev, t)
                     | evCmp ev ev1 == LT    -> (ssZero, p)
@@ -246,7 +239,7 @@ epOps cR nVars evCmp    = EPolyOps { .. }
                         Nothing     -> -- {-# SCC "sub-top-epDiv'" #-}
                             if not doFull.b then (ssZero, p) else
                             let (q2, r2) = epDiv' t
-                            in  (q2, SSTerm c ev .: r2)
+                            in  (q2, SSTerm c ev :! r2)
                         Just qd     -> -- {-# SCC "top-etc-epDiv'" #-}
                             let (qc, rc)    = cR.bDiv doFull c c1
                                 -- want p = (c1*x^ev1 + t1) * (qc*x^qd + q2) + (rc*x^ev + r2):

@@ -1,4 +1,4 @@
-{-# LANGUAGE FieldSelectors, NoMonoLocalBinds, Strict #-}
+{-# LANGUAGE FieldSelectors, Strict #-}
 
 {- |  This module defines the most common types of categories, functors and universal
     properties.
@@ -67,11 +67,11 @@ newtype FlipTF f b a    = FlipTF (f a b)
 
 -- ** MathCategory
 
--- | A @(MathCategory (.:) idArr)@ (Mathematical Category)
+-- | A @(MathCategory (.~) idArr)@ (Mathematical Category)
 data MathCategory (obj :: k -> Type) (arr :: k -> k -> Type)   = MathCategory {
     catDot  :: forall a b c. arr b c -> arr a b -> arr a c,
-        -- ^ @f .: (g .: h) = (f .: g) .: h@
-    catId   :: forall a. obj a -> arr a a   -- ^ @(idArr t) .: f = f .: (idArr s) = f@
+        -- ^ @f .~ (g .~ h) = (f .~ g) .~ h@
+    catId   :: forall a. obj a -> arr a a   -- ^ @(idArr t) .~ f = f .~ (idArr s) = f@
 }
 
 catOpp          :: MathCategory obj arr -> MathCategory obj (FlipTF arr)
@@ -90,7 +90,7 @@ typesCat        = MathCategory (.) (const id)
 -- @(MathCategory obj' arr')@ naturally.
 data MathFunctor obj arr tF obj' arr'   = MathFunctor {
     ftrObjF :: forall a. obj a -> obj' (tF a),
-    ftrArrF :: forall a b. arr a b -> arr' (tF a) (tF b)    -- ^ commutes with @.:@, takes
+    ftrArrF :: forall a b. arr a b -> arr' (tF a) (tF b)    -- ^ commutes with @.~@, takes
         -- @idArr@ to @idArr'@
 }
 -- ^ A /contravariant functor/ from @C@ to @D@ is a (normal \"covariant\") functor from
@@ -143,7 +143,7 @@ data AdditiveCat obj arr prod2TF z cokTF        = AdditiveCat {
     acCat       :: MathCategory obj arr,
     
     acHomAG     :: forall a b. obj a -> obj b -> AbelianGroup (arr a b),
-        -- ^ @.:@ is bilinear
+        -- ^ @.~@ is bilinear
     acProd2     :: forall b c.
         obj b -> obj c -> UnivR obj (SrcArrs2 arr b c) arr (prod2TF b c),
     acZeroObj   :: obj z,    -- ^ @idArr zeroObj = zero (homAG zeroObj zeroObj)@
@@ -153,30 +153,35 @@ data AdditiveCat obj arr prod2TF z cokTF        = AdditiveCat {
     acCoker     :: ~(forall b c. obj b -> obj c -> arr b c -> UnivL obj (arr c) arr (cokTF c))
         -- ^ optional; @coker(f)@ is the colimit of @f, 0 :: b -> c@
 }
--- ^ These axioms imply each @homAG(A, A)@ is a ring under @.:@, and that each @homAG(A, B)@
+-- ^ These axioms imply each @homAG(A, A)@ is a ring under @.~@, and that each @homAG(A, B)@
 -- is a left module over @homAG(B, B)@ and a right module over @homAG(A, A)@.
 
-acSum2          :: AdditiveCat obj arr prod2TF z cokTF ->
-    obj b -> obj c -> UnivL obj (TgtArrs2 arr b c) arr (prod2TF b c)
-acSum2 (AdditiveCat (MathCategory (.:) idArr) homAG prod2 _ _ _) bObj cObj  =
+acSum2          :: forall obj arr prod2TF z cokTF b c. AdditiveCat obj arr prod2TF z cokTF ->
+                    obj b -> obj c -> UnivL obj (TgtArrs2 arr b c) arr (prod2TF b c)
+acSum2 (AdditiveCat (MathCategory (.~) idArr) homAG prod2 _ _ _) bObj cObj  =
     UnivL bcObj (TgtArrs2 bToBc cToBc) sumUnivF
-  where UnivR bcObj (SrcArrs2 bcToB bcToC) prodUnivF    = prod2 bObj cObj
-        bToBc   = prodUnivF bObj (SrcArrs2 (idArr bObj) (homAG bObj cObj).zero)
-        cToBc   = prodUnivF cObj (SrcArrs2 (homAG cObj bObj).zero (idArr cObj))
-        sumUnivF tObj (TgtArrs2 bToT cToT)  =
-            (homAG bcObj tObj).plus (bToT .: bcToB) (cToT .: bcToC)
+  where
+    prodUnivF       :: forall a. obj a -> SrcArrs2 arr b c a -> arr a (prod2TF b c)
+    UnivR bcObj (SrcArrs2 bcToB bcToC) prodUnivF    = prod2 bObj cObj
+    bToBc   = prodUnivF bObj (SrcArrs2 (idArr bObj) (homAG bObj cObj).zero)
+    cToBc   = prodUnivF cObj (SrcArrs2 (homAG cObj bObj).zero (idArr cObj))
+    sumUnivF        :: forall t. obj t -> TgtArrs2 arr b c t -> arr (prod2TF b c) t
+    sumUnivF tObj (TgtArrs2 bToT cToT)  =
+        (homAG bcObj tObj).plus (bToT .~ bcToB) (cToT .~ bcToC)
 
 acIm            :: AdditiveCat obj arr prod2TF z cokTF ->
-        obj b -> obj c -> arr b c -> UnivR obj (FlipTF arr c) arr c
+                    obj b -> obj c -> arr b c -> UnivR obj (FlipTF arr c) arr c
 -- ^  @image(f) = ker(coker(f))@, assuming the @ker@ and @coker@ are both defined
 acIm (AdditiveCat _ _ _ _ ker coker) bObj cObj f        = ker cObj ckObj ckF
-  where UnivL ckObj ckF _   = coker bObj cObj f
+  where
+    UnivL ckObj ckF _   = coker bObj cObj f
 
 acCoIm          :: AdditiveCat obj arr prod2TF z cokTF ->
-        obj b -> obj c -> arr b c -> UnivL obj (arr b) arr (cokTF b)
+                    obj b -> obj c -> arr b c -> UnivL obj (arr b) arr (cokTF b)
 -- ^  @coimage(f) = coker(ker(f))@, assuming the @coker@ and @ker@ are both defined
 acCoIm (AdditiveCat _ _ _ _ ker coker) bObj cObj f      = coker kObj bObj kF
-  where UnivR kObj (FlipTF kF) _    = ker bObj cObj f
+  where
+    UnivR kObj (FlipTF kF) _    = ker bObj cObj f
 
 -- ** Abelian categories
 
