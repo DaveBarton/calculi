@@ -1,4 +1,5 @@
 {-# LANGUAGE FunctionalDependencies, Strict #-}
+{-# LANGUAGE TypeFamilies #-}   -- @@ only needed for GHC 9.2
 
 {- |  This module defines functions for computing and using a Groebner Basis.
     
