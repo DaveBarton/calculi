@@ -101,9 +101,7 @@ ssMapC          :: Pred c' -> (c -> c') -> SparseSum c d -> SparseSum c' d
 -- ^ @ssMapC is0 f x@ applies @f@ to each coefficient in @x@.
 ssMapC is0 f    = foldr k ssZero
   where
-    k cd v  = ssLead is0 c' cd.d v
-      where
-        c'      = f cd.c
+    k cd    = ssLead is0 (f cd.c) cd.d
 {-# INLINABLE ssMapC #-}
 
 ssMapNZFC       :: (c -> c') -> SparseSum c d -> SparseSum c' d
@@ -120,9 +118,7 @@ ssShiftMapC     :: Pred c' -> (d -> d') -> (c -> c') -> SparseSum c d -> SparseS
 -- ^ assumes the @(d -> d')@ is order-preserving
 ssShiftMapC is0 df cf   = foldr k ssZero
   where
-    k cd v  = ssLead is0 c' (df cd.d) v
-      where
-        c'      = cf cd.c
+    k cd    = ssLead is0 (cf cd.c) (df cd.d)
 {-# INLINABLE ssShiftMapC #-}
 
 ssShiftMapNZFC  :: (d -> d') -> (c -> c') -> SparseSum c d -> SparseSum c' d'

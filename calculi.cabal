@@ -52,9 +52,7 @@ library
         mod,
         parallel == 3.2.*,
         -- poly >= 0.5.1, deepseq, finite-typelits, vector-sized,
-        -- primitive >= 0.8,
-            -- @@ replace atomic-counter with primitive 0.8 when vector-sized allows it
-        atomic-counter,
+        primitive >= 0.8,
         random >= 1.2.1 && < 1.3,
         stm >= 2.4 && < 2.6,
         -- strict >= 0.4,

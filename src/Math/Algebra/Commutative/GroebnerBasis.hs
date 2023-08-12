@@ -34,13 +34,12 @@ import qualified StrictList2 as SL
 import Control.Concurrent (ThreadId, forkOn, killThread, myThreadId, threadCapability)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO,
     writeTVar)
--- import Control.Monad.Primitive (PrimMonad, PrimState)
+import Control.Monad.Primitive (PrimMonad, PrimState)
 import Control.Monad.STM (atomically, retry)
 import Control.Parallel.Strategies (parListChunk, rseq, using)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.IORef.Extra (atomicModifyIORef'_, atomicWriteIORef')
--- import Data.Primitive.PrimVar (PrimVar, atomicReadInt, fetchAddInt, newPrimVar)
-import qualified Control.Concurrent.Counter as C
+import Data.Primitive.PrimVar (PrimVar, atomicReadInt, fetchAddInt, newPrimVar)
 import System.IO.Unsafe (unsafePerformIO)
 
 import Data.Time.Clock.System (SystemTime(..), getSystemTime)
@@ -89,9 +88,8 @@ inc ref n       = when (n /= 0) $ atomicModifyIORef'_ ref (+ n)
 inc1TVar        :: TVar Int -> IO ()
 inc1TVar var    = atomically $ modifyTVar' var (+ 1)
 
--- fetchAddInt_        :: PrimMonad m => PrimVar (PrimState m) Int -> Int -> m ()
-fetchAddInt_        :: C.Counter -> Int -> IO ()
-fetchAddInt_ var    = void . C.add var
+fetchAddInt_        :: PrimMonad m => PrimVar (PrimState m) Int -> Int -> m ()
+fetchAddInt_ var    = void . fetchAddInt var
 
 slPop           :: TVar (SL.List a) -> IO (Maybe a)
 slPop esVar     = atomically $ do
@@ -528,8 +526,8 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
     let KGsOps { .. }   = kgsOps gbpA
     gkgsRef         <- newTVarIO (WithNGens gbi0.gkgs (length gbi0.gbGhs))
     genHsRef        <- newTVarIO gbi0.gbGhs :: IO (TVar (Seq.Seq (EPolyHDeg p)))
-    nRedStepsRef    <- C.new (0 :: Int)
-    nSPairsRedRef   <- C.new (0 :: Int)
+    nRedStepsRef    <- newPrimVar (0 :: Int)
+    nSPairsRedRef   <- newPrimVar (0 :: Int)
     let _gbTQueues1 = gbTrace .&. gbTQueues /= 0 && nCores > 1
         topReduce   = gkgsTopReduce (readTVarIO gkgsRef)
         endReduce_n :: Int -> EPolyHDeg p -> IO (WithNGens (EPolyHDeg p))
@@ -795,9 +793,9 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
     when (gbTrace .&. gbTSummary /= 0) $ do
         t           <- cpuElapsedStr cpuTime0 sysTime0 mRTSStats0
         putStrLn $ "Groebner Basis CPU/Elapsed Times: " ++ t
-        nSPairsRed  <- C.get nSPairsRedRef
+        nSPairsRed  <- atomicReadInt nSPairsRedRef
         putStrLn $ "# SPairs reduced = " ++ show nSPairsRed
-        nRedSteps   <- C.get nRedStepsRef
+        nRedSteps   <- atomicReadInt nRedStepsRef
         putStrLn $ "# reduction steps (quotient terms) = " ++ show nRedSteps
             -- Macaulay just counts top-reduced
         ghs         <- readTVarIO genHsRef

@@ -129,10 +129,35 @@ scmPDiag cIsZero n c    = if cIsZero c then svZero else
 scmCol          :: SparseColsMat c -> Int -> SparseVector c
 scmCol mat j    = IM.findWithDefault svZero j mat.im
 
+data PLUQ c     = PLUQ { pi, p, l, u, q, qi :: SparseColsMat c, r :: Int }
+-- ^ A matrix factorization @p * l * u * q@ where:
+--  * @p@ and @q@ are permutation matrices
+--  * @pi@ and @qi@ are the inverses of @p@ and @q@
+--  * @l@ and @u@ are /lower/ and /upper trapezoidal/ respectively
+--      (@i \< j => l[i, j] = u[j, i] = 0@)
+--  * @0 \<= i \< r => l[i, i]@ and @u[i, i]@ are units
+--  * @r \<= i => l[j, i] = u[i, j] = 0@
+--
+-- Descriptively, @l@ has @r@ columns and @u@ has @r@ rows, their main diagonal elements are
+-- units, and they are 0 before that.
+
 data SCMOps c   = SCMOps {
     vModR           :: ModR c (SparseVector c),
     scmTimesV       :: SparseColsMat c -> Op1 (SparseVector c),
-    scmRing         :: Ring (SparseColsMat c)
+    scmRing         :: Ring (SparseColsMat c),
+    upperTriSolve   :: SparseColsMat c -> Op1 (SparseVector c),
+        -- ^ @upperTriSolve m v@ returns the unique @w@ such that @m * w = v@. @m@ must be upper
+        -- triangular, and its main diagonal elements must be units starting when @v@ becomes
+        -- nonzero. That is, if @v[i]@ is nonzero and @i \<= k@, then @m[k, k]@ must be a unit.
+    lowerTrDivBy    :: SparseColsMat c -> SparseVector c -> (SparseVector c, SparseVector c),
+        -- ^ @lowerTrDivBy m v = (q, r) => v = m*q + r@ and @rows[0 .. t](r) = 0@; where @m@
+        -- is lower trapezoidal, has max column @t@, and its main diagonal elements are units
+        -- starting when @v@ becomes nonzero. That is, if @v[i]@ is nonzero and @i \<= k@, then
+        -- @m[k, k]@ must be a unit.
+    lowerTriSolve   :: SparseColsMat c -> Op1 (SparseVector c)
+        -- ^ @lowerTriSolve m v@ returns the unique @w@ such that @m * w = v@. @m@ must be lower
+        -- triangular, and its main diagonal elements must be units starting when @v@ becomes
+        -- nonzero. That is, if @v[i]@ is nonzero and @i \<= k@, then @m[k, k]@ must be a unit.
 }
 scmOps          :: forall c. Ring c -> Int -> SCMOps c
 -- ^ ring of matrices. @one@ and @fromZ@ of @scmOps cR n@ will create @n x n@ matrices.
@@ -162,6 +187,31 @@ scmOps cR maxN  = SCMOps { .. }
     one             = scmPDiag cIsZero maxN cR.one
     fromZ z         = scmPDiag cIsZero maxN (cR.fromZ z)
     scmRing         = Ring ag matFlags (*~) one fromZ bDiv
+    upperTriSolve m     = loop []
+      where
+        loop done v     = case IM.maxViewWithKey v.im of
+            Nothing                 -> SV (IM.fromDistinctAscList done)
+            Just ((!i, !c), !v1)    -> loop ((i, r) : done) v2
+              where     -- want m * w2 = v2 => m * ((i, r), w2) = ((i, c), v1)
+                ((j, d), col1)  = IM.deleteFindMax (m.im IM.! i).im
+                r   = assert (j == i) $ exactQuo cR c d
+                v2  = vAG.plus (SV v1) (timesNzC (cR.neg r) (SV col1))
+    lowerTrDivBy m      = loop []
+      where
+        t   = maybe 0 fst (IM.lookupMax m.im)
+        loop done v     = case IM.minViewWithKey v.im of
+            Nothing             -> end
+            Just ((i, c), v1)   -> if i > t then end else
+                let     -- want m * w2 + r = v2 => m * ((i, q), w2) + r = ((i, c), v1)
+                    ((j, d), col1)  = IM.deleteFindMin (m.im IM.! i).im
+                    q   = assert (j == i) $ exactQuo cR c d
+                    v2  = vAG.plus (SV v1) (timesNzC (cR.neg q) (SV col1))
+                in  loop ((i, q) : done) v2
+          where
+            ~end    = (SV (IM.fromDistinctAscList (reverse done)), v)
+    lowerTriSolve m v   = assert (svIsZero r) q
+      where
+        (q, r)  = lowerTrDivBy m v
     bDiv _doFull y _t       = (svZero, y)   -- @@ improve (incl. solving linear equations in parallel)
 
 scmTranspose    :: Op1 (SparseColsMat c)
