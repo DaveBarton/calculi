@@ -2,8 +2,7 @@ import Math.Algebra.Commutative.GBDemo
 
 -- import Data.List (isInfixOf)
 
-import Control.Concurrent (forkOn, getNumCapabilities)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent (getNumCapabilities)
 import GHC.Conc (getNumProcessors)
 
 import Data.Time.Clock (getCurrentTime)
@@ -16,7 +15,7 @@ import System.Info (fullCompilerVersion)
 
 -- import Control.Exception (SomeException, try)
 -- import Control.Monad (void, when)
-import System.IO (hFlush, stderr, stdout)
+-- import System.IO (hFlush, stderr, stdout)
 -- import System.Process (callCommand)
 
 
@@ -36,13 +35,9 @@ main    = do
         ++ showVersion fullCompilerVersion
         ++ ", using " ++ show nCores ++ " of " ++ show maxNCores ++ " cores\n"
     
-    doneMVar    <- newEmptyMVar
-    _           <- forkOn 0 $ do
-        gbDemo nCores args
-        hFlush stdout
-        hFlush stderr
-        putMVar doneMVar ()
-    takeMVar doneMVar
+    gbDemo nCores args
+    -- hFlush stdout
+    -- hFlush stderr
     
     -- let tryCommand s    = void $ try @SomeException $ callCommand s
     -- when isLinux $ tryCommand "numastat $PPID; echo"

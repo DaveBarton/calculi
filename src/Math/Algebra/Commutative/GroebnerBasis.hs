@@ -17,7 +17,7 @@ module Math.Algebra.Commutative.GroebnerBasis (
 
 import Math.Algebra.General.Algebra
 
-import Control.Monad (forM, unless, void, when)
+import Control.Monad (unless, void, when)
 import Control.Monad.Extra (ifM, orM, whenM, whileM)
 import Data.Foldable (find, minimumBy, toList)
 import Data.Int (Int64)
@@ -31,7 +31,7 @@ import Numeric (showFFloat)
 import StrictList2 (pattern (:!))
 import qualified StrictList2 as SL
 
-import Control.Concurrent (ThreadId, forkOn, killThread, myThreadId, threadCapability)
+import Control.Concurrent.Async (waitAny, withAsync, withAsyncOn)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO,
     writeTVar)
 import Control.Monad.Primitive (PrimMonad, PrimState)
@@ -126,6 +126,21 @@ maybeAtomicModifyTVarIO' var p f    = do
             let res = p a
             when res $ writeTVar var $! f a
             pure res
+
+withAsyncsWaitAny       :: (j -> IO a) -> [j] -> IO a
+-- ^ Run actions in separate threads, returning when the first one finishes.
+withAsyncsWaitAny threadF   = go []
+  where
+    go asyncs []            = snd <$> waitAny (reverse asyncs)
+    go asyncs (h : t)       = withAsync (threadF h) (\aa -> go (aa : asyncs) t)
+
+withAsyncsOnWaitAny     :: (Int -> IO a) -> [Int] -> IO a
+-- ^ Run an action on each of the given capabilities, returning when the first one finishes.
+withAsyncsOnWaitAny capF    = go []
+  where
+    go asyncs []            = snd <$> waitAny (reverse asyncs)
+    go asyncs (cap : t)     = withAsyncOn cap (capF cap) (\aa -> go (aa : asyncs) t)
+
 
 elapsedNs                           :: SystemTime -> IO Int64
 elapsedNs (MkSystemTime s0 ns0)     = do
@@ -498,15 +513,8 @@ gbTSummary          = 0x01  -- ^ a short summary at the end of a run
 gbTProgressChars    = 0x02  -- ^ total degree for each s-poly reduction result
 gbTProgressInfo     = 0x04  -- ^ info when adding or removing a generator
 gbTResults          = 0x08  -- ^ output final generators
-gbTQueues           = 0x10  -- ^ info about threads and queues ("dprRsS", "rg")
+gbTQueues           = 0x10  -- ^ info about threads and queues ("dprRs", "rg")
 gbTProgressDetails  = 0x20  -- ^ details relating to selection strategy
-
-printThreadCapabilities     :: String -> [ThreadId] -> IO ()
-printThreadCapabilities prefix otherThreadIds   = do
-    firstThreadId       <- myThreadId
-    capInfos            <- mapM threadCapability (firstThreadId : otherThreadIds)
-    putStr $ prefix ++ "Threads are on capabilities: "
-    mapM_ (putStrLn . unwords) (chunksOf 20 (map (show . fst) capInfos))
 
 data GroebnerIdeal p    = GroebnerIdeal {
     gkgs        :: GapsKerGens p,
@@ -609,7 +617,6 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
                         atomically $ modifyTVar' genHsRef (Seq.update j rh')
                         assert (not (pIsZero r')) (pure ((r', j) : t'))
     wakeAllThreads  <- newTVarIO 0          :: IO (TVar Int)
-    wakeMainThread  <- newTVarIO 0          :: IO (TVar Int)
     gDShownRef      <- newIORef 0           :: IO (IORef Word)
     let putS        = if gbTrace .&. gbTProgressChars /= 0 then hPutStr stderr else putStr
     let addGenHN (WithNGens gh kN)  = {-# SCC addGenHN #-}
@@ -727,29 +734,9 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
             addGenHN ghn
             pure True
         doSP        = maybe (pure False) newG =<< slPop ijcsRef
-    numSleepingRef      <- newIORef 0       :: IO (IORef Int)   -- not counting main thread
-    let checkQueues t   = do
-            loop
-          where
-            tasks       = [checkRgs1 | t == 1] ++   -- @@ tune:
-                if      3 * t < nCores then [newIJCs, doSP]
-                else                        [doSP, newIJCs]
-            loop        = do
-                wake0       <- readTVarIO wakeAllThreads
-                q           <- orM tasks
-                unless q $ do
-                    traceEvent ("  sleep " ++ show t) $ pure ()
-                    when (gbTrace .&. gbTQueues /= 0) $ putChar 's'
-                    n1          <- atomicModifyIORef' numSleepingRef (dupe . (+ 1))
-                    when (n1 == nCores - 1) $ inc1TVar wakeMainThread
-                    atomically $ do
-                        wake1       <- readTVar wakeAllThreads
-                        when (wake1 == wake0) retry
-                    inc numSleepingRef (-1)
-                loop
     mapM_ (\g -> addGenHN =<< reduce_n (EPolyHDeg g (homogDeg0 g)))
         (sortBy (evCmp `on` leadEvNZ) (filter (not . pIsZero) newGens))
-    auxThreadIds        <- forM [1 .. nCores - 1] (\t -> forkOn t (checkQueues t))
+    numSleepingRef      <- newIORef 0       :: IO (IORef Int)
     let traceTime   = do
             cpuTime2        <- getCPUTime
             cpuTime1        <- readIORef cpuTime1Ref
@@ -772,24 +759,30 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
                     show (Seq.length gMGis) ++ " paired, " ++
                     show (length ijcs) ++ " pairs" ++
                     if numSleeping > 0 then ", " ++ show numSleeping ++ " sleeping" else ""
-    whileM $ do
-        when (gbTrace /= 0) traceTime
-        wakes0      <- mapM readTVarIO [wakeAllThreads, wakeMainThread]
-        let doSleep = do
-                numSleeping <- readIORef numSleepingRef
-                wakes1      <- mapM readTVarIO [wakeAllThreads, wakeMainThread]
-                let res     = wakes1 /= wakes0 || numSleeping < nCores - 1
-                when res $ do
-                    traceEvent "  SLEEP" $ pure ()
-                    when (gbTrace .&. gbTQueues /= 0) $ putChar 'S'
-                    atomically $ do
-                        wakes2      <- mapM readTVar [wakeAllThreads, wakeMainThread]
-                        when (wakes2 == wakes0) retry
-                pure res
-        orM [newIJCs, checkRgs1, doSP, doSleep]
+        checkQueues t   = whileM $ do
+            when (t == 0 && gbTrace /= 0)   traceTime
+            wake0       <- readTVarIO wakeAllThreads
+            let doSleep = do
+                    traceEvent ("  sleep " ++ show t) $ pure ()
+                    when (gbTrace .&. gbTQueues /= 0) $ putChar 's'
+                    n1          <- atomicModifyIORef' numSleepingRef (dupe . (+ 1))
+                    wake1       <- readTVarIO wakeAllThreads
+                    let res     = wake1 /= wake0 || n1 < nCores
+                    when res $ do
+                        atomically $ do
+                            wake2       <- readTVar wakeAllThreads
+                            when (wake2 == wake0) retry
+                        inc numSleepingRef (-1)
+                    pure res
+            orM (tasks ++ [doSleep])
+          where
+            tasks1
+                | t == 0                        = [newIJCs, checkRgs1, doSP]
+                | 3 * t < nCores {- @@ tune -}  = [newIJCs, doSP]
+                | otherwise                     = [doSP, newIJCs]
+            tasks       = [checkRgs1 | t == 1] ++ tasks1
+    withAsyncsWaitAny checkQueues ([1 .. nCores - 1] ++ [0])  -- @@ withAsyncsOnWaitAny
     when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ putS "\n"
-    when (gbTrace .&. gbTSummary /= 0) $ printThreadCapabilities " " auxThreadIds
-    mapM_ killThread auxThreadIds
     when (gbTrace .&. gbTSummary /= 0) $ do
         t           <- cpuElapsedStr cpuTime0 sysTime0 mRTSStats0
         putStrLn $ "Groebner Basis CPU/Elapsed Times: " ++ t

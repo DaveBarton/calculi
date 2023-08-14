@@ -11,8 +11,7 @@ import Data.Foldable (toList)
 -- import qualified Data.Sequence as Seq
 import Data.Word (Word64)
 
-import Control.Concurrent (forkOn, getNumCapabilities)
-import Control.Concurrent.MVar (newEmptyMVar, putMVar, takeMVar)
+import Control.Concurrent (getNumCapabilities)
 
 -- import Debug.Trace
 
@@ -335,11 +334,7 @@ main    :: IO ()
 main    = do
     nCores      <- getNumCapabilities
     
-    doneMVar    <- newEmptyMVar
-    _           <- forkOn 0 $ do
-        -- for gbTrace bits, see Math/Algebra/Commutative/GroebnerBasis.hs:
-        let gbTrace     = gbTSummary -- .|. gbTResults
-                -- .|. gbTProgressInfo .|. gbTQueues .|. gbTProgressDetails     -- @@
-        bpDemo nCores gbTrace
-        putMVar doneMVar ()
-    takeMVar doneMVar
+    -- for gbTrace bits, see Math/Algebra/Commutative/GroebnerBasis.hs:
+    let gbTrace     = gbTSummary -- .|. gbTResults
+            -- .|. gbTProgressInfo .|. gbTQueues .|. gbTProgressDetails     -- @@
+    bpDemo nCores gbTrace
