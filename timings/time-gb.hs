@@ -1,3 +1,4 @@
+import Math.Algebra.Commutative.GroebnerBasis (runOn0)
 import Math.Algebra.Commutative.GBDemo
 
 -- import Data.List (isInfixOf)
@@ -35,7 +36,7 @@ main    = do
         ++ showVersion fullCompilerVersion
         ++ ", using " ++ show nCores ++ " of " ++ show maxNCores ++ " cores\n"
     
-    gbDemo nCores args
+    runOn0 $ gbDemo nCores args
     -- hFlush stdout
     -- hFlush stderr
     

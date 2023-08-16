@@ -8,7 +8,7 @@
 -}
 
 module Math.Algebra.Commutative.GroebnerBasis (
-    SubmoduleOps(..), fromGens,
+    SubmoduleOps(..), fromGens, runOn0,
     UseSugar(..), SPair(..), GBEv(..), GBPoly(..), GBPolyOps(..),
     IsGraded(..), StdEvCmp(..), secIsGraded,
     gbTSummary, gbTProgressChars, gbTProgressInfo, gbTResults, gbTQueues, gbTProgressDetails,
@@ -31,7 +31,7 @@ import Numeric (showFFloat)
 import StrictList2 (pattern (:!))
 import qualified StrictList2 as SL
 
-import Control.Concurrent.Async (waitAny, withAsync, withAsyncOn)
+import Control.Concurrent.Async (wait, waitAny, withAsync, withAsyncOn)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO,
     writeTVar)
 import Control.Monad.Primitive (PrimMonad, PrimState)
@@ -126,6 +126,10 @@ maybeAtomicModifyTVarIO' var p f    = do
             let res = p a
             when res $ writeTVar var $! f a
             pure res
+
+runOn0          :: IO a -> IO a
+-- ^ Run an action, typically a main procedure, on capability 0, handling exceptions correctly.
+runOn0 act      = withAsyncOn 0 act wait
 
 withAsyncsWaitAny       :: (j -> IO a) -> [j] -> IO a
 -- ^ Run actions in separate threads, returning when the first one finishes.
@@ -781,7 +785,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
                 | 3 * t < nCores {- @@ tune -}  = [newIJCs, doSP]
                 | otherwise                     = [doSP, newIJCs]
             tasks       = [checkRgs1 | t == 1] ++ tasks1
-    withAsyncsWaitAny checkQueues ([1 .. nCores - 1] ++ [0])  -- @@ withAsyncsOnWaitAny
+    withAsyncsOnWaitAny checkQueues ([1 .. nCores - 1] ++ [0])  -- @@ withAsyncsWaitAny
     when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ putS "\n"
     when (gbTrace .&. gbTSummary /= 0) $ do
         t           <- cpuElapsedStr cpuTime0 sysTime0 mRTSStats0

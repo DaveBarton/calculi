@@ -337,4 +337,4 @@ main    = do
     -- for gbTrace bits, see Math/Algebra/Commutative/GroebnerBasis.hs:
     let gbTrace     = gbTSummary -- .|. gbTResults
             -- .|. gbTProgressInfo .|. gbTQueues .|. gbTProgressDetails     -- @@
-    bpDemo nCores gbTrace
+    runOn0 $ bpDemo nCores gbTrace
