@@ -32,6 +32,7 @@ library
     import:             deps
     
     exposed-modules:
+        Control.Parallel.Cooperative
         Math.Algebra.General.Algebra
         Math.Algebra.Category.Category
         Math.Algebra.Commutative.Field.ZModPW
@@ -49,9 +50,9 @@ library
     build-depends:
         async,
         -- fmt >= 0.4,
+        ghc-trace-events,
         -- inspection-testing >= 0.3,
         mod,
-        parallel == 3.2.*,
         -- poly >= 0.5.1, deepseq, finite-typelits, vector-sized,
         primitive >= 0.8,
         random >= 1.2.1 && < 1.3,

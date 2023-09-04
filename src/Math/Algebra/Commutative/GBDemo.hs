@@ -31,7 +31,6 @@ data GBExOpts   = GBExOpts {
     useVMPoly       :: Bool,
     sec             :: StdEvCmp,
     noSugar         :: Bool,
-    nCores          :: Int,
     gbTrace         :: Int
 }
 
@@ -46,13 +45,13 @@ epGbpA sec useSugar descVarSs   =
     isGraded    = secIsGraded sec
 
 gbDemo0         :: GBPoly ev term ep => GBExOpts -> GBEx -> GBPolyOps ev ep -> IO ()
-gbDemo0 (GBExOpts { sec, nCores, gbTrace }) (GBEx { name, descVarSs, genSs }) gbpA  = do
+gbDemo0 (GBExOpts { sec, gbTrace }) (GBEx { name, descVarSs, genSs }) gbpA  = do
     putStrLn $ name ++ " " ++ show sec
     let _gbi    = fromGens smA gbTrace gens
     putChar '\n'
   where
     descVarPs   = gbpA.descVarPs
-    smA         = gbiSmOps gbpA nCores
+    smA         = gbiSmOps gbpA
     pRead       = readSToRead $ polynomReads gbpA.pR (zip descVarSs descVarPs)
     gens        = map pRead genSs
 
@@ -119,11 +118,11 @@ parseOpt s opts = case s of
     "--ts"          -> Right $ opts { gbTrace = opts.gbTrace .|. gbTProgressDetails }
     _               -> Left $ "Unknown option: " ++ s
 
-parseArgs               :: Int -> [String] -> Either String (GBExOpts, [GBEx])
-parseArgs nCores args   = goOpts args opts0
+parseArgs       :: [String] -> Either String (GBExOpts, [GBEx])
+parseArgs args  = goOpts args opts0
   where
     opts0           = GBExOpts { showHelp = False, useVMPoly = False, sec = GrRevLexCmp,
-                        noSugar = False, nCores, gbTrace = gbTSummary }
+                        noSugar = False, gbTrace = gbTSummary }
     goOpts          :: [String] -> GBExOpts -> Either String (GBExOpts, [GBEx])
     goOpts ("--" : t)      opts     = (opts, ) <$> goNames t    -- unnec. here
     goOpts (h@('-':_) : t) opts     = goOpts t =<< parseOpt h opts
@@ -142,8 +141,8 @@ usageErr s      = do
     putStrLn ""
     showUsage
 
-gbDemo              :: Int -> [String] -> IO ()
-gbDemo nCores args  = either usageErr run (parseArgs nCores args)
+gbDemo          :: [String] -> IO ()
+gbDemo args     = either usageErr run (parseArgs args)
   where
     run (opts, exs)     = if opts.showHelp then showUsage else mapM_ (gbDemo1 opts) exs
 

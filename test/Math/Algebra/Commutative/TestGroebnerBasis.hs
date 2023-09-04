@@ -36,10 +36,10 @@ groebnerBasisProps gbpA@(GBPolyOps { .. }) halfInitGensSG countZeros    =
     gbProp          = withTests 10 $ property $ do
         gens0           <- genVis gsSG11
         gens1           <- genVis gsSG11
-        nCores          <- forAll (scale11 (Gen.int (Range.linear 1 4)))
+        -- nCores          <- forAll (scale11 (Gen.int (Range.linear 1 4)))
         doRedGens       <- forAll (scale11 (IsDeep <$> Gen.bool))
         doFullMod       <- forAll (scale11 (IsDeep <$> Gen.bool))
-        let smA@(SubmoduleOps { .. })   = gbiSmOps gbpA nCores
+        let smA@(SubmoduleOps { .. })   = gbiSmOps gbpA
             gbIdeal         = plusGens gbTrace (fromGens smA gbTrace gens0) gens1
             gbGens          = stdGens doRedGens gbIdeal
             gbGensL         = toList gbGens

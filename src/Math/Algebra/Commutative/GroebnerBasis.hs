@@ -8,7 +8,7 @@
 -}
 
 module Math.Algebra.Commutative.GroebnerBasis (
-    SubmoduleOps(..), fromGens, runOn0,
+    SubmoduleOps(..), fromGens,
     UseSugar(..), SPair(..), GBEv(..), GBPoly(..), GBPolyOps(..),
     IsGraded(..), StdEvCmp(..), secIsGraded,
     gbTSummary, gbTProgressChars, gbTProgressInfo, gbTResults, gbTQueues, gbTProgressDetails,
@@ -18,32 +18,31 @@ module Math.Algebra.Commutative.GroebnerBasis (
 import Math.Algebra.General.Algebra
 
 import Control.Monad (unless, void, when)
-import Control.Monad.Extra (ifM, orM, whenM, whileM)
+import Control.Monad.Extra (ifM, orM, whenM)
 import Data.Foldable (find, minimumBy, toList)
 import Data.Int (Int64)
 import Data.List (elemIndex, findIndices, groupBy, sortBy)
 import Data.List.Extra (chunksOf)
 import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
 import qualified Data.Sequence as Seq
-import Data.Tuple.Extra (dupe, fst3)
+import Data.Tuple.Extra (fst3)
 import qualified Data.Vector as V
 import Numeric (showFFloat)
 import StrictList2 (pattern (:!))
 import qualified StrictList2 as SL
 
-import Control.Concurrent.Async (wait, waitAny, withAsync, withAsyncOn)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO,
     writeTVar)
 import Control.Monad.Primitive (PrimMonad, PrimState)
-import Control.Monad.STM (atomically, retry)
-import Control.Parallel.Strategies (parListChunk, rseq, using)
+import Control.Monad.STM (atomically)
+import Control.Parallel.Cooperative
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.IORef.Extra (atomicModifyIORef'_, atomicWriteIORef')
 import Data.Primitive.PrimVar (PrimVar, atomicReadInt, fetchAddInt, newPrimVar)
 import System.IO.Unsafe (unsafePerformIO)
 
 import Data.Time.Clock.System (SystemTime(..), getSystemTime)
-import Debug.Trace
+import Debug.Trace.String (traceEvent, traceEventIO)
 import GHC.Stats (RTSStats, getRTSStats, getRTSStatsEnabled, mutator_cpu_ns, mutator_elapsed_ns)
 import System.CPUTime (getCPUTime)
 import System.IO (hPutStr, stderr)
@@ -65,28 +64,8 @@ fromGens        :: SubmoduleOps r m sm -> Int -> [m] -> sm
 fromGens smA gbTrace    = smA.plusGens gbTrace smA.zeroMd
 
 
-evElts          :: [a] -> ()
--- force all elements of a list
-evElts          = foldr seq ()
-
-evList          :: [a] -> [a]
--- force all elements of a list, and return it
-evList xs       = evElts xs `seq` xs
-
-{- currently unused
-minIndexBy                      :: Cmp a -> Seq.Seq a -> Int
--- The index of the first least element of a nonempty sequence.
-minIndexBy cmp (h Seq.:<| t)    = fst (Seq.foldlWithIndex f (0, h) t)
-  where
-    f im@(_, m) j e     = if cmp m e == GT then (j, e) else im
-minIndexBy _   Seq.Empty        = undefined
--}
-
 inc             :: IORef Int -> Int -> IO ()
 inc ref n       = when (n /= 0) $ atomicModifyIORef'_ ref (+ n)
-
-inc1TVar        :: TVar Int -> IO ()
-inc1TVar var    = atomically $ modifyTVar' var (+ 1)
 
 fetchAddInt_        :: PrimMonad m => PrimVar (PrimState m) Int -> Int -> m ()
 fetchAddInt_ var    = void . fetchAddInt var
@@ -120,30 +99,12 @@ maybeDequeueRefSeq ref p    = maybeAtomicModifyIORef' ref p' f
 maybeAtomicModifyTVarIO'            :: TVar a -> Pred a -> (a -> a) -> IO Bool
 maybeAtomicModifyTVarIO' var p f    = do
     a0      <- readTVarIO var
-    if not (p a0) then pure False else  -- for speed, trying to avoid atomic transaction
+    if not (p a0) then pure False else  -- for speed, trying to avoid an atomic transaction
         atomically $ do
             a       <- readTVar var
             let res = p a
             when res $ writeTVar var $! f a
             pure res
-
-runOn0          :: IO a -> IO a
--- ^ Run an action, typically a main procedure, on capability 0, handling exceptions correctly.
-runOn0 act      = withAsyncOn 0 act wait
-
-withAsyncsWaitAny       :: (j -> IO a) -> [j] -> IO a
--- ^ Run actions in separate threads, returning when the first one finishes.
-withAsyncsWaitAny threadF   = go []
-  where
-    go asyncs []            = snd <$> waitAny (reverse asyncs)
-    go asyncs (h : t)       = withAsync (threadF h) (\aa -> go (aa : asyncs) t)
-
-withAsyncsOnWaitAny     :: (Int -> IO a) -> [Int] -> IO a
--- ^ Run an action on each of the given capabilities, returning when the first one finishes.
-withAsyncsOnWaitAny capF    = go []
-  where
-    go asyncs []            = snd <$> waitAny (reverse asyncs)
-    go asyncs (cap : t)     = withAsyncOn cap (capF cap) (\aa -> go (aa : asyncs) t)
 
 
 elapsedNs                           :: SystemTime -> IO Int64
@@ -250,7 +211,7 @@ giNew (EPolyHDeg p h)   =
 {-# SCC updatePairs #-}
 updatePairs     :: forall ev term p. GBPoly ev term p => GBPolyOps ev p ->
                     [Maybe (GBGenInfo ev)] -> SortedSPairs ev -> GBGenInfo ev ->
-                    ([Int], SortedSPairs ev, SortedSPairs ev)
+                    (SL.List Int, SortedSPairs ev, SortedSPairs ev)
 {-# INLINABLE updatePairs #-}
 updatePairs (GBPolyOps { nVars, evCmp, extraSPairs, useSugar }) gMGis ijcs tGi     =
     (skipIs, skipIJCs, addITCs)
@@ -272,7 +233,7 @@ updatePairs (GBPolyOps { nVars, evCmp, extraSPairs, useSugar }) gMGis ijcs tGi  
       where
         skipQ (Just gi) (Just c)    = divEq gi.ev c
         skipQ _         _           = False
-    skipIs          = evList (findIndices id skipIQs)
+    skipIs          = SL.fromList (findIndices id skipIQs)
     skipIJCs        = SL.filter canSkip ijcs
       where             -- criterion B_ijk
         canSkip (SPair i j _ c)     = i >= 0 && evDivides nVars tEv c && ne i c && ne j c
@@ -527,10 +488,10 @@ data GroebnerIdeal p    = GroebnerIdeal {
     redGbGens   :: ~(Seq.Seq p)     -- fully reduced Groebner Basis generators
 }
 
-groebnerBasis   :: forall ev term p. GBPoly ev term p => GBPolyOps ev p -> Int -> Int ->
+groebnerBasis   :: forall ev term p. GBPoly ev term p => GBPolyOps ev p -> Int ->
                     GroebnerIdeal p -> [p] -> IO (GroebnerIdeal p)
 {-# INLINABLE groebnerBasis #-}
-groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
+groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
     cpuTime0        <- getCPUTime
     sysTime0        <- getSystemTime
     cpuTime1Ref     <- newIORef cpuTime0
@@ -540,8 +501,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
     genHsRef        <- newTVarIO gbi0.gbGhs :: IO (TVar (Seq.Seq (EPolyHDeg p)))
     nRedStepsRef    <- newPrimVar (0 :: Int)
     nSPairsRedRef   <- newPrimVar (0 :: Int)
-    let _gbTQueues1 = gbTrace .&. gbTQueues /= 0 && nCores > 1
-        topReduce   = gkgsTopReduce (readTVarIO gkgsRef)
+    let topReduce   = gkgsTopReduce (readTVarIO gkgsRef)
         endReduce_n :: Int -> EPolyHDeg p -> IO (WithNGens (EPolyHDeg p))
         reduce2 p
             | pIsZero p     = pure pZero
@@ -586,7 +546,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
                 p (WithNGens _gkgs k)   = k < n
                 f (WithNGens gkgs k)    = WithNGens (gkgsInsert (Seq.index ghs k) gkgs) (k + 1)
             whenM (maybeAtomicModifyTVarIO' gkgsRef p f) $ do
-                traceEvent "  checkGkgs: atomic modified gkgsRef" $ pure ()
+                traceEventIO "  checkGkgs: atomic modified gkgsRef"
                 checkGkgs
     -- rgs is a [(g, i)] of nonzero g with descending (leadEvNZ g)
     rNTraceRef      <- newIORef 0
@@ -625,7 +585,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
     let putS        = if gbTrace .&. gbTProgressChars /= 0 then hPutStr stderr else putStr
     let addGenHN (WithNGens gh kN)  = {-# SCC addGenHN #-}
             unless (pIsZero gh.p) $ do
-                traceEvent "  addGenHN start" $ pure ()
+                traceEventIO "  addGenHN start"
                 kNIsLow     <- atomically $ do
                     ghs         <- readTVar genHsRef
                     let res     = Seq.length ghs > kN
@@ -636,7 +596,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
                     let p (WithNGens _gkgs k)   = k == kN
                         f (WithNGens gkgs k)    = WithNGens (gkgsInsert gh gkgs) (k + 1)
                     whenM (maybeAtomicModifyTVarIO' gkgsRef p f) $ do
-                        traceEvent "  atomic modified gkgsRef" $ pure ()
+                        traceEventIO "  atomic modified gkgsRef"
                         checkGkgs
                     when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ do
                         putS "d"
@@ -645,7 +605,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
                         when (d /= gDShown) $ do
                             putS $ show d ++ " "
                             writeIORef gDShownRef d
-                    traceEvent ("  addGenHN end " ++ show kN) $ pure ()
+                    traceEventIO ("  addGenHN end " ++ show kN)
     gMGisRef        <- newTVarIO (fmap (Just . giNew) gbi0.gbGhs)
                                         :: IO (TVar (Seq.Seq (Maybe (GBGenInfo ev))))
     ijcsRef         <- newTVarIO SL.Nil :: IO (TVar (SortedSPairs ev))  -- ascending by hEvCmp
@@ -730,7 +690,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
             let ~s  = " start spair(g" ++ show i ++ ",g" ++ show j ++ "): sugar degree " ++
                         show h ++ ", lcm of heads " ++ evShow c
             when (gbTrace .&. gbTProgressDetails /= 0) $ putStrLn s
-            traceEvent ("  newG" ++ show (i, j)) $ pure ()
+            traceEventIO ("  newG" ++ show (i, j))
             when (gbTrace .&. gbTSummary /= 0) $ fetchAddInt_ nSPairsRedRef 1
             ghs     <- readTVarIO genHsRef
             let f   = if i < 0 then pZero else (Seq.index ghs i).p
@@ -740,7 +700,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
         doSP        = maybe (pure False) newG =<< slPop ijcsRef
     mapM_ (\g -> addGenHN =<< reduce_n (EPolyHDeg g (homogDeg0 g)))
         (sortBy (evCmp `on` leadEvNZ) (filter (not . pIsZero) newGens))
-    numSleepingRef      <- newIORef 0       :: IO (IORef Int)
+    numSleepingVar  <- newTVarIO (0 :: Int)
     let traceTime   = do
             cpuTime2        <- getCPUTime
             cpuTime1        <- readIORef cpuTime1Ref
@@ -748,7 +708,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
                 s               <- cpuElapsedStr cpuTime0 sysTime0 mRTSStats0
                 putStr $ ' ' : s ++ ": "
                 writeIORef cpuTime1Ref cpuTime2
-                numSleeping <- readIORef numSleepingRef
+                numSleeping <- readTVarIO numSleepingVar
                 ghs         <- readTVarIO genHsRef
                 WithNGens _gkgs kN  <- readTVarIO gkgsRef
                 rgsMNGHs    <- readIORef rgsMNGensRef
@@ -763,29 +723,19 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
                     show (Seq.length gMGis) ++ " paired, " ++
                     show (length ijcs) ++ " pairs" ++
                     if numSleeping > 0 then ", " ++ show numSleeping ++ " sleeping" else ""
-        checkQueues t   = whileM $ do
-            when (t == 0 && gbTrace /= 0)   traceTime
-            wake0       <- readTVarIO wakeAllThreads
-            let doSleep = do
-                    traceEvent ("  sleep " ++ show t) $ pure ()
-                    when (gbTrace .&. gbTQueues /= 0) $ putChar 's'
-                    n1          <- atomicModifyIORef' numSleepingRef (dupe . (+ 1))
-                    wake1       <- readTVarIO wakeAllThreads
-                    let res     = wake1 /= wake0 || n1 < nCores
-                    when res $ do
-                        atomically $ do
-                            wake2       <- readTVar wakeAllThreads
-                            when (wake2 == wake0) retry
-                        inc numSleepingRef (-1)
-                    pure res
-            orM (tasks ++ [doSleep])
+            pure False
+        checkQueues nCores t    = orM (tasks ++ [logSleep])
           where
+            logSleep    = do
+                traceEventIO ("  sleep " ++ show t)
+                when (gbTrace .&. gbTQueues /= 0) $ putChar 's'
+                pure False
             tasks1
                 | t == 0                        = [newIJCs, checkRgs1, doSP]
                 | 3 * t < nCores {- @@ tune -}  = [newIJCs, doSP]
                 | otherwise                     = [doSP, newIJCs]
-            tasks       = [checkRgs1 | t == 1] ++ tasks1
-    withAsyncsOnWaitAny checkQueues ([1 .. nCores - 1] ++ [0])  -- @@ withAsyncsWaitAny
+            tasks       = [traceTime | t == 0 && gbTrace /= 0] ++ [checkRgs1 | t == 1] ++ tasks1
+    parNonBlocking wakeAllThreads numSleepingVar checkQueues
     when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ putS "\n"
     when (gbTrace .&. gbTSummary /= 0) $ do
         t           <- cpuElapsedStr cpuTime0 sysTime0 mRTSStats0
@@ -824,7 +774,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
           where
             (!cd, !t)   = unconsNZ p
         ~redGbGens  =   if not useSugar.b then gbGens else
-            Seq.fromList (fmap fullReduce2NZ (toList gbGens) `using` parListChunk 10 rseq)
+            seqMapParChunk 10 fullReduce2NZ gbGens
     pure $ GroebnerIdeal { gkgs, gbGhs, gbGens, redGbGens }
   where
     evShow          = evShowPrec 0
@@ -835,15 +785,13 @@ groebnerBasis gbpA@(GBPolyOps { .. }) nCores gbTrace gbi0 newGens   = do
     hEvCmp          = spCmp evCmp useSugar      :: Cmp (SPair ev)
 
 
-gbiSmOps        :: GBPoly ev term p => GBPolyOps ev p -> Int ->
-                    SubmoduleOps p p (GroebnerIdeal p)
--- ^ @gbiSmOps gbpA nCores@
+gbiSmOps        :: GBPoly ev term p => GBPolyOps ev p -> SubmoduleOps p p (GroebnerIdeal p)
+-- ^ @gbiSmOps gbpA@
 {-# INLINABLE gbiSmOps #-}
-gbiSmOps gbpA nCores    = SubmoduleOps { .. }
+gbiSmOps gbpA   = SubmoduleOps { .. }
   where
     KGsOps { gkgsReduce }   = kgsOps gbpA
     zeroMd  = GroebnerIdeal (gkgsEmpty gbpA.nEvGroups) Seq.empty Seq.empty Seq.empty
-    plusGens gbTrace gbi0 newGens   =
-        unsafePerformIO $ groebnerBasis gbpA nCores gbTrace gbi0 newGens
+    plusGens gbTrace gbi0 newGens   = unsafePerformIO $ groebnerBasis gbpA gbTrace gbi0 newGens
     stdGens doFullReduce gbi    = if doFullReduce.b then gbi.redGbGens else gbi.gbGens
     bModBy doFullReduce gbi p   = fst (gkgsReduce gbi.gkgs doFullReduce SL.Nil p)

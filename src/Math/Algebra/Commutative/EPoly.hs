@@ -19,14 +19,16 @@ import Math.Algebra.Category.Category
 import Math.Algebra.General.SparseSum
 import Math.Algebra.Commutative.GroebnerBasis
 
+import Control.Monad (replicateM)
 import Data.Bifunctor (bimap)
 import Data.Bits (xor, unsafeShiftL, unsafeShiftR)
 import Data.Maybe (fromJust)
+import Data.Ord (clamp)
 import qualified Data.Vector.Unboxed as U
 import Data.Word (Word64)
 import qualified StrictList2 as SL
 
-import Control.Parallel.Strategies (parMap, rseq)
+import Control.Parallel.Cooperative
 
 
 zipWithExact    :: (a -> b -> c) -> [a] -> [b] -> [c]
@@ -175,7 +177,7 @@ instance GBPoly ExponVec (SSTerm c ExponVec) (EPoly c) where
     leadEvNZ        = sparseSum undefined (\_ ev _ -> ev)
     {-# INLINE leadEvNZ #-}
 
-{-# SPECIALIZE gbiSmOps :: GBPolyOps ExponVec (EPoly c) -> Int ->
+{-# SPECIALIZE gbiSmOps :: GBPolyOps ExponVec (EPoly c) ->
     SubmoduleOps (EPoly c) (EPoly c) (GroebnerIdeal (EPoly c)) #-}
 
 data RingTgtXs c t      = RingTgtXs (c -> t) [t]
@@ -297,12 +299,11 @@ epGBPOps evCmp isGraded cR descVarSs cShowPrec useSugar     = GBPolyOps { .. }
 
 epCountZeros        :: Ring c -> [c] -> EPolyOps c -> [EPoly c] -> Int
 -- ^ fastest if the first polynomials are short or have few zeros
-epCountZeros cR cElts (EPolyOps { nVars, epUniv = UnivL _ _ epUnivF }) ps   = go [] nVars
+epCountZeros cR cElts (EPolyOps { nVars, epUniv = UnivL _ _ epUnivF }) ps   =
+    forkJoinPar (replicateM parDepth) sum (go (nVars - parDepth)) cElts
   where
     evalAt cs   = epUnivF cR (RingTgtXs id cs)
-    go cs 0     = if all (cR.isZero . evalAt cs) ps then 1 else 0
-    go cs n     =
-        sum $ (if n < minPar then map else parMap rseq) (\c -> go (c : cs) (n - 1)) cElts
+    go 0 cs     = if all (cR.isZero . evalAt cs) ps then 1 else 0
+    go n cs     = sum [go (n - 1) (c : cs) | c <- cElts]
     nCElts      = length cElts
-    minPar      = if nCElts < 2 then maxBound else max (nVars + 1 - depth 1000) (depth 500)
-    depth n     = floor (logBase @Double (fromIntegral nCElts) n)
+    parDepth    = if nCElts < 2 then 0 else nVars - clamp (1, nVars) (floorLogBase nCElts 500)

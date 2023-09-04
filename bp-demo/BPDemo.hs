@@ -11,7 +11,7 @@ import Data.Foldable (toList)
 -- import qualified Data.Sequence as Seq
 import Data.Word (Word64)
 
-import Control.Concurrent (getNumCapabilities)
+import Control.Concurrent (runInUnboundThread)
 
 -- import Debug.Trace
 
@@ -25,8 +25,8 @@ demoOps nVars sec   = bp58Ops evCmp isGraded descVarSs (UseSugar False)
     xVarSs          = ['X' : show n | n <- [1 :: Int ..]]
     descVarSs       = take nVars (map (: []) ['a' .. 'z'] ++ xVarSs)
 
-bpDemo                  :: Int -> Int -> IO ()
-bpDemo nCores gbTrace   = do
+bpDemo              :: Int -> IO ()
+bpDemo gbTrace      = do
     putStrLn $ name ++ " " ++ show sec
     -- when (Seq.length reducedGBGensSeq < 250) $ mapM_ (putStrLn . pShow) reducedGBGensL
     putStrLn $ show (bpCountZeros bpoA reducedGBGensL) ++ " receiver zeros"
@@ -39,7 +39,7 @@ bpDemo nCores gbTrace   = do
 
     sec             = LexCmp   -- @@ LexCmp, GrLexCmp, or GrRevLexCmp
     (gbpA@(GBPolyOps { pR, pShow }), bpoA@(BPOtherOps { pRead }))   = demoOps nVars sec
-    smA@(SubmoduleOps { .. })   = gbiSmOps gbpA nCores
+    smA@(SubmoduleOps { .. })   = gbiSmOps gbpA
     
     initGensL       = map (map pRead) initGenSsL
     gbIdeal         = fromGens smA gbTrace (initGensL !! 1)
@@ -332,9 +332,7 @@ bpDemo nCores gbTrace   = do
 
 main    :: IO ()
 main    = do
-    nCores      <- getNumCapabilities
-    
     -- for gbTrace bits, see Math/Algebra/Commutative/GroebnerBasis.hs:
     let gbTrace     = gbTSummary -- .|. gbTResults
             -- .|. gbTProgressInfo .|. gbTQueues .|. gbTProgressDetails     -- @@
-    runOn0 $ bpDemo nCores gbTrace
+    runInUnboundThread $ bpDemo gbTrace

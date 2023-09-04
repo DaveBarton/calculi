@@ -1,9 +1,8 @@
-import Math.Algebra.Commutative.GroebnerBasis (runOn0)
 import Math.Algebra.Commutative.GBDemo
 
 -- import Data.List (isInfixOf)
 
-import Control.Concurrent (getNumCapabilities)
+import Control.Concurrent (getNumCapabilities, runInUnboundThread)
 import GHC.Conc (getNumProcessors)
 
 import Data.Time.Clock (getCurrentTime)
@@ -19,12 +18,19 @@ import System.Info (fullCompilerVersion)
 -- import System.IO (hFlush, stderr, stdout)
 -- import System.Process (callCommand)
 
+{- import Control.Parallel.Cooperative
+import System.Random
+import Data.List (unfoldr) -}
+
 
 -- isLinux         :: Bool
 -- isLinux         = "linux" `isInfixOf` os
 
 main    :: IO ()
 main    = do
+{-    let rands   = take 300000 $ unfoldr (Just . uniform) (mkStdGen 137) :: [Int]
+    print $ sum $ sortByPar 100 compare rands -}
+    
     nCores      <- getNumCapabilities
     args        <- getArgs
     
@@ -35,8 +41,7 @@ main    = do
     putStrLn $ "\n" ++ show today ++ ", " ++ arch ++ "-" ++ os ++ "/" ++ compilerName ++ "-"
         ++ showVersion fullCompilerVersion
         ++ ", using " ++ show nCores ++ " of " ++ show maxNCores ++ " cores\n"
-    
-    runOn0 $ gbDemo nCores args
+    runInUnboundThread $ gbDemo args
     -- hFlush stdout
     -- hFlush stderr
     

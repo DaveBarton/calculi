@@ -37,7 +37,7 @@ import Data.Word (Word64)
 import StrictList2 (pattern (:!))
 import qualified StrictList2 as SL
 
-import Control.Parallel.Strategies (rpar, runEval)
+import Control.Parallel.Cooperative
 
 
 newtype EV58        = EV58 { w64 :: Word64 }    deriving Eq
@@ -99,7 +99,7 @@ instance GBPoly EV58 EV58 (BinPoly EV58) where
     leadEvNZ SL.Nil     = undefined
     {-# INLINE leadEvNZ #-}
 
-{-# SPECIALIZE gbiSmOps :: GBPolyOps EV58 (BinPoly EV58) -> Int ->
+{-# SPECIALIZE gbiSmOps :: GBPolyOps EV58 (BinPoly EV58) ->
     SubmoduleOps (BinPoly EV58) (BinPoly EV58) (GroebnerIdeal (BinPoly EV58)) #-}
 
 -- | For Boolean logic, we treat 1 as True and 0 as False.
@@ -205,17 +205,14 @@ bp58Ops evCmp isGraded descVarSs useSugar   = assert (nVars <= 58)
 bpCountZeros        :: BPOtherOps EV58 Word64 -> [BinPoly EV58] -> Int
 -- ^ @1 <= nVars <= 58@; fastest if the first polynomials are short or have few zeros
 bpCountZeros (BPOtherOps { nVars, pAt }) ps     =
-    assert (nVars > 0) $ goPar 0 (1 `unsafeShiftL` (nVars - 1))
+    assert (nVars > 0) $ forkJoinPar (split (1 `unsafeShiftL` (nVars - 1))) sum (go maxUni) 0
   where
-    go bs 0     = if any (`pAt` bs) ps then 0 else 1
-    go bs b     = go bs b1 + go (bs .|. b) b1
+    go 0 bs     = if any (`pAt` bs) ps then 0 else 1
+    go b bs     = go b1 bs + go b1 (bs .|. b)
       where
         b1  = b `unsafeShiftR` 1
-    minPar      = 1 `unsafeShiftL` max (nVars - 10) 12
-    goPar bs b
-        | b < minPar    = go bs b
-        | otherwise     = runEval $ do
-            let b1  = b `unsafeShiftR` 1
-            ~x      <- rpar (goPar bs b1)
-            let y   = goPar (bs .|. b) b1
-            pure $ x + y
+    maxUni      = 1 `unsafeShiftL` min (nVars - 1) 12
+    split b bs  | b == maxUni   = [bs]
+    split b bs  = split b1 bs ++ split b1 (bs .|. b)
+      where
+        b1  = b `unsafeShiftR` 1
