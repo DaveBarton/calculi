@@ -22,7 +22,6 @@ import Math.Algebra.Commutative.GroebnerBasis
 import Control.Monad (replicateM)
 import Data.Bifunctor (bimap)
 import Data.Bits (xor, unsafeShiftL, unsafeShiftR)
-import Data.List (intercalate)
 import Data.List.Extra (chunksOf)
 import Data.Maybe (fromJust)
 import Data.Ord (clamp)
@@ -49,7 +48,7 @@ data Expons     = Expons1 Word64
 instance Show Expons where  -- e.g. for testing & debugging
     show (Expons1 w)        = show0x w
     show (Expons2 w v)      = show0x w ++ " " ++ show0x v
-    show (ExponsB ws)       = intercalate " " (map show0x (U.toList ws))
+    show (ExponsB ws)       = unwords (map show0x (U.toList ws))
     show (ExponsN a)        = show a
 
 data ExponVec   = ExponVec { totDeg :: Word, expons :: Expons }

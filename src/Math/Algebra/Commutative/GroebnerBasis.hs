@@ -24,6 +24,7 @@ import Data.Int (Int64)
 import Data.List (elemIndex, findIndices, groupBy, sortBy)
 import Data.List.Extra (chunksOf)
 import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
+import qualified Data.RRBVector as GBV
 import qualified Data.Sequence as Seq
 import Data.Tuple.Extra (fst3)
 import qualified Data.Vector as V
@@ -54,7 +55,7 @@ import System.IO (hPutStr, stderr)
 data SubmoduleOps r m sm    = SubmoduleOps {
     zeroMd      :: sm,                  -- ^ zero module
     plusGens    :: Int -> sm -> [m] -> sm,  -- ^ @plusGens gbTrace@, add any generators
-    stdGens     :: IsDeep -> sm -> Seq.Seq m,   -- ^ \"standard\" generators,
+    stdGens     :: IsDeep -> sm -> GBV.Vector m,    -- ^ \"standard\" generators,
                     -- @stdGens doFullReduce sm@
     bModBy      :: IsDeep -> sm -> Op1 m    -- ^ @bModBy doFullReduce sm m@
 }
@@ -483,9 +484,9 @@ gbTProgressDetails  = 0x20  -- ^ details relating to selection strategy
 
 data GroebnerIdeal p    = GroebnerIdeal {
     gkgs        :: GapsKerGens p,
-    gbGhs       :: Seq.Seq (EPolyHDeg p),   -- nonzero g's with ascending (leadEvNZ g)
-    gbGens      :: Seq.Seq p,       -- a Groebner Basis
-    redGbGens   :: ~(Seq.Seq p)     -- fully reduced Groebner Basis generators
+    gbGhs       :: GBV.Vector (EPolyHDeg p),    -- nonzero g's with ascending (leadEvNZ g)
+    gbGens      :: GBV.Vector p,    -- a Groebner Basis
+    redGbGens   :: ~(GBV.Vector p)  -- fully reduced Groebner Basis generators
 }
 
 groebnerBasis   :: forall ev term p. GBPoly ev term p => GBPolyOps ev p -> Int ->
@@ -498,7 +499,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
     mRTSStats0      <- getMaybeRTSStats
     let KGsOps { .. }   = kgsOps gbpA
     gkgsRef         <- newTVarIO (WithNGens gbi0.gkgs (length gbi0.gbGhs))
-    genHsRef        <- newTVarIO gbi0.gbGhs :: IO (TVar (Seq.Seq (EPolyHDeg p)))
+    genHsRef        <- newTVarIO gbi0.gbGhs :: IO (TVar (GBV.Vector (EPolyHDeg p)))
     nRedStepsRef    <- newPrimVar (0 :: Int)
     nSPairsRedRef   <- newPrimVar (0 :: Int)
     let topReduce   = gkgsTopReduce (readTVarIO gkgsRef)
@@ -521,13 +522,13 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
             if useSugar.b && h /= evTotDeg (leadEvNZ g) then Nothing else Just g
         endReduce_n kN gh       = do    -- result is reduced like by reduce_n
             ghs         <- readTVarIO genHsRef
-            let kN'     = Seq.length ghs
+            let kN'     = length ghs
             if pIsZero gh.p then pure (WithNGens gh kN')
             else if kN >= kN' then
                 pure (WithNGens (EPolyHDeg (monicizeU gh.p) gh.h) kN)
             else if 3 * nEvGroups * (kN' - kN) > kN' {- @@ tune -} then reduce_n gh
             else
-                let endGHs      = Seq.drop kN ghs
+                let endGHs      = GBV.drop kN ghs
                     mghn        = foldTopReduce1 endGHs gh
                     endRed1 (ph, nSteps)    = do
                         when (gbTrace .&. gbTSummary /= 0) $ fetchAddInt_ nRedStepsRef nSteps
@@ -542,9 +543,9 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
                 in  maybe (endRed2 gh) endRed1 mghn
         checkGkgs   = do
             ghs         <- readTVarIO genHsRef
-            let n       = Seq.length ghs
+            let n       = length ghs
                 p (WithNGens _gkgs k)   = k < n
-                f (WithNGens gkgs k)    = WithNGens (gkgsInsert (Seq.index ghs k) gkgs) (k + 1)
+                f (WithNGens gkgs k)    = WithNGens (gkgsInsert (ghs GBV.! k) gkgs) (k + 1)
             whenM (maybeAtomicModifyTVarIO' gkgsRef p f) $ do
                 traceEventIO "  checkGkgs: atomic modified gkgsRef"
                 checkGkgs
@@ -559,7 +560,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
                     putStrLn $ " remove g" ++ show j ++ " (" ++ pShowEV g1 ++ ") by g" ++ show i
                         ++ " (" ++ pShowEV g ++ ")"
                 ghs     <- readTVarIO genHsRef
-                let hh  = Seq.index ghs j
+                let hh  = ghs GBV.! j
                 checkGkgs
                 atomically $ modifyTVar' gkgsRef (wngFirst (gkgsDelete hh))
                 rgsInsert gh i t
@@ -574,11 +575,11 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
                             if evTotDeg (leadEvNZ q) == 0 then inc rNTraceRef 1 else putChar 'R'
                         r'          <- if evTotDeg (leadEvNZ q) == 0 then pure r else reduce2 r
                         ghs0        <- readTVarIO genHsRef
-                        let hh      = Seq.index ghs0 j
+                        let hh      = ghs0 GBV.! j
                             rh'     = EPolyHDeg r' hh.h
                         checkGkgs
                         atomically $ modifyTVar' gkgsRef (wngFirst (gkgsReplace hh rh'))
-                        atomically $ modifyTVar' genHsRef (Seq.update j rh')
+                        atomically $ modifyTVar' genHsRef (GBV.update j rh')
                         assert (not (pIsZero r')) (pure ((r', j) : t'))
     wakeAllThreads  <- newTVarIO 0          :: IO (TVar Int)
     gDShownRef      <- newIORef 0           :: IO (IORef Word)
@@ -588,8 +589,8 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
                 traceEventIO "  addGenHN start"
                 kNIsLow     <- atomically $ do
                     ghs         <- readTVar genHsRef
-                    let res     = Seq.length ghs > kN
-                    unless res $ writeTVar genHsRef $! ghs Seq.|> gh
+                    let res     = length ghs > kN
+                    unless res $ writeTVar genHsRef $! ghs GBV.|> gh
                     pure res
                 if kNIsLow then addGenHN =<< endReduce_n kN gh else do
                     inc1TVar wakeAllThreads
@@ -607,28 +608,28 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
                             writeIORef gDShownRef d
                     traceEventIO ("  addGenHN end " ++ show kN)
     gMGisRef        <- newTVarIO (fmap (Just . giNew) gbi0.gbGhs)
-                                        :: IO (TVar (Seq.Seq (Maybe (GBGenInfo ev))))
+                                        :: IO (TVar (GBV.Vector (Maybe (GBGenInfo ev))))
     ijcsRef         <- newTVarIO SL.Nil :: IO (TVar (SortedSPairs ev))  -- ascending by hEvCmp
     let newIJCs     = do
             ghs0        <- readTVarIO genHsRef
             gMGis00     <- readTVarIO gMGisRef  -- for speed, to avoid atomic transaction
-            if Seq.length gMGis00 >= Seq.length ghs0 then pure False else do
+            if length gMGis00 >= length ghs0 then pure False else do
                 ijcs0       <- readTVarIO ijcsRef
                 mx          <- atomically $ do
                     gMGis       <- readTVar gMGisRef
-                    if Seq.length gMGis >= Seq.length ghs0 then pure Nothing else do
-                        let t       = Seq.length gMGis
-                            gh      = Seq.index ghs0 t
+                    if length gMGis >= length ghs0 then pure Nothing else do
+                        let t       = length gMGis
+                            gh      = ghs0 GBV.! t
                             tGi     = giNew gh
                         traceEvent ("  newIJCs start " ++ show t) $ pure ()
-                        writeTVar gMGisRef $! gMGis Seq.|> Just tGi
+                        writeTVar gMGisRef $! gMGis GBV.|> Just tGi
                         pure (Just (gMGis, t, gh, tGi))
                 case mx of
                     Nothing                     -> pure False
                     Just (!gMGis0, !t, !gh, !tGi)       -> do
                         let (skipIs, skipIJCs, addITCs)     =
                                 updatePairs gbpA (toList gMGis0) ijcs0 tGi
-                            skipIF s i  = Seq.update i Nothing s
+                            skipIF s i  = GBV.update i Nothing s
                         {-
                             toIJ (SPair i j _ _)    = (i, j)
                             toIJs ijms              = map toIJ (toList ijms)
@@ -666,12 +667,12 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
             case mk of
                 Just k      -> do
                     ghs         <- readTVarIO genHsRef
-                    if k < Seq.length ghs then do
+                    if k < length ghs then do
                         let f mk1   = if mk1 == mk then (Nothing, True) else (mk1, False)
                         res         <- atomicModifyIORef' rgsMNGensRef f
                         when res $ do
                             rgs         <- readIORef rgsRef
-                            let gh      = Seq.index ghs k
+                            let gh      = ghs GBV.! k
                             rgs'        <- rgsInsert gh k rgs
                             atomicWriteIORef' rgsRef rgs'
                             atomicWriteIORef' rgsMNGensRef (Just (k + 1))
@@ -693,8 +694,8 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
             traceEventIO ("  newG" ++ show (i, j))
             when (gbTrace .&. gbTSummary /= 0) $ fetchAddInt_ nSPairsRedRef 1
             ghs     <- readTVarIO genHsRef
-            let f   = if i < 0 then pZero else (Seq.index ghs i).p
-            ghn     <- reduce_n (EPolyHDeg (sPoly f (Seq.index ghs j).p sp) h)
+            let f   = if i < 0 then pZero else (ghs GBV.! i).p
+            ghn     <- reduce_n (EPolyHDeg (sPoly f (ghs GBV.! j).p sp) h)
             addGenHN ghn
             pure True
         doSP        = maybe (pure False) newG =<< slPop ijcsRef
@@ -716,11 +717,11 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
                 gMGis       <- readTVarIO gMGisRef
                 ijcs        <- readTVarIO ijcsRef
                 putStrLn $
-                    show (Seq.length ghs) ++ " gens, " ++
+                    show (length ghs) ++ " gens, " ++
                     show kN ++ " gkg'd, " ++
                     maybe "busy" show rgsMNGHs ++ " rg'd, " ++
                     show (length rgs) ++ " rgs, " ++    -- omit?
-                    show (Seq.length gMGis) ++ " paired, " ++
+                    show (length gMGis) ++ " paired, " ++
                     show (length ijcs) ++ " pairs" ++
                     if numSleeping > 0 then ", " ++ show numSleeping ++ " sleeping" else ""
             pure False
@@ -747,7 +748,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
             -- Macaulay just counts top-reduced
         ghs         <- readTVarIO genHsRef
         let ndhs    = [(numTerms g, evTotDeg (leadEvNZ g), h) | EPolyHDeg g h <- toList ghs]
-        putStrLn $ "generated (redundant) basis has " ++ show (Seq.length ghs) ++
+        putStrLn $ "generated (redundant) basis has " ++ show (length ghs) ++
             " elements with " ++ show (sum (map fst3 ndhs)) ++ " monomials"
         when (gbTrace .&. gbTProgressDetails /= 0) $ do
             putStrLn "(whether used & head degree + sugar, # monomials):"
@@ -759,7 +760,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
             mapM_ (putStrLn . unwords) (chunksOf 10 (zipWith show4 ndhs gMGisL))
     rgs1        <- readIORef rgsRef
     ghs1        <- readTVarIO genHsRef
-    let gbGhs   = Seq.fromList (map (Seq.index ghs1 . snd) (reverse rgs1))
+    let gbGhs   = GBV.fromList (map ((ghs1 GBV.!) . snd) (reverse rgs1))
         gbGens  = fmap (.p) gbGhs
         ~s      = show (length gbGens) ++ " generators"
     if gbTrace .&. gbTResults /= 0 then do
@@ -774,7 +775,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
           where
             (!cd, !t)   = unconsNZ p
         ~redGbGens  =   if not useSugar.b then gbGens else
-            seqMapParChunk 10 fullReduce2NZ gbGens
+            rrbMapParChunk 16 fullReduce2NZ gbGens
     pure $ GroebnerIdeal { gkgs, gbGhs, gbGens, redGbGens }
   where
     evShow          = evShowPrec 0
@@ -791,7 +792,7 @@ gbiSmOps        :: GBPoly ev term p => GBPolyOps ev p -> SubmoduleOps p p (Groeb
 gbiSmOps gbpA   = SubmoduleOps { .. }
   where
     KGsOps { gkgsReduce }   = kgsOps gbpA
-    zeroMd  = GroebnerIdeal (gkgsEmpty gbpA.nEvGroups) Seq.empty Seq.empty Seq.empty
+    zeroMd  = GroebnerIdeal (gkgsEmpty gbpA.nEvGroups) GBV.empty GBV.empty GBV.empty
     plusGens gbTrace gbi0 newGens   = unsafePerformIO $ groebnerBasis gbpA gbTrace gbi0 newGens
     stdGens doFullReduce gbi    = if doFullReduce.b then gbi.redGbGens else gbi.gbGens
     bModBy doFullReduce gbi p   = fst (gkgsReduce gbi.gkgs doFullReduce SL.Nil p)

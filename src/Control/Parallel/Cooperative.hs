@@ -41,7 +41,7 @@ module Control.Parallel.Cooperative (
     
     -- * Simple (non-cooperative) parallelism
     evalPar, forkJoinPar, mapParChunk, fmapParChunk, seqMapParChunk, imsMapParChunkTo,
-    vecMapParChunk,
+    vecMapParChunk, rrbMapParChunk,
     
     -- * Folding and sorting
     foldBalanced, foldBalancedPar, sortByPar,
@@ -57,12 +57,14 @@ import Control.Monad.Extra (whileM)
 import Data.Bits (Bits, FiniteBits, (.&.), bit, countLeadingZeros, finiteBitSize, xor)
 import Data.Foldable (toList)
 import qualified Data.IntMap.Strict as IMS
-import Data.List (sortBy, uncons)
+import Data.List (sortBy, uncons, unfoldr)
 import Data.List.Extra (chunksOf, mergeBy)
 -- import Data.Maybe (isJust)
 import Data.Maybe (isNothing)
+import qualified Data.RRBVector as RRB
 import qualified Data.Sequence as Seq
 import qualified Data.Vector as V
+import GHC.Stack (HasCallStack)
 
 import Control.Concurrent (getNumCapabilities, myThreadId, threadCapability)
 import Control.Concurrent.Async (Async, waitAny, withAsync, withAsyncOn)
@@ -201,11 +203,14 @@ forkJoinPar     :: (a -> [b]) -> ([c] -> d) -> (b -> c) -> a -> d
     function is lazy, it'll be parallelized also. -}
 forkJoinPar split join f a  = join $ evalPar (map f (split a))
 
-mapParChunk     :: Int -> (a -> b) -> [a] -> [b]
+checkChunkSize  :: HasCallStack => Int -> a -> a
+checkChunkSize d    = if d < 1 then error ("Bad chunksize: " ++ show d) else id
+
+mapParChunk     :: HasCallStack => Int -> (a -> b) -> [a] -> [b]
 {- ^ Map a function down a list, processing chunks in parallel. The chunk size must be
     positive. This is similar to @seqElts (map f es `using` parListChunk chunkSize rseq)@
     from "Control.Parallel.Strategies", but may be somewhat faster. -}
-mapParChunk chunkSize f es  =
+mapParChunk chunkSize f es  = checkChunkSize chunkSize $
     seqSpine $ concat $ evalPar (map seqElts (chunksOf chunkSize (map f es)))
 {-- We map f lazily down es, instead of down each chunk, in case es' elements start out lazy
     and therefore small, and f shrinks its (evaluated/expanded) argument a lot. In that case,
@@ -213,17 +218,18 @@ mapParChunk chunkSize f es  =
     sure this happens in real cases, not just simple artificial benchmarks, such as
     print @Int $ sum $ mapParChunk 1000 sum $ [[1 - n .. n] | n <- [1 .. 10000]].) --}
 
-fmapParChunk    :: (Functor t, Foldable t, Monoid (t b)) => (t a -> [t a]) -> (a -> b) -> t a ->
-                    t b
+fmapParChunk    :: (Functor t, Foldable t, Monoid (t b), HasCallStack) =>
+                    (t a -> [t a]) -> (a -> b) -> t a -> t b
 {- ^ Map a function down a structure, processing chunks in parallel. If the splitting
     function is lazy, it'll be parallelized also, but note 'mconcat' usually is not. -}
 fmapParChunk split f    = forkJoinPar split mconcat (seqElts . fmap f)
 -- Note fmap may not be lazy, so we don't want to compute (fmap f es) outside evalPar.
 
-seqMapParChunk  :: Int -> (a -> b) -> Seq.Seq a -> Seq.Seq b
+seqMapParChunk  :: HasCallStack => Int -> (a -> b) -> Seq.Seq a -> Seq.Seq b
 {- ^ Map a function down a sequence, processing chunks in parallel. The chunk size must be
     positive. -}
-seqMapParChunk chunkSize f  = seqSpine . fmapParChunk (toList . Seq.chunksOf chunkSize) f
+seqMapParChunk chunkSize f  = checkChunkSize chunkSize $
+    seqSpine . fmapParChunk (toList . Seq.chunksOf chunkSize) f
 
 imsMapParChunkTo    :: Int -> (a -> b) -> IMS.IntMap a -> IMS.IntMap b
 {- ^ Map a function down a strict IntMap, processing chunks in parallel, up to a chunk depth. -}
@@ -233,18 +239,32 @@ imsMapParChunkTo    = fmapParChunk . chunksTo
         | depth < 1     = [ims]
         | otherwise     = concatMap (chunksTo (depth - 1)) (IMS.splitRoot ims)
 
-vecMapParChunk  :: Int -> (a -> b) -> V.Vector a -> V.Vector b
+vecChunksOf     :: HasCallStack => Int -> V.Vector a -> [V.Vector a]
+{- ^ Split a vector into chunks of a given size, possibly with a smaller but nonempty final 
+    chunk. The given chunk size must be positive. -}
+vecChunksOf chunkSize   = checkChunkSize chunkSize $ unfoldr go
+  where
+    go v    = if null v then Nothing else Just (V.splitAt chunkSize v)
+
+vecMapParChunk  :: HasCallStack => Int -> (a -> b) -> V.Vector a -> V.Vector b
 {- ^ Map a function over a vector, processing chunks in parallel. The chunk size must be
     positive. -}
-vecMapParChunk d    =
-    if d < 1 then error ("vecMapParChunk - Bad chunksize: " ++ show d) else
-    fmapParChunk slices
+vecMapParChunk d    = fmapParChunk (vecChunksOf d)
+
+rrbChunksOf     :: HasCallStack => Int -> RRB.Vector a -> [RRB.Vector a]
+{- ^ Split a vector into chunks of a given size, possibly with a smaller but nonempty final 
+    chunk. The given chunk size must be positive. -}
+rrbChunksOf chunkSize   = checkChunkSize chunkSize $ unfoldr go
   where
-    slices v    = loop m [V.unsafeSlice m (n - m) v | m < n]
-      where
-        n           = V.length v
-        m           = n - n `rem` d
-        loop k t    = if k > 0 then loop (k - d) (V.unsafeSlice (k - d) d v : t) else t
+    go v    = if null v then Nothing else Just (RRB.splitAt chunkSize v)
+
+rrbMapParChunk  :: HasCallStack => Int -> (a -> b) -> RRB.Vector a -> RRB.Vector b
+{- ^ Map a function over an RRB vector, processing chunks in parallel. The chunk size must be
+    positive. -}
+rrbMapParChunk chunkSize    = fmapParChunk (rrbChunksOf chunkSize)
+
+{- Scala's parallel collections split RRBVectors (and other collections) roughly in half, sort
+    of like IntMap's @splitRoot@, instead of using a @chunkSize@. -}
 
 
 -- * Folding and sorting
@@ -280,12 +300,12 @@ foldBalancedPar f as    = if null (drop 3 as) then foldBalanced f as else
                                     (IMS.updateLookupWithKey (\_ _ -> Nothing) kb)
                     when (isNothing me) $ modifyTVar' doneVar (IMS.insert k a)
                     pure me
-                maybe (pure True) (\b -> go kParent (f a b)) mb
+                maybe (pure True) (go kParent . f a) mb
               where
                 kb          = buddy k
                 kParent     = (k + kb) `div` 2
         parNonBlocking wakeAllThreads numSleepingVar taskF
-        done            <- atomically (readTVar doneVar)
+        done            <- readTVarIO doneVar
         pure (done IMS.! top)
       where
         {- We number the tree of calls of f, expanded to a full binary tree, using inorder

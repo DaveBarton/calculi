@@ -8,7 +8,6 @@ import Math.Algebra.Commutative.BinPoly
 
 -- import Control.Monad (when)
 import Data.Foldable (toList)
--- import qualified Data.Sequence as Seq
 import Data.Word (Word64)
 
 import Control.Concurrent (runInUnboundThread)
@@ -28,7 +27,7 @@ demoOps nVars sec   = bp58Ops evCmp isGraded descVarSs (UseSugar False)
 bpDemo              :: Int -> IO ()
 bpDemo gbTrace      = do
     putStrLn $ name ++ " " ++ show sec
-    -- when (Seq.length reducedGBGensSeq < 250) $ mapM_ (putStrLn . pShow) reducedGBGensL
+    -- when (length reducedGBGensSeq < 250) $ mapM_ (putStrLn . pShow) reducedGBGensL
     putStrLn $ show (bpCountZeros bpoA reducedGBGensL) ++ " receiver zeros"
     putStrLn $ show (bpCountZeros bpoA toReduce) ++ " sender zeros"
     putStrLn $ show (length revSend) ++ " of " ++ show (length toReduce) ++

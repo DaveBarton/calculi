@@ -14,7 +14,7 @@ import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
 import Data.Foldable (toList)
-import qualified Data.Sequence as Seq
+import qualified Data.RRBVector as GBV
 
 
 groebnerBasisProps      :: GBPoly ev term p => GBPolyOps ev p -> ShowGen [p] ->
@@ -29,8 +29,8 @@ groebnerBasisProps gbpA@(GBPolyOps { .. }) halfInitGensSG countZeros    =
     gsSG11          = halfInitGensSG { gen = scale11 halfInitGensSG.gen }
     sPolyIJ gs i j  = sPoly f g (SPair i j (evTotDeg m) m)
       where
-        f   = Seq.index gs i
-        g   = Seq.index gs j
+        f   = gs GBV.! i
+        g   = gs GBV.! j
         m   = evLCM nVars (leadEvNZ f) (leadEvNZ g)
     gbTrace         = 0
     gbProp          = withTests 10 $ property $ do
