@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# cd into the calculi dir, and run this on linux. Arguments can specify GHC RTS options.
+# cd into the calculi dir, and run this on linux.
 
 uptime
 
 echo; lscpu; echo; numactl --hardware; echo; numactl --show
 
 echo; cabal build time-gb
-perf stat -d $(cabal list-bin time-gb) +RTS "$@"
+perf stat -d $(cabal list-bin time-gb) "$@"
