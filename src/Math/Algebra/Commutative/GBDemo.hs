@@ -12,9 +12,11 @@ import Math.Algebra.Commutative.EPoly
 -- import Math.Algebra.Commutative.VMPoly
 import Math.Algebra.Commutative.Field.ZModPW
 
+import Control.Monad (when)
 import Data.List (find)
 import GHC.TypeNats (KnownNat)
 
+import System.Environment (setEnv)
 -- import Test.Inspection (inspect, hasNoTypeClassesExcept)
 
 
@@ -31,7 +33,8 @@ data GBExOpts   = GBExOpts {
     useVMPoly       :: Bool,
     sec             :: StdEvCmp,
     noSugar         :: Bool,
-    gbTrace         :: Int
+    gbTrace         :: Int,
+    showTimes       :: Bool
 }
 
 epGbpA          :: forall p. KnownNat p => StdEvCmp -> UseSugar -> [String] ->
@@ -91,6 +94,7 @@ showUsage       = mapM_ putStrLn [
     "   --tr        show the final result (generators)",
     "   --tq        show characters with info about threads and queues (\"dprRsS\", \"rg\")",
     "   --ts        show details relating to selection strategy",
+    "   --tt        show total times of some algorithm parts",
     "",
     "examples: simpleDemo buchberger87 gerdt93 katsura5 katsura6 katsura7 katsura8 katsura10",
     "   hCyclic4 cyclic4 hCyclic5 cyclic5 hCyclic6 cyclic6 hCyclic7 cyclic7 hCyclic8 cyclic8",
@@ -116,13 +120,14 @@ parseOpt s opts = case s of
     "--tr"          -> Right $ opts { gbTrace = opts.gbTrace .|. gbTResults }
     "--tq"          -> Right $ opts { gbTrace = opts.gbTrace .|. gbTQueues }
     "--ts"          -> Right $ opts { gbTrace = opts.gbTrace .|. gbTProgressDetails }
+    "--tt"          -> Right $ opts { showTimes = True }
     _               -> Left $ "Unknown option: " ++ s
 
 parseArgs       :: [String] -> Either String (GBExOpts, [GBEx])
 parseArgs args  = goOpts args opts0
   where
     opts0           = GBExOpts { showHelp = False, useVMPoly = False, sec = GrRevLexCmp,
-                        noSugar = False, gbTrace = gbTSummary }
+                        noSugar = False, gbTrace = gbTSummary, showTimes = False }
     goOpts          :: [String] -> GBExOpts -> Either String (GBExOpts, [GBEx])
     goOpts ("--" : t)      opts     = (opts, ) <$> goNames t    -- unnec. here
     goOpts (h@('-':_) : t) opts     = goOpts t =<< parseOpt h opts
@@ -144,7 +149,9 @@ usageErr s      = do
 gbDemo          :: [String] -> IO ()
 gbDemo args     = either usageErr run (parseArgs args)
   where
-    run (opts, exs)     = if opts.showHelp then showUsage else mapM_ (gbDemo1 opts) exs
+    run (opts, exs)     = if opts.showHelp then showUsage else do
+        when opts.showTimes $ setEnv "DEBUG_TIMESTATS_ENABLE" "1"
+        mapM_ (gbDemo1 opts) exs
 
 
 -- See http://www.math.usm.edu/perry/Research/f5ex.lib as in

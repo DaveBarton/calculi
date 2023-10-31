@@ -27,7 +27,7 @@ groebnerBasisProps gbpA@(GBPolyOps { .. }) halfInitGensSG countZeros    =
   where
     scale11         = Gen.scale (Range.Size 11 *)
     gsSG11          = halfInitGensSG { gen = scale11 halfInitGensSG.gen }
-    sPolyIJ gs i j  = sPoly f g (SPair i j (evTotDeg m) m)
+    sPolyIJ gs i j  = sPoly f g (SPair i j (evTotDeg m) m (const undefined))
       where
         f   = gs GBV.! i
         g   = gs GBV.! j

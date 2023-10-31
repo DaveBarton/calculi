@@ -31,6 +31,8 @@ import qualified StrictList2 as SL
 
 import Control.Parallel.Cooperative
 
+import qualified Debug.TimeStats as TS
+
 
 zipWithExact    :: (a -> b -> c) -> [a] -> [b] -> [c]
 -- ^ or use library @safe@
@@ -140,12 +142,12 @@ evDividesF nVars ev@(ExponVec d es) ev'@(ExponVec d' es')   = expsDivs es es'
         | d' < 256 || d >= 256  = U.ifoldr (\i e ~b -> bytesDivs e (a' U.! i) && b) True a
     expsDivs (ExponsN a)   (ExponsN a')
                                 = U.ifoldr (\i e ~b ->          e <= a' U.! i && b) True a
-    expsDivs _             _                =
+    expsDivs _             _                = TS.measurePure "evDividesF slow" $
         and (zipWithExact (<=) (exponsL nVars ev) (exponsL nVars ev'))
+    perW        = perWord64 nVars d
+    mask        = if perW == 8 then 0x0101_0101_0101_0100 else 0x0001_0001_0001_0000
     bytesDivs w w'      = w <= w' && (w' - w) .&. mask `xor` w .&. mask `xor` w' .&. mask == 0
-      where     -- check if any bytes subtracted in (w' - w) cause borrowing from any mask bits
-        perW        = perWord64 nVars d
-        mask        = if perW == 8 then 0x0101_0101_0101_0100 else 0x0001_0001_0001_0000
+        -- check if any bytes subtracted in (w' - w) cause borrowing from any mask bits
 {-# INLINABLE evDividesF #-}
 
 evLCMF          :: Int -> Op2 ExponVec  -- really Least Common Multiple of vars^ev1 and vars^ev2

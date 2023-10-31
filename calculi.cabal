@@ -25,7 +25,9 @@ common deps
     default-extensions: DuplicateRecordFields LambdaCase MonoLocalBinds NoFieldSelectors
                         OverloadedRecordDot PatternSynonyms RecordWildCards
     other-extensions:   CPP DataKinds FunctionalDependencies Strict ViewPatterns
-    ghc-options:        -Wall -Wcompat -feager-blackholing
+    ghc-options:        -Wall -Wcompat -feager-blackholing -threaded
+    if impl(ghc >= 9.8.1)
+        ghc-options:        -Wno-x-partial
     build-depends:      base >= 4.16 && < 5, containers >= 0.6 && < 0.8, extra >= 1.6 && < 1.8
 
 library
@@ -62,6 +64,7 @@ library
         strict-list,
         -- text,
         time >= 1.9.3 && < 2,
+        timestats,
         vector
 
     hs-source-dirs:     src
@@ -77,7 +80,7 @@ executable bp-demo
     build-depends:      calculi
 
     hs-source-dirs:     bp-demo
-    ghc-options:        -threaded -rtsopts "-with-rtsopts=-N -A64m -t"
+    ghc-options:        -rtsopts "-with-rtsopts=-N -A64m -t"
 
 test-suite calculi-test
     import:             deps
@@ -99,7 +102,7 @@ test-suite calculi-test
     build-depends:      calculi, hedgehog == 1.*, mod, rrb-vector, strict-list
 
     hs-source-dirs:     test
-    ghc-options:        -threaded -rtsopts "-with-rtsopts=-N -A64m"
+    ghc-options:        -rtsopts "-with-rtsopts=-N -A64m"
 
 benchmark time-gb
     import:             deps
@@ -113,7 +116,7 @@ benchmark time-gb
     build-depends:      calculi, process >= 1.2 && < 2, time >= 1.9.3 && < 2
 
     hs-source-dirs:     timings
-    ghc-options:        -threaded -rtsopts "-with-rtsopts=-N -A64m -s"
+    ghc-options:        -rtsopts "-with-rtsopts=-N -A64m -s"
 
 benchmark bench
     import:             deps

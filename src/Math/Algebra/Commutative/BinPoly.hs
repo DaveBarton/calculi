@@ -180,9 +180,10 @@ bp58Ops evCmp isGraded descVarSs useSugar   = assert (nVars <= 58)
     descVarPs           = map (SL.singleton . evBit) varBitJsDesc
     
     varBitJsAsc         = reverse varBitJsDesc
-    extraSPairs v j h   = [SPair (i - nVars) j (h + 1) v | i <- varBitJsAsc, testBit v.w64 i]
-    sPoly _f g (SPair  i _j _h _m)  | i < 0     = g `bpTimesEv` fromBits58 (bit (i + nVars))
-    sPoly  f g (SPair _i _j _h  m)              = mult1 f `bpPlus` mult1 g
+    extraSPairs v j h   = [SPair (i - nVars) j (h + 1) v (spCmp evCmp useSugar)
+                            | i <- varBitJsAsc, testBit v.w64 i]
+    sPoly _f g (SPair { i })    | i < 0     = g `bpTimesEv` fromBits58 (bit (i + nVars))
+    sPoly  f g (SPair { m })                = mult1 f `bpPlus` mult1 g
       where
         mult1 (v :! t)      = bpTimesEv t (fromJust (evMaybeQuo m v))
         mult1 _             = undefined

@@ -9,7 +9,7 @@
 
 module Math.Algebra.Commutative.GroebnerBasis (
     SubmoduleOps(..), fromGens,
-    UseSugar(..), SPair(..), GBEv(..), GBPoly(..), GBPolyOps(..),
+    UseSugar(..), SPair(..), spCmp, GBEv(..), GBPoly(..), GBPolyOps(..),
     IsGraded(..), StdEvCmp(..), secIsGraded,
     gbTSummary, gbTProgressChars, gbTProgressInfo, gbTResults, gbTQueues, gbTProgressDetails,
     GroebnerIdeal, gbiSmOps
@@ -26,6 +26,8 @@ import Data.List.Extra (chunksOf)
 import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
 import qualified Data.RRBVector as GBV
 import qualified Data.Sequence as Seq
+import qualified Data.Set as Set
+import Data.Set (Set)
 import Data.Tuple.Extra (fst3)
 import qualified Data.Vector as V
 import Numeric (showFFloat)
@@ -43,6 +45,7 @@ import Data.Primitive.PrimVar (PrimVar, atomicReadInt, fetchAddInt, newPrimVar)
 import System.IO.Unsafe (unsafePerformIO)
 
 import Data.Time.Clock.System (SystemTime(..), getSystemTime)
+import qualified Debug.TimeStats as TS
 import Debug.Trace.String (traceEvent, traceEventIO)
 import GHC.Stats (RTSStats, getRTSStats, getRTSStatsEnabled, mutator_cpu_ns, mutator_elapsed_ns)
 import System.CPUTime (getCPUTime)
@@ -71,13 +74,12 @@ inc ref n       = when (n /= 0) $ atomicModifyIORef'_ ref (+ n)
 fetchAddInt_        :: PrimMonad m => PrimVar (PrimState m) Int -> Int -> m ()
 fetchAddInt_ var    = void . fetchAddInt var
 
-slPop           :: TVar (SL.List a) -> IO (Maybe a)
-slPop esVar     = atomically $ do
+setPop          :: Ord a => TVar (Set a) -> IO (Maybe a)
+setPop esVar    = atomically $ do
     es      <- readTVar esVar
-    f es
-  where
-    f (h :! t)      = do writeTVar esVar t; pure (Just h)
-    f SL.Nil        = pure Nothing
+    case Set.minView es of
+        Just (!h, !t)   -> do writeTVar esVar t; pure (Just h)
+        Nothing         -> pure Nothing
 
 {- currently unused
 maybeAtomicModifyIORef'             :: IORef a -> Pred a -> (a -> (a, b)) -> IO (Maybe b)
@@ -137,8 +139,13 @@ cpuElapsedStr cpuTime0 sysTime0 mStats0     = do
 
 newtype UseSugar    = UseSugar { b :: Bool }    deriving Show
 
-data SPair ev       = SPair { i, j :: Int, h :: Word, m :: ev }
-    -- i, j, "sugar" (homog) degree if useSugar.b, LCM of head evs of gens i and j
+data SPair ev       = SPair { i, j :: Int, h :: Word, m :: ev, cmp :: Cmp (SPair ev) }
+    -- i, j, "sugar" (homog) degree if useSugar.b, LCM of head evs of gens i and j;
+    -- 'cmp' is needed because "Data.Set" requires an 'Ord' instance
+instance Eq (SPair ev) where
+    (==) sp     = cmpEq sp.cmp sp
+instance Ord (SPair ev) where
+    compare sp  = sp.cmp sp
 
 {- | 'GBEv', 'GBPoly', and 'GBPolyOps' together are the operations on Exponent Vectors @ev@ and
     Polynomials @p@ that are needed by our (Buchberger) Groebner Basis algorithm. The typeclass
@@ -192,11 +199,11 @@ data GBPolyOps ev p     = GBPolyOps {
     Giovini, Mora, Niesi, Robbiano, Traverso, "One sugar cube, please ...", 1991: -}
 
 spCmp               :: Cmp ev -> UseSugar -> Cmp (SPair ev)
-spCmp evCmp useSugar (SPair i1 j1 h1 ev1) (SPair i2 j2 h2 ev2)  =
+spCmp evCmp useSugar (SPair i1 j1 h1 ev1 _) (SPair i2 j2 h2 ev2 _)  =
     (if useSugar.b then (compare h1 h2 <>) else id)
         (evCmp ev1 ev2 <> compare j1 j2 <> compare i1 i2)
 
-type SortedSPairs ev    = SL.List (SPair ev)    -- sorted using (spCmp evCmp useSugar)
+type SortedSPairs ev    = Set (SPair ev)    -- sorted using (spCmp evCmp useSugar)
 
 data EPolyHDeg p    = EPolyHDeg { p :: p, h :: Word }   -- poly and "sugar" homog degree
 
@@ -223,7 +230,7 @@ updatePairs (GBPolyOps { nVars, evCmp, extraSPairs, useSugar }) gMGis ijcs tGi  
     giLcm gi1 gi2   = GBGenInfo (evLCM nVars gi1.ev gi2.ev) (max gi1.dh gi2.dh)
     giToSp i j gi   =
         let ev          = gi.ev
-        in  SPair i j (gi.dh + evTotDeg ev) ev
+        in  SPair i j (gi.dh + evTotDeg ev) ev hEvCmp
     t               = length gMGis
     tEv             = tGi.ev
     itMGis          = map (fmap (giLcm tGi)) gMGis      :: [Maybe (GBGenInfo ev)]
@@ -235,26 +242,28 @@ updatePairs (GBPolyOps { nVars, evCmp, extraSPairs, useSugar }) gMGis ijcs tGi  
         skipQ (Just gi) (Just c)    = divEq gi.ev c
         skipQ _         _           = False
     skipIs          = SL.fromList (findIndices id skipIQs)
-    skipIJCs        = SL.filter canSkip ijcs
+    skipIJCs        = TS.measurePure "1.1.1 make skipIJCs" $ Set.filter canSkip ijcs
       where             -- criterion B_ijk
-        canSkip (SPair i j _ c)     = i >= 0 && evDivides nVars tEv c && ne i c && ne j c
+        canSkip (SPair i j _ c _)   = i >= 0 && evDivides nVars tEv c && ne i c && ne j c
         ne i c                      = maybe False (\itc -> not (divEq itc c)) (itmcsV V.! i)
     itcs            = catMaybes (zipWith (\i -> fmap (giToSp i t)) [0..] itMGis)  :: [SPair ev]
     -- "sloppy" sugar method:
-    itcss           = groupBy (cmpEq lcmCmp) (sortBy lcmCmp itcs)
+    itcss           = TS.measurePure "1.1.2 sort/group new itcs" $ seqElts $
+                        groupBy (cmpEq lcmCmp) (sortBy lcmCmp itcs)
     itcsToC         = (.m) . head
-    itcss'          = filter (noDivs . itcsToC) itcss       -- criterion M_ik
-      where
+    itcss'          = TS.measurePure "1.1.3 M_ik" $ seqElts $ filter (noDivs . itcsToC) itcss
+      where     -- criterion M_ik; 3 seqElts calls for TS.measurePure
         firstDiv c  = find (\ itcs1 -> evDivides nVars (itcsToC itcs1) c) itcss
         noDivs c    = divEq (itcsToC (fromJust (firstDiv c))) c
     gMEvsV          = V.fromListN t (map (fmap (.ev)) gMGis)    :: V.Vector (Maybe ev)
     bestH           = if useSugar.b then minimumBy hCmp else head
-    itcs'           = mapMaybe (\gp -> if any buch2 gp then Nothing else Just (bestH gp)) itcss'
+    itcs'           = TS.measurePure "1.1.4 F_jk and buch2 (rel prime)" $ seqElts $
+        mapMaybe (\gp -> if any buch2 gp then Nothing else Just (bestH gp)) itcss'
       where             -- criterion F_jk and Buchberger's 2nd criterion (gi and gt rel. prime)
-        buch2 (SPair i j _ c)     = assert (j == t)
+        buch2 (SPair i j _ c _)     = assert (j == t)
             (evTotDeg (fromJust (gMEvsV V.! i)) + evTotDeg tEv == evTotDeg c)
-    addITCs         = SL.fromList
-                        (sortBy hEvCmp (extraSPairs tEv t (evTotDeg tEv + tGi.dh) ++ itcs'))
+    addITCs         = TS.measurePure "1.1.5 addITCs Set.fromList" $
+                        Set.fromList (extraSPairs tEv t (evTotDeg tEv + tGi.dh) ++ itcs')
 
 
 data SizedEPoly p   = SizedEPoly { n :: Int, p :: p }
@@ -305,7 +314,7 @@ gkgsEmpty nEvGroups = SL.singleton (G1KGs 0 (kgsEmpty nEvGroups))
 {-# SCC kgsFindReducer #-}
 kgsFindReducer          :: GBPoly ev term p => (ev -> [Word]) -> p -> KerGens p -> Maybe p
 -- returns the best (shortest) top-reducer, if any
-kgsFindReducer evGroup p kgs    =
+kgsFindReducer evGroup p kgs    = TS.measurePure "kgsFindReducer" $
     if pIsZero p then Nothing else
     let nVars   = Seq.length kgs
         pEv     = leadEvNZ p
@@ -336,7 +345,8 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
         n1 `compare` n2 <> evCmp (leadEvNZ p1) (leadEvNZ p2)
 
     kgsInsert           :: p -> Op1 (KerGens p)
-    kgsInsert p kgs     =       -- p /= 0, nEvGroups > 0
+    -- p /= 0, nEvGroups > 0
+    kgsInsert p kgs     =
         assert (not (pIsZero p) && Seq.length kgs > 0) $
         let es      = evGroup (leadEvNZ p)
             m       = maximum es
@@ -351,7 +361,8 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
         in  Seq.adjust' ins v kgs
 
     gkgsInsert          :: EPolyHDeg p -> Op1 (GapsKerGens p)
-    gkgsInsert (EPolyHDeg p hDeg)     = go    -- p /= 0, nEvGroups > 0
+    -- p /= 0, nEvGroups > 0
+    gkgsInsert (EPolyHDeg p hDeg)     = TS.measurePure "gkgsInsert" $ go
       where
         gap                     = if useSugar.b then hDeg - evTotDeg (leadEvNZ p) else 0
         go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
@@ -362,7 +373,8 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
         go SL.Nil                           = undefined
 
     kgsDelete           :: p -> Op1 (KerGens p)
-    kgsDelete p kgs     =   -- p in kgs (so p /= 0, nEvGroups > 0), (leadEvNZ p) unique in kgs
+    -- p in kgs (so p /= 0, nEvGroups > 0), (leadEvNZ p) unique in kgs
+    kgsDelete p kgs     =
         assert (not (pIsZero p) && Seq.length kgs > 0) $
         let es      = evGroup (leadEvNZ p)
             m       = maximum es
@@ -379,8 +391,8 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
         in  Seq.adjust' del v kgs
 
     gkgsDelete          :: EPolyHDeg p -> Op1 (GapsKerGens p)
-    gkgsDelete (EPolyHDeg p hDeg)     = go      -- p in gkgs (so p /= 0, nEvGroups > 0),
-                                                -- (leadEvNZ p) unique in gkgs
+    -- p in gkgs (so p /= 0, nEvGroups > 0), (leadEvNZ p) unique in gkgs
+    gkgsDelete (EPolyHDeg p hDeg)     = TS.measurePure "gkgsDelete" $ go
       where
         gap                     = if useSugar.b then hDeg - evTotDeg (leadEvNZ p) else 0
         go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
@@ -492,7 +504,7 @@ data GroebnerIdeal p    = GroebnerIdeal {
 groebnerBasis   :: forall ev term p. GBPoly ev term p => GBPolyOps ev p -> Int ->
                     GroebnerIdeal p -> [p] -> IO (GroebnerIdeal p)
 {-# INLINABLE groebnerBasis #-}
-groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
+groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
     cpuTime0        <- getCPUTime
     sysTime0        <- getSystemTime
     cpuTime1Ref     <- newIORef cpuTime0
@@ -609,7 +621,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
                     traceEventIO ("  addGenHN end " ++ show kN)
     gMGisRef        <- newTVarIO (fmap (Just . giNew) gbi0.gbGhs)
                                         :: IO (TVar (GBV.Vector (Maybe (GBGenInfo ev))))
-    ijcsRef         <- newTVarIO SL.Nil :: IO (TVar (SortedSPairs ev))  -- ascending by hEvCmp
+    ijcsRef         <- newTVarIO Set.empty  :: IO (TVar (SortedSPairs ev))
     let newIJCs     = do
             ghs0        <- readTVarIO genHsRef
             gMGis00     <- readTVarIO gMGisRef  -- for speed, to avoid atomic transaction
@@ -621,36 +633,39 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
                         let t       = length gMGis
                             gh      = ghs0 GBV.! t
                             tGi     = giNew gh
-                        traceEvent ("  newIJCs start " ++ show t) $ pure ()
                         writeTVar gMGisRef $! gMGis GBV.|> Just tGi
                         pure (Just (gMGis, t, gh, tGi))
                 case mx of
                     Nothing                     -> pure False
-                    Just (!gMGis0, !t, !gh, !tGi)       -> do
-                        let (skipIs, skipIJCs, addITCs)     =
-                                updatePairs gbpA (toList gMGis0) ijcs0 tGi
+                    Just (!gMGis0, !t, !gh, !tGi)       -> TS.measureM "1 newIJCs" $ do
+                        traceEventIO ("  newIJCs start " ++ show t)
+                        let (skipIs, skipIJCs, addITCs)    =
+                                TS.measurePure "1.1 updatePairs" $
+                                    updatePairs gbpA (toList gMGis0) ijcs0 tGi
                             skipIF s i  = GBV.update i Nothing s
                         {-
-                            toIJ (SPair i j _ _)    = (i, j)
+                            toIJ (SPair i j _ _ _)  = (i, j)
                             toIJs ijms              = map toIJ (toList ijms)
                         traceEvent ("  updatePairs result: "
                             ++ show (t, skipIs, toIJs skipIJCs, toIJs addITCs)) $ pure ()
                         -}
-                        unless (null skipIs) $      -- 'unless' for speed
+                        unless (null skipIs) $ TS.measureM "1.2 skipIs" $  -- 'unless' for speed
                             atomically $ modifyTVar' gMGisRef (\ms -> foldl' skipIF ms skipIs)
-                        ijcs        <- atomically $ do
+                        ijcs        <- {- TS.measureM "1.3 skipIJCs" $ -} atomically $ do
                             ijcs        <- readTVar ijcsRef
-                            writeTVar ijcsRef $! SL.minusSorted hEvCmp ijcs skipIJCs
+                            writeTVar ijcsRef $! {- TS.measurePure "1.3.1 skipIJCs" $ -}
+                                Set.difference ijcs skipIJCs
                             pure ijcs
-                        ijcs'       <- atomically $ do
+                        ijcs'       <- {- TS.measureM "1.4 addITCs" $ -} atomically $ do
                             ijcs1       <- readTVar ijcsRef
-                            let ijcs'   = SL.mergeBy hEvCmp ijcs1 addITCs
+                            let ijcs'   = {- TS.measurePure "1.4.1 addITCs" $ -}
+                                    Set.union ijcs1 addITCs
                             writeTVar ijcsRef ijcs'
                             pure ijcs'
                         when (null ijcs && not (null ijcs')) $ inc1TVar wakeAllThreads
                         when (gbTrace .&. gbTQueues /= 0) $ do
-                            let n       = length ijcs
-                                n'      = length ijcs'
+                            let n       = Set.size ijcs
+                                n'      = Set.size ijcs'
                             when (n' < n || n' > n + 10) $
                                 putStr $ 'p' : show n ++ "-" ++ show n' ++ " "
                             when ((t + 1) `rem` 50 == 0) $
@@ -670,7 +685,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
                     if k < length ghs then do
                         let f mk1   = if mk1 == mk then (Nothing, True) else (mk1, False)
                         res         <- atomicModifyIORef' rgsMNGensRef f
-                        when res $ do
+                        when res $ TS.measureM "checkRgs1" $ do
                             rgs         <- readIORef rgsRef
                             let gh      = ghs GBV.! k
                             rgs'        <- rgsInsert gh k rgs
@@ -687,7 +702,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
                         pure res
                     else pure False
                 Nothing     -> pure False
-        newG sp@(SPair i j h c)     = {-# SCC newG #-} do
+        newG sp@(SPair i j h c _)   = {-# SCC newG #-} TS.measureM "newG" $ do
             let ~s  = " start spair(g" ++ show i ++ ",g" ++ show j ++ "): sugar degree " ++
                         show h ++ ", lcm of heads " ++ evShow c
             when (gbTrace .&. gbTProgressDetails /= 0) $ putStrLn s
@@ -698,7 +713,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
             ghn     <- reduce_n (EPolyHDeg (sPoly f (ghs GBV.! j).p sp) h)
             addGenHN ghn
             pure True
-        doSP        = maybe (pure False) newG =<< slPop ijcsRef
+        doSP        = maybe (pure False) newG =<< setPop ijcsRef
     mapM_ (\g -> addGenHN =<< reduce_n (EPolyHDeg g (homogDeg0 g)))
         (sortBy (evCmp `on` leadEvNZ) (filter (not . pIsZero) newGens))
     numSleepingVar  <- newTVarIO (0 :: Int)
@@ -722,7 +737,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
                     maybe "busy" show rgsMNGHs ++ " rg'd, " ++
                     show (length rgs) ++ " rgs, " ++    -- omit?
                     show (length gMGis) ++ " paired, " ++
-                    show (length ijcs) ++ " pairs" ++
+                    show (Set.size ijcs) ++ " pairs" ++
                     if numSleeping > 0 then ", " ++ show numSleeping ++ " sleeping" else ""
             pure False
         checkQueues nCores t    = orM (tasks ++ [logSleep])
@@ -783,7 +798,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = do
         | pIsZero p         = "0"
         | numTerms p < 10   = pShow (monicizeU p)
         | otherwise         = evShow (leadEvNZ p) ++ "+... (" ++ show (numTerms p) ++ " terms)"
-    hEvCmp          = spCmp evCmp useSugar      :: Cmp (SPair ev)
+    -- hEvCmp         = spCmp evCmp useSugar      :: Cmp (SPair ev)
 
 
 gbiSmOps        :: GBPoly ev term p => GBPolyOps ev p -> SubmoduleOps p p (GroebnerIdeal p)

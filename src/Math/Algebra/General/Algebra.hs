@@ -36,7 +36,7 @@
 
 module Math.Algebra.General.Algebra (
     -- * Extend "Prelude"
-#if ! MIN_VERSION_base(4, 19, 0)
+#if ! MIN_VERSION_base(4, 20, 0)
     foldl',
 #endif
 #if ! MIN_VERSION_base(4, 18, 0)
@@ -121,13 +121,13 @@ import Control.Applicative (liftA2)     -- unnecesary in base 4.18+, since in Pr
 import Control.Exception (assert)
 import Data.Bits (Bits, FiniteBits, (.&.), (.|.), bit, finiteBitSize, testBit, zeroBits)
 import Data.Char (isDigit, isSpace)
-#if ! MIN_VERSION_base(4, 19, 0)
-import Data.Foldable (foldl')           -- unnecesary in base 4.19+, since in Prelude
+#if ! MIN_VERSION_base(4, 20, 0)
+import Data.Foldable (foldl')           -- unnecesary in base 4.20+, since in Prelude
 #endif
 import Data.Function (on)
 import Data.Functor.Classes (liftCompare, liftEq)
 import Data.List (stripPrefix)
-import Data.List.Extra (trimStart)
+import Data.List.Extra (list, trimStart)
 import Data.Maybe (maybeToList)
 import Data.Tuple.Extra (second)
 import Numeric (readDec, showHex)
@@ -738,5 +738,5 @@ polynomReads rR@(Ring { .. }) varSRs    =
                 _                       -> [(var, t)
                     | (varS, var) <- varSRs,
                       t <- maybeToList (stripPrefix varS s'),
-                      null t || not (isDigit (head t))]
+                      list True (const . not . isDigit) t]
     in  rngReads rR digitsOrVarReads

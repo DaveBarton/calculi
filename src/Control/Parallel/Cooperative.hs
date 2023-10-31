@@ -53,7 +53,7 @@ module Control.Parallel.Cooperative (
 ) where
 
 import Control.Monad (when)
-import Control.Monad.Extra (whileM)
+import Control.Monad.Extra (ifM, unlessM, whileM)
 import Data.Bits (Bits, FiniteBits, (.&.), bit, countLeadingZeros, finiteBitSize, xor)
 import Data.Foldable (toList)
 import qualified Data.IntMap.Strict as IMS
@@ -67,13 +67,14 @@ import qualified Data.Vector as V
 import GHC.Stack (HasCallStack)
 
 import Control.Concurrent (getNumCapabilities, myThreadId, threadCapability)
-import Control.Concurrent.Async (Async, waitAny, withAsync, withAsyncOn)
+import Control.Concurrent.Async (Async, wait, withAsync, withAsyncOn)
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO,
     stateTVar, writeTVar)
 import Control.Monad.STM (STM, atomically, retry)
 import System.IO.Unsafe (unsafePerformIO)
 
 import Data.Time.Clock.System (SystemTime(MkSystemTime), getSystemTime)
+import qualified Debug.TimeStats as TS
 -- import Numeric (showFFloat)
 
 
@@ -137,23 +138,22 @@ parWithAsyncs wakeAllThreads numSleepingVar allPairs    = do
         _               -> go [] allPairs
   where
     numThreads      = length allPairs
-    go asyncs []                    = snd <$> waitAny (reverse asyncs)
+    go asyncs []                    = mapM_ wait (reverse asyncs)
     go asyncs ((waf, task) : ps)    = waf threadF (\aa -> go (aa : asyncs) ps)
       where
+        done        = (== numThreads) <$> readTVarIO numSleepingVar
         threadF     = do
             wake0       <- readTVarIO wakeAllThreads
             q           <- task
             if q then threadF else do
-                ok          <- atomically $ do
-                    n           <- readTVar numSleepingVar
-                    writeTVar numSleepingVar $! n + 1
-                    pure $ n /= numThreads - 1
-                when ok $ do
-                    atomically $ do
+                inc1TVar numSleepingVar
+                ifM done (inc1TVar wakeAllThreads) $ do
+                    TS.measureM "sleep" $ atomically $ do
                         wake1       <- readTVar wakeAllThreads
                         when (wake1 == wake0) retry
-                    atomically $ modifyTVar' numSleepingVar (subtract 1)
-                    threadF
+                    unlessM done $ do
+                        atomically $ modifyTVar' numSleepingVar (subtract 1)
+                        threadF
 
 parThreads      :: TVar Int -> TVar Int -> [IO Bool] -> IO ()
 {- ^ @parThreads wakeAllThreads numSleepingVar tasks@ runs the @tasks@ in separate threads. When
