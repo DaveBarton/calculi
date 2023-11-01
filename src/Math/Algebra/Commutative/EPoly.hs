@@ -21,7 +21,7 @@ import Math.Algebra.Commutative.GroebnerBasis
 
 import Control.Monad (replicateM)
 import Data.Bifunctor (bimap)
-import Data.Bits (xor, unsafeShiftL, unsafeShiftR)
+import Data.Bits (complement, rotateL, unsafeShiftL, unsafeShiftR, xor)
 import Data.List.Extra (chunksOf)
 import Data.Maybe (fromJust)
 import Data.Ord (clamp)
@@ -41,7 +41,7 @@ zipWithExact f xs ys    = assert (length xs == length ys) (zipWith f xs ys)
 
 data Expons     = Expons1 Word64
                 | Expons2 Word64 Word64
-                | ExponsB (U.Vector Word64)
+                | ExponsB Word64 (U.Vector Word64)
                 | ExponsN (U.Vector Word)
     deriving Eq     -- e.g. for testing
 -- The (possibly reversed) exponents are stored in big-endian order, for fast comparisons. That
@@ -50,7 +50,7 @@ data Expons     = Expons1 Word64
 instance Show Expons where  -- e.g. for testing & debugging
     show (Expons1 w)        = show0x w
     show (Expons2 w v)      = show0x w ++ " " ++ show0x v
-    show (ExponsB ws)       = unwords (map show0x (U.toList ws))
+    show (ExponsB m ws)     = unwords (map show0x (m : U.toList ws))
     show (ExponsN a)        = show a
 
 data ExponVec   = ExponVec { totDeg :: Word, expons :: Expons }
@@ -66,6 +66,15 @@ perWord64 nVars td
     | td < 0x1_0000             = 4
     | otherwise                 = -1
 
+exponsB                 :: Int -> Int -> U.Vector Word64 -> Expons
+-- 0 < perW, 2*perW < nVars; computes a "divMask" of nonzero exponents
+exponsB perW nBits ws   = ExponsB (U.foldl' (go perW) 0 ws) ws
+  where
+    mask            = if perW == 8 then 0xFF else 0xFFFF
+    go n acc w      = if n == 0 then acc else
+        go (n - 1) (acc `rotateL` 1 .|. (if w .&. mask /= 0 then 1 else 0))
+            (w `unsafeShiftR` nBits)
+
 evMake          :: [Word] -> ExponVec
 -- ^ The exponents are listed in big-endian order.
 evMake es       =
@@ -78,7 +87,7 @@ evMake es       =
             | nVars <= perW     = Expons1 (packW es)
             | nVars <= 2*perW   = let (es0, es1)   = splitAt perW es
                                   in  Expons2 (packW es0) (packW es1)
-            | perW > 0          = ExponsB (U.fromList (map packW (chunksOf perW es)))
+            | perW > 0          = exponsB perW nBits (U.fromList (map packW (chunksOf perW es)))
             | otherwise         = ExponsN (U.fromListN nVars es)
     in  ExponVec td exps
 
@@ -87,7 +96,7 @@ exponsL         :: Int -> ExponVec -> [Word]
 exponsL nVars (ExponVec td es)  = case es of
     Expons1 w       -> bytesL nVars w []
     Expons2 w0 w1   -> bytesL perW w0 (bytesL (nVars - perW) w1 [])
-    ExponsB ws      -> goB nVars ws 0
+    ExponsB _ ws    -> goB nVars ws 0
     ExponsN a       -> U.toList a
   where
     perW        = perWord64 nVars td
@@ -105,15 +114,15 @@ evPlus nVars ev@(ExponVec d es) ev'@(ExponVec d' es')   = go es es'
   where
     td      = d + d'
     perW    = perWord64 nVars td
-    go (Expons1 w)   (Expons1 w')
+    go (Expons1 w)    (Expons1 w')
         | nVars <= perW                 = ExponVec td (Expons1 (w + w'))
-    go (Expons2 w v) (Expons2 w' v')
+    go (Expons2 w v)  (Expons2 w' v')
         | nVars <= 2*perW               = ExponVec td (Expons2 (w + w') (v + v'))
-    go (ExponsB ws)  (ExponsB ws')
+    go (ExponsB m ws) (ExponsB m' ws')
         | td < 256 || d >= 256 && d' >= 256 && td < 0x1_0000
-                                        = ExponVec td (ExponsB (U.zipWith (+) ws ws'))
-    go (ExponsN a)   (ExponsN a')       = ExponVec td (ExponsN (U.zipWith (+) a a'))
-    go _             _                  =
+                                    = ExponVec td (ExponsB (m .|. m') (U.zipWith (+) ws ws'))
+    go (ExponsN a)    (ExponsN a')      = ExponVec td (ExponsN (U.zipWith (+) a a'))
+    go _              _                 =
         evMake (zipWithExact (+) (exponsL nVars ev) (exponsL nVars ev'))
 
 evMinusMay      :: Int -> ExponVec -> ExponVec -> Maybe ExponVec
@@ -121,14 +130,18 @@ evMinusMay nVars ev ev'     | not (evDividesF nVars ev' ev)     = Nothing
 evMinusMay nVars ev@(ExponVec d es) ev'@(ExponVec d' es')       = Just (evMinus es es')
   where
     td      = d - d'
-    evMinus (Expons1 w)   (Expons1 w')      = ExponVec td (Expons1 (w - w'))
-    evMinus (Expons2 w v) (Expons2 w' v')
+    evMinus (Expons1 w)    (Expons1 w')     = ExponVec td (Expons1 (w - w'))
+    evMinus (Expons2 w v)  (Expons2 w' v')
         | d < 256 || td >= 256              = ExponVec td (Expons2 (w - w') (v - v'))
-    evMinus (ExponsB ws)  (ExponsB ws')
-        | d < 256 || td >= 256 && d' >= 256 = ExponVec td (ExponsB (U.zipWith (-) ws ws'))
-    evMinus (ExponsN a)   (ExponsN a')
+    evMinus (ExponsB _ ws) (ExponsB _ ws')
+        | d < 256 || td >= 256 && d' >= 256 =
+            ExponVec td (exponsB perW nBits (U.zipWith (-) ws ws'))
+      where
+        ~perW       = perWord64 nVars td
+        ~nBits      = if perW == 8 then 8 else 16
+    evMinus (ExponsN a)    (ExponsN a')
         | td >= 0x1_0000                    = ExponVec td (ExponsN (U.zipWith (-) a a'))
-    evMinus _             _                 =
+    evMinus _              _                =
         evMake (zipWithExact (-) (exponsL nVars ev) (exponsL nVars ev'))
 
 evDividesF      :: Int -> ExponVec -> ExponVec -> Bool
@@ -136,13 +149,14 @@ evDividesF      :: Int -> ExponVec -> ExponVec -> Bool
 evDividesF _ (ExponVec d _) (ExponVec d' _)     | d > d'    = False     -- for efficiency
 evDividesF nVars ev@(ExponVec d es) ev'@(ExponVec d' es')   = expsDivs es es'
   where
-    expsDivs (Expons1 w)   (Expons1 w')     = bytesDivs w w'
-    expsDivs (Expons2 w v) (Expons2 w' v')  = bytesDivs w w' && bytesDivs v v'
-    expsDivs (ExponsB a)   (ExponsB a')
+    expsDivs (Expons1 w)    (Expons1 w')    = bytesDivs w w'
+    expsDivs (Expons2 w v)  (Expons2 w' v') = bytesDivs w w' && bytesDivs v v'
+    expsDivs (ExponsB m ~a) (ExponsB m' ~a')
+        | m .&. complement m' /= 0          = False
         | d' < 256 || d >= 256  = U.ifoldr (\i e ~b -> bytesDivs e (a' U.! i) && b) True a
-    expsDivs (ExponsN a)   (ExponsN a')
+    expsDivs (ExponsN a)    (ExponsN a')
                                 = U.ifoldr (\i e ~b ->          e <= a' U.! i && b) True a
-    expsDivs _             _                = TS.measurePure "evDividesF slow" $
+    expsDivs _              _               = TS.measurePure "evDividesF slow" $
         and (zipWithExact (<=) (exponsL nVars ev) (exponsL nVars ev'))
     perW        = perWord64 nVars d
     mask        = if perW == 8 then 0x0101_0101_0101_0100 else 0x0001_0001_0001_0000
@@ -166,33 +180,36 @@ evLCMF nVars ev@(ExponVec d es) ev'@(ExponVec d' es')   = goLCM es es'
       where
         go done m       = if m == 0 then done else
             go (done .|. max (w .&. m) (w' .&. m)) (m `unsafeShiftL` nBits)
-    goLCM (Expons1 w)   (Expons1 w')        = ExponVec td (Expons1 w'')
+    goLCM (Expons1 w)    (Expons1 w')
+        | td <= fromIntegral mask           = ExponVec td (Expons1 w'')
       where
         w''         = maxPackedW w w'
         td          = totDegPackedW w''
-    goLCM (Expons2 w v) (Expons2 w' v')     = ExponVec td (Expons2 w'' v'')
+    goLCM (Expons2 w v)  (Expons2 w' v')
+        | td <= fromIntegral mask           = ExponVec td (Expons2 w'' v'')
       where
         w''         = maxPackedW w w'
         v''         = maxPackedW v v'
         td          = totDegPackedW w'' + totDegPackedW v''
-    goLCM (ExponsB ws)  (ExponsB ws')
-        | (d < 256) == (d' < 256)           = ExponVec td (ExponsB ws'')
+    goLCM (ExponsB m ws) (ExponsB m' ws')
+        | (d < 256) == (d' < 256) && td <= fromIntegral mask
+                                            = ExponVec td (ExponsB (m .|. m') ws'')
       where
         ws''        = U.zipWith maxPackedW ws ws'
         td          = U.sum (U.map totDegPackedW ws'')  -- hopefully fuses, else U.ifoldl' !?
-    goLCM (ExponsN a)   (ExponsN a')        = ExponVec (U.sum a'') (ExponsN a'')
+    goLCM (ExponsN a)    (ExponsN a')       = ExponVec (U.sum a'') (ExponsN a'')
       where
         a''         = U.zipWith max a a'
-    goLCM _             _                   =
+    goLCM _              _                  =
         evMake (zipWithExact max (exponsL nVars ev) (exponsL nVars ev'))
 
 cmpExps                                     :: Ordering -> Cmp Expons
 -- lexicographic comparison, assuming the same nVars
-cmpExps ~_   (Expons1 w)   (Expons1 w')     = compare w w'
-cmpExps ~_   (Expons2 w v) (Expons2 w' v')  = compare w w' <> compare v v'
-cmpExps ~_   (ExponsB ws)  (ExponsB ws')    = compare ws ws'
-cmpExps ~_   (ExponsN a)   (ExponsN a')     = compare a a'
-cmpExps ~res _             _                = res    -- different shapes
+cmpExps ~_   (Expons1 w)    (Expons1 w')        = compare w w'
+cmpExps ~_   (Expons2 w v)  (Expons2 w' v')     = compare w w' <> compare v v'
+cmpExps ~_   (ExponsB _ ws) (ExponsB _ ws')     = compare ws ws'
+cmpExps ~_   (ExponsN a)    (ExponsN a')        = compare a a'
+cmpExps ~res _              _                   = res    -- different shapes
 
 evGrRevLexCmp   :: Cmp ExponVec
 -- ^ The variables go from least main (variable 0) to most main, in big-endian order.
