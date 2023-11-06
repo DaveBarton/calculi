@@ -96,9 +96,10 @@ showUsage       = mapM_ putStrLn [
     "   --ts        show details relating to selection strategy",
     "   --tt        show total times of some algorithm parts",
     "",
-    "examples: simpleDemo buchberger87 gerdt93 katsura5 katsura6 katsura7 katsura8 katsura10",
-    "   hCyclic4 cyclic4 hCyclic5 cyclic5 hCyclic6 cyclic6 hCyclic7 cyclic7 hCyclic8 cyclic8",
-    "   schransTroost jason210 yang cyclic8big logic3s logic3r logic3n;",
+    "examples: simpleDemo buchberger87 gerdt93",
+    "   katsura5 katsura6 katsura7 katsura8 katsura10 katsura11",
+    "   hCyclic4 cyclic4 hCyclic5 cyclic5 hCyclic6 cyclic6 hCyclic7 cyclic7 hcyclic8 cyclic8",
+    "   schransTroost joswig101 jason210 yang mayr42 cyclic8big logic3s logic3r logic3n;",
     "   if none are listed then katsura8 cyclic7 jason210",
     "",
     "+RTS options set the number of cores used, heap nursery size, etc., and are described at",
@@ -239,6 +240,21 @@ x^5t^2 - z^2t^5] (z^2t^5 ≡ y^2z^3t^2)
             "b^2+2bd-2ce+2df+4bg+4cg+4dg+2eg-47fg-20g^2+50eh-46fh+13gh-41h^2-4ci+50di-48ei+9fi+21gi-22hi+46i^2+50cj-48dj+9ej+19fj-18gj-7hj-43ij+39j^2+37b+48c+32d-10e +22f+27g+7h-40i-13j"
         ],
 
+    GBEx "katsura11" 101 ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"]
+        [
+            "a+2b+2c+2d+2e+2f+2g+2h+2i+2j+2k-1",
+            "fg-23g^2+eh-46fh-40gh-41h^2+di-46ei-40fi+19gi+30hi+47i^2+cj-46dj-40ej+19fj+30gj-7hj+9ij+39j^2+bk-46ck-40dk+19ek+30fk-7gk+9hk-23ik-2jk+36k^2+12b+48c+7d-10e-3f+28g-18h-40i-38j-12k",
+            "f^2+2eg+47g^2+2dh-7fh-19gh-18h^2+2ci-7ei-19fi-36gi+43hi+8i^2+2bj-7dj-19ej-36fj+43gj+16hj-16ij+24j^2-4bk-11ck-23dk-40ek+39fk+12gk-20hk+44ik+2jk+26k^2-24b+5c-14d+20e+6f+45g+36h-21i-25j+25k",
+            "ef+dg+ch+bi-2bj-2cj-2dj-2ej-2fj-2gj-2hj-2ij-2j^2+bk-2jk-50j",
+            "e^2+2df+2cg+2bh-4bi-4ci-4di-4ei-4fi-4gi-4hi-4i^2+2bj-4ij+2ck-4ik+i",
+            "de+cf+bg-2bh-2ch-2dh-2eh-2fh-2gh-2h^2+bi-2hi+cj-2hj+dk-2hk-50h",
+            "d^2+2ce+2bf-4bg-4cg-4dg-4eg+5g^2+2bh+4eh+18fh+38gh+38h^2+2ci+4di+18ei+42fi-29gi+19hi-14i^2+4cj+20dj+42ej-25fj+15gj-28hj+36ij-46j^2+4bk+18ck+42dk-23ek+19fk-32gk+36hk+9ik-8jk+43k^2+48b-10c+28d-40e-12f+12g+29h+42i+50j-48k",
+            "cd+be-2bf-2cf-2df+bg+2dg+4eg+48g^2+3ch+4dh+2eh-7fh-17gh-17h^2+2bi+4ci+3di-5ei-19fi-34gi+45hi+9i^2-2cj-9dj-20ej-40fj+41gj+14hj-18ij+21j^2-4bk-13ck-25dk-42ek+36fk+10gk-22hk+42ik-4jk+23k^2-24b+5c-14d+20e-44f+45g+36h-21i-24j+26k",
+            "c^2+2bd-4be-4ce+2bf+4cf+8df+4bg+10cg+4dg-4eg-4ch-6dh-12eh-8fh-8gh-8h^2-8bi-16ci-16di-18ei-16fi-16gi-24hi-16i^2-4cj-8dj-12ej-6fj-8gj-16hj-24ij-8j^2+4bk+8ck+4dk-4ek+2gk-8hk-16ik-8jk+e+2h+4i+2j",
+            "bc-2bd+3be+4ce-cf-6df-4bg-8cg-5dg+5g^2+2ch+2dh+9eh+18fh+38gh+38h^2+6bi+12ci+12di+26ei+47fi-25gi+23hi-10i^2+6cj+20dj+44ej-29fj+12gj-32hj+36ij-50j^2+10ck+34dk-29ek+9fk-44gk+25hk+ik-24jk+31k^2+48b-10c-22d-40e-11f+13g+30h+42i-49j-44k",
+            "b^2+2bd-2ce+2df+4bg+4cg+4dg+2eg+10g^2-4eh+14fh-49gh-49h^2-4ci-4di+12ei+48fi+5gi-26hi+33i^2-4cj+12dj+48ej+3fj-22gj-33hj-24ij-47j^2+16ck-49dk+3ek-22fk-27gk-20hk+9ik-43jk+14k^2-5b-19c-43d+25e-18f+30g-31h-i+19j+29k"
+        ],
+
     GBEx "hCyclic4" 7583 ["a", "b", "c", "d", "e"]
         [
             "a+b+c+d",
@@ -314,8 +330,20 @@ x^5t^2 - z^2t^5] (z^2t^5 ≡ y^2z^3t^2)
             "abcdef+abcdeg+abcdfg+abcefg+abdefg+acdefg+bcdefg",
             "abcdefg-1"
         ],
-
+{-
     GBEx "hCyclic8" 7583 ["a", "b", "c", "d", "e", "f", "g", "h", "i"]
+        [
+            "a+b+c+d+e+f+g+h",
+            "ab+bc+cd+de+ef+fg+gh+ha",
+            "abc+bcd+cde+def+efg+fgh+gha+hab",
+            "abcd+bcde+cdef+defg+efgh+fgha+ghab+habc",
+            "abcde+bcdef+cdefg+defgh+efgha+fghab+ghabc+habcd",
+            "abcdef+bcdefg+cdefgh+defgha+efghab+fghabc+ghabcd+habcde",
+            "abcdefg+bcdefgh+cdefgha+defghab+efghabc+fghabcd+ghabcde+habcdef",
+            "abcdefgh-i^8"
+        ],
+-}
+    GBEx "hcyclic8" 101 ["a", "b", "c", "d", "e", "f", "g", "h", "i"]
         [
             "a+b+c+d+e+f+g+h",
             "ab+bc+cd+de+ef+fg+gh+ha",
@@ -385,6 +413,15 @@ x^5t^2 - z^2t^5] (z^2t^5 ≡ y^2z^3t^2)
             "-6de - 6fg + 6dh + 6eh + 6fh + 6gh + 8h^2 - ht"
         ],
 
+    GBEx "joswig101" 101 ["a", "b", "c", "d", "e"]
+        [
+            "ade^11+abe^10+c",
+            "bcde^8+ace^19+d",
+            "abce^18-bce^8+c^2e^8-bde^2-1",
+            "ab^2e^18-bce^14+c^2e^14+bce^8-bde^8-cde^4-b-e^6",
+            "b^2ce^20+b^2de^14+be^12-a"
+        ],
+
     GBEx "jason210" 32003 ["a", "b", "c", "d", "e", "f", "g", "h"]
         [
             "a^2c^4+b^2d^4+abc^2e^2+abd^2f^2+abcdeg+abcdfh",
@@ -430,6 +467,19 @@ x^5t^2 - z^2t^5] (z^2t^5 ≡ y^2z^3t^2)
             "BMPS-ANPS-BLQS+zNQS+ALRS-zMRS-BMOT+ANOT+BKQT-yNQT-AKRT+yMRT+BLOU-zNOU-BKPU+yNPU+zKRU-yLRU-ALOV+zMOV+AKPV-yMPV-zKQV+yLQV",
             "FMPS-ENPS-FLQS+DNQS+ELRS-DMRS-FMOT+ENOT+FKQT-CNQT-EKRT+CMRT+FLOU-DNOU-FKPU+CNPU+DKRU-CLRU-ELOV+DMOV+EKPV-CMPV-DKQV+CLQV",
             "JMPS-INPS-JLQS+HNQS+ILRS-HMRS-JMOT+INOT+JKQT-GNQT-IKRT+GMRT+JLOU-HNOU-JKPU+GNPU+HKRU-GLRU-ILOV+HMOV+IKPV-GMPV-HKQV+GLQV"
+        ],
+    
+    GBEx "mayr42" 101 (map (: []) (['a' .. 'z'] ++ ['A' .. 'Y']))
+        [
+            "dW-jY", "cV-iY", "bU-hY", "aT-gY", "dR-iW", "cQ-hV", "bP-gU", "aO-fT", "dM-iW",
+            "cL-hV", "bK-gU", "aJ-fT", "iH-iW", "dH-eY", "hG-hV", "cG-dY", "gF-gU", "bF-cY",
+            "fE-fT", "aE-bY",
+            "inM-iCR", "hmL-hBQ", "glK-gAP", "fkJ-fzO",
+            "fz^2T-gY^3", "fk^2T-bY^3", "fu^2O-fTY^2", "fp^2J-fTY^2",
+            "ixDMX-iCRXY", "hwCLW-hBQWY", "gvBKV-gAPVY", "fuAJU-fzOUY", "ixyMS-iCRSY",
+            "hwxLR-hBQRY", "gvwKQ-gAPQY", "fuvJP-fzOPY", "itxMN-iCNRY", "hswLM-hBMQY",
+            "ioxIM-iCIRY", "grvKL-gALPY", "hnwHL-hBHQY", "fquJK-fzKOY", "gmvGK-gAGPY",
+            "fluFJ-fzFOY"
         ],
     
     GBEx "cyclic8big" 7583 ["a", "b", "c", "d", "e", "f", "g", "h"]

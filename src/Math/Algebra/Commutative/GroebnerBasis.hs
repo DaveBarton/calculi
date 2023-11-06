@@ -21,7 +21,7 @@ import Control.Monad (unless, void, when)
 import Control.Monad.Extra (ifM, orM, whenM)
 import Data.Foldable (find, minimumBy, toList)
 import Data.Int (Int64)
-import Data.List (elemIndex, findIndices, groupBy, sortBy)
+import Data.List (elemIndex, findIndices, groupBy, intercalate, sortBy)
 import Data.List.Extra (chunksOf)
 import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
 import qualified Data.RRBVector as GBV
@@ -50,7 +50,7 @@ import Debug.Trace.String (traceEvent, traceEventIO)
 import GHC.Stats (RTSStats, getRTSStats, getRTSStatsEnabled, mutator_cpu_ns, mutator_elapsed_ns)
 import System.CPUTime (getCPUTime)
 import System.IO (hPutStr, stderr)
--- import System.IO (hFlush, stdout)
+import System.IO (hFlush, stdout)
 -- import System.Process (callCommand)
 
 
@@ -66,6 +66,12 @@ data SubmoduleOps r m sm    = SubmoduleOps {
 fromGens        :: SubmoduleOps r m sm -> Int -> [m] -> sm
 -- ^ @fromGens smA gbTrace gens@
 fromGens smA gbTrace    = smA.plusGens gbTrace smA.zeroMd
+
+
+showBigN        :: Int -> String
+showBigN n      = if n < 0 then '-' : go (- n) else go n
+  where
+    go m    = intercalate "," $ reverse $ map reverse $ chunksOf 3 $ reverse (show m)
 
 
 inc             :: IORef Int -> Int -> IO ()
@@ -314,7 +320,7 @@ gkgsEmpty nEvGroups = SL.singleton (G1KGs 0 (kgsEmpty nEvGroups))
 {-# SCC kgsFindReducer #-}
 kgsFindReducer          :: GBPoly ev term p => (ev -> [Word]) -> p -> KerGens p -> Maybe p
 -- returns the best (shortest) top-reducer, if any
-kgsFindReducer evGroup p kgs    = TS.measurePure "kgsFindReducer" $
+kgsFindReducer evGroup p kgs    =
     if pIsZero p then Nothing else
     let nVars   = Seq.length kgs
         pEv     = leadEvNZ p
@@ -404,11 +410,12 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
     -- kgsReplace p p' kgs     = kgsInsert p' (kgsDelete p kgs)
 
     gkgsReplace             :: EPolyHDeg p -> EPolyHDeg p -> Op1 (GapsKerGens p)
-    gkgsReplace ph ph' gkgs = gkgsInsert ph' (gkgsDelete ph gkgs)
+    gkgsReplace ph ph' gkgs = TS.measurePure "gkgsReplace"  gkgsInsert ph' (gkgsDelete ph gkgs)
 
     gkgsFindReducer         :: p -> GapsKerGens p -> Maybe (EPolyHDeg p)
     -- returns the best (least sugar gap, then shortest) top-reducer, if any
-    gkgsFindReducer p gkgs  = listToMaybe (mapMaybe find1 (toList gkgs))
+    gkgsFindReducer p gkgs  = {- @@ slow on 60 cores: TS.measurePure "gkgsFindReducer" $ -}
+        listToMaybe (mapMaybe find1 (toList gkgs))
       where
         find1 (G1KGs gap kgs)   =   -- if not useSugar.b, then h can be wrong:
             fmap (\g -> EPolyHDeg g (evTotDeg (leadEvNZ g) + gap))
@@ -740,31 +747,28 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
                     show (Set.size ijcs) ++ " pairs" ++
                     if numSleeping > 0 then ", " ++ show numSleeping ++ " sleeping" else ""
             pure False
-        checkQueues nCores t    = orM (tasks ++ [logSleep])
+        checkQueues _nCores t   = orM (tasks ++ [logSleep])
           where
             logSleep    = do
                 traceEventIO ("  sleep " ++ show t)
                 when (gbTrace .&. gbTQueues /= 0) $ putChar 's'
                 pure False
-            tasks1
-                | t == 0                        = [newIJCs, checkRgs1, doSP]
-                | 3 * t < nCores {- @@ tune -}  = [newIJCs, doSP]
-                | otherwise                     = [doSP, newIJCs]
-            tasks       = [traceTime | t == 0 && gbTrace /= 0] ++ [checkRgs1 | t == 1] ++ tasks1
+            tasks       = [traceTime | t == 0 && gbTrace /= 0] ++ [checkRgs1 | t == 1]
+                            ++ [newIJCs] ++ [checkRgs1 | t == 0] ++ [doSP]
     parNonBlocking wakeAllThreads numSleepingVar checkQueues
     when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ putS "\n"
     when (gbTrace .&. gbTSummary /= 0) $ do
         t           <- cpuElapsedStr cpuTime0 sysTime0 mRTSStats0
         putStrLn $ "Groebner Basis CPU/Elapsed Times: " ++ t
         nSPairsRed  <- atomicReadInt nSPairsRedRef
-        putStrLn $ "# SPairs reduced = " ++ show nSPairsRed
+        putStrLn $ "# SPairs reduced = " ++ showBigN nSPairsRed
         nRedSteps   <- atomicReadInt nRedStepsRef
-        putStrLn $ "# reduction steps (quotient terms) = " ++ show nRedSteps
+        putStrLn $ "# reduction steps (quotient terms) = " ++ showBigN nRedSteps
             -- Macaulay just counts top-reduced
         ghs         <- readTVarIO genHsRef
         let ndhs    = [(numTerms g, evTotDeg (leadEvNZ g), h) | EPolyHDeg g h <- toList ghs]
-        putStrLn $ "generated (redundant) basis has " ++ show (length ghs) ++
-            " elements with " ++ show (sum (map fst3 ndhs)) ++ " monomials"
+        putStrLn $ "generated (redundant) basis has " ++ showBigN (length ghs) ++
+            " elements with " ++ showBigN (sum (map fst3 ndhs)) ++ " monomials"
         when (gbTrace .&. gbTProgressDetails /= 0) $ do
             putStrLn "(whether used & head degree + sugar, # monomials):"
             let show4 (n, d, h) m   =
@@ -782,15 +786,16 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
         putStrLn (s ++ ":")
         mapM_ (putStrLn . pShow) gbGens
     else when (gbTrace .&. gbTSummary /= 0) $ putStrLn s
-    {- when (gbTrace .&. gbTQueues /= 0) $ do
-        hFlush stdout
-        callCommand "echo; ps -v" -}
     WithNGens gkgs _kN  <- readTVarIO gkgsRef
     let fullReduce2NZ p     = fst (gkgsReduce gkgs (IsDeep True) (SL.singleton cd) t)
           where
             (!cd, !t)   = unconsNZ p
         ~redGbGens  =   if not useSugar.b then gbGens else
             rrbMapParChunk 16 fullReduce2NZ gbGens
+    {- when (gbTrace .&. gbTQueues /= 0) $ do
+        hFlush stdout
+        callCommand "echo; ps -v" -}
+    when (gbTrace /= 0) $ hFlush stdout     -- e.g. for TS.scope
     pure $ GroebnerIdeal { gkgs, gbGhs, gbGens, redGbGens }
   where
     evShow          = evShowPrec 0
