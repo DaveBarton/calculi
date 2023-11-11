@@ -663,13 +663,13 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
                             writeTVar ijcsRef $! {- TS.measurePure "1.3.1 skipIJCs" $ -}
                                 Set.difference ijcs skipIJCs
                             pure ijcs
-                        ijcs'       <- {- TS.measureM "1.4 addITCs" $ -} atomically $ do
-                            ijcs1       <- readTVar ijcsRef
-                            let ijcs'   = {- TS.measurePure "1.4.1 addITCs" $ -}
+                        (ijcs1, ijcs')  <- {- TS.measureM "1.4 addITCs" $ -} atomically $ do
+                            ijcs1           <- readTVar ijcsRef
+                            let ijcs'       = {- TS.measurePure "1.4.1 addITCs" $ -}
                                     Set.union ijcs1 addITCs
                             writeTVar ijcsRef ijcs'
-                            pure ijcs'
-                        when (null ijcs && not (null ijcs')) $ inc1TVar wakeAllThreads
+                            pure (ijcs1, ijcs')
+                        when (null ijcs1 && not (null ijcs')) $ inc1TVar wakeAllThreads
                         when (gbTrace .&. gbTQueues /= 0) $ do
                             let n       = Set.size ijcs
                                 n'      = Set.size ijcs'

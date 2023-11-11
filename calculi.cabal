@@ -53,6 +53,7 @@ library
         async,
         -- fmt >= 0.4,
         ghc-trace-events,
+        -- hashable, unordered-containers,
         -- inspection-testing >= 0.3,
         mod,
         -- poly >= 0.5.1, deepseq, finite-typelits, vector-sized,
