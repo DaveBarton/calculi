@@ -13,6 +13,7 @@ import Math.Algebra.Commutative.EPoly
 import Math.Algebra.Commutative.Field.ZModPW
 
 import Control.Monad (when)
+import Data.Bits ((.|.))
 import Data.List (find)
 import GHC.TypeNats (KnownNat)
 

@@ -1,9 +1,9 @@
 {-# LANGUAGE DataKinds #-}
 
-{- |  This module tests the "EPoly" module.  -}
+{- |  This module tests the "Math.Algebra.Commutative.EPoly" module.  -}
 
 module Math.Algebra.Commutative.TestEPoly (
-    epTestOps, testEPoly
+    epTestOps, ePolyTests
 ) where
 
 import Math.Algebra.General.Algebra hiding (assert)
@@ -41,9 +41,9 @@ epTestOps               :: Ring c -> Cmp ExponVec -> Range Int -> TestOps c ->
 -- The caller tests @cR@ and @evCmp@, including that @evCmp@ gives a total order.
 epTestOps cR            = ssTestOps cR.ag
 
-test1                   :: Int -> IO Bool
+test1                   :: Int -> TestTree
 -- 1 <= nVars <= 26
-test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
+test1 nVars             = testGroup ("EPoly " ++ show nVars) testsL
   where
     -- should change to a noncommutative coef ring C with zero divisors, and check indets
     -- commute with it, for non-GroebnerBasis tests:
@@ -66,19 +66,20 @@ test1 nVars             = checkGroup ("EPoly " ++ show nVars) props
     -- @@ improve EPoly GB testing:
     evTSmall        = evTestOps evCmp descVarSs (Range.linear 1 3)
     pTSmall         = epTestOps cR evCmp (Range.linear 0 3) cT evTSmall
-    gbProps         = if nVars > 3 then [] else
-                        groebnerBasisProps gbpA  (listTestOps (Range.linear 0 2) pTSmall)
-                            (epCountZeros cR (map cR.fromZ [0 .. 10]) epA)
+    gbTestsL        = [groebnerBasisTests gbpA  (listTestOps (Range.linear 0 2) pTSmall)
+                        (epCountZeros cR (map cR.fromZ [0 .. 10]) epA) | nVars <= 3]
+    reqFlags        =
+        RingFlags { commutative = True, noZeroDivisors = True, nzInverses = False }
     
-    props           = totalOrderProps evT (==) evCmp
-                        ++ ringProps pT (eiBit IsCommutativeRing) pR
-                        ++ ringHomomProps cT cR pT.tEq pR cToEp
-                        ++ [("xs", propertyOnce $ map pShow descVarPs === descVarSs)]
-                        ++ ringHomomProps pT pR cT.tEq cR epToT
-                        ++ [("C -> T", property $ sameFun1TR cT cT.tEq (epToT . cToEp) id),
-                            ("xs ->", propertyOnce $ listTestEq cT (map epToT xs) ts),
-                            readsProp pT (polynomReads pR (zip descVarSs descVarPs))]
-                        ++ gbProps
+    testsL          = [totalOrderTests evT (==) (IsNontrivial True) evCmp,
+                        ringTests pT (IsNontrivial True) reqFlags pR,
+                        ringHomomTests (Just "Ring Homomorphism from C") cT cR pT.tEq pR cToEp,
+                        testOnce "xs" $ map pShow descVarPs === descVarSs,
+                        ringHomomTests (Just "Ring Homomorphism to C") pT pR cT.tEq cR epToT,
+                        singleTest "C -> T" $ sameFun1TR cT cT.tEq (epToT . cToEp) id,
+                        testOnce "xs ->" $ listTestEq cT (map epToT xs) ts,
+                        readsTest pT (polynomReads pR (zip descVarSs descVarPs))]
+                        ++ gbTestsL
 
-testEPoly               :: IO Bool
-testEPoly               = checkAll $ map test1 [1, 2, 3, 5, 9, 14, 20]
+ePolyTests              :: TestTree
+ePolyTests              = testGroup "EPoly" $ map test1 [1, 2, 3, 5, 9, 14, 20]

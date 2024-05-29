@@ -11,10 +11,12 @@ import Math.Algebra.Commutative.UPoly
 import Math.Algebra.Commutative.EPoly
 import Math.Algebra.Commutative.BinPoly
 -- import Math.Algebra.Commutative.VMPoly
+import qualified Math.Algebra.Linear.SparseVector as SV
+import Math.Prob.Random
 
 import Control.DeepSeq (force)
 import Control.Monad ((<$!>))
-import Data.Bits (complement, shift, unsafeShiftL, unsafeShiftR)
+import Data.Bits ((.|.), complement, finiteBitSize, shift, unsafeShiftL, unsafeShiftR)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List (transpose)
 -- import Data.Poly.Multi (toMultiPoly)
@@ -25,11 +27,12 @@ import Data.Tuple.Extra (both)
 -- import qualified Data.Vector.Unboxed as VU
 import Data.Word (Word64)
 import qualified StrictList2 as SL
+import System.Random (mkStdGen, uniformR, split)
 
 
 main            :: IO ()
 main            = defaultMain $ map (uncurry bgroup) [
-    ("StrictList", benchesStrictList),
+    ("StrictList", benchesStrictList), ("SparseVector", benchesSV),
     ("UPoly", benchesUPoly), ("EPoly", benchesEPoly), ("BinPoly", benchesBinPoly)
     -- , ("VMPoly", benchesVMPoly)
     {- , @@ other modules -}
@@ -82,8 +85,9 @@ benchesStrictList   =
 
 
 intRing         :: Ring Int
-intRing         = numRing (eiBits [NotZeroRing, IsCommutativeRing]) (const intDiv)
+intRing         = numRing rFlags (const intDiv)
   where
+    rFlags  = RingFlags { commutative = True, noZeroDivisors = False, nzInverses = False }
     intDiv y 0      = (0, y)
     intDiv y m      = quotRem y m
 
@@ -99,6 +103,18 @@ showNtSparse, showNtDense       :: Int -> String
 
 op2SF                   :: (c -> String) -> String -> (c -> String) -> c -> String
 op2SF xSF opS ySF c     = xSF c ++ opS ++ ySF c
+
+benchesSV       :: [Benchmark]
+benchesSV       = plusBenches
+  where
+    UnivL vAG (TgtArrsF iCToV) _univF   = SV.agUniv intRing.ag
+    makeSV g (m, n) = sumL' vAG $ take m    -- 11 should not divide n
+        [iCToV (r `rem` n) (r `rem` 11 - 5) | r <- randomsBy (uniformR (0, 11 * n - 1)) g]
+    (g0, g1)        = split (mkStdGen 37)
+    plusBenches     = bench2Whnf vAG.plus (("Add " ++) . show) (makeSV g0) (makeSV g1) <$>
+                        [(20, 1000), (300, 1000), (700, 1000),
+                         (1000, 100_000), (10_000, 100_000), (30_000, 100_000),
+                         (1000, 2 ^ (finiteBitSize (0 :: Int) - 5))]
 
 benchesUPoly    :: [Benchmark]
 benchesUPoly    = concat [plusBenches, timesBenches, divBenches]

@@ -2,33 +2,40 @@ cabal-version:      3.0
 name:               calculi
 version:            0.1.0.0
 synopsis:           Fast parallel calculations in pure mathematics, e.g. Gröbner Bases
-
--- A longer description of the package.
--- description:
-
+description:
+    A library for calculations in pure mathematics, with an emphasis on parallelism, exact (not
+    @Float@ or @Double@) calculations, correctness, and efficiency.
+    
+    For basic definitions, start with the "Math.Algebra.General.Algebra" module.
 homepage:           https://github.com/DaveBarton/calculi
--- A URL where users can report bugs.
--- bug-reports:
+bug-reports:        https://github.com/DaveBarton/calculi/issues
 license:            BSD-3-Clause
 license-file:       LICENSE
 author:             Dave Barton
 maintainer:         dbarton@mathscribe.com
-copyright:          Copyright (c) David R. Barton, 2022-2023
+copyright:          Copyright (c) David R. Barton, 2022-2024
 
 category:           Math
-extra-source-files: CHANGELOG.md dirs.txt timings/timings.txt
+extra-doc-files:    CHANGELOG.md dirs.txt timings/timings.txt
+tested-with:        ghc == 9.4.4 || == 9.6.1 || == 9.8.1 || == 9.10.1
 
-tested-with:        ghc ==9.2.4 ghc ==9.4.4 ghc ==9.6.1
+source-repository   head
+    type:               git
+    location:           https://github.com/DaveBarton/calculi
 
 common deps
     default-language:   GHC2021
-    default-extensions: DuplicateRecordFields LambdaCase MonoLocalBinds NoFieldSelectors
-                        OverloadedRecordDot PatternSynonyms RecordWildCards
+    default-extensions: DuplicateRecordFields LambdaCase MonoLocalBinds NegativeLiterals
+                        NoFieldSelectors OverloadedRecordDot PatternSynonyms RecordWildCards
     other-extensions:   CPP DataKinds FunctionalDependencies Strict ViewPatterns
     ghc-options:        -Wall -Wcompat -feager-blackholing -threaded
     if impl(ghc >= 9.8.1)
         ghc-options:        -Wno-x-partial
-    build-depends:      base >= 4.16 && < 5, containers >= 0.6 && < 0.8, extra >= 1.6 && < 1.8
+    build-depends:
+        base >= 4.17 && < 5.0,
+        containers >= 0.6 && < 0.8,
+        extra >= 1.6 && < 1.8,
+        strict >= 0.4 && < 0.6
 
 library
     import:             deps
@@ -39,6 +46,7 @@ library
         Math.Algebra.Category.Category
         Math.Algebra.Commutative.Field.ZModPW
         Math.Algebra.Linear.SparseVector
+        Math.Algebra.Linear.SparseColumnsMatrix
         Math.Algebra.General.SparseSum
         Math.Algebra.Commutative.UPoly
         Math.Algebra.Commutative.GroebnerBasis
@@ -50,23 +58,23 @@ library
         StrictList2
 
     build-depends:
-        async,
-        -- fmt >= 0.4,
-        ghc-trace-events,
+        async < 2.3,
+        contiguous >= 0.6.1.1 && < 0.7,
+        -- fmt >= 0.4 && < 0.7,
+        ghc-trace-events < 0.2,
         -- hashable, unordered-containers,
-        -- inspection-testing >= 0.3,
-        mod,
+        -- inspection-testing >= 0.3 && < 0.6,
+        mod >= 0.1.2 && < 0.3,
         -- poly >= 0.5.1, deepseq, finite-typelits, vector-sized,
-        primitive >= 0.8,
+        primitive >= 0.8 && < 0.10,
         random >= 1.2.1 && < 1.3,
-        rrb-vector,
+        rrb-vector >= 0.2.1 && < 0.3,
         stm >= 2.4 && < 2.6,
-        -- strict >= 0.4,
-        strict-list,
+        strict-list < 0.2,
         -- text,
         time >= 1.9.3 && < 2,
-        timestats,
-        vector
+        timestats < 0.3,
+        vector < 0.14
 
     hs-source-dirs:     src
 
@@ -98,9 +106,10 @@ test-suite calculi-test
         Math.Algebra.Commutative.TestEPoly
         Math.Algebra.Commutative.TestBinPoly
 
-    default-extensions: OverloadedStrings
+    other-extensions:   OverloadedStrings
     
-    build-depends:      calculi, hedgehog == 1.*, mod, rrb-vector, strict-list
+    build-depends:      calculi, hedgehog == 1.*, mod, rrb-vector, strict-list, tasty < 1.6,
+                        tasty-hedgehog < 1.5
 
     hs-source-dirs:     test
     ghc-options:        -rtsopts "-with-rtsopts=-N -A64m"
@@ -123,7 +132,7 @@ benchmark bench
     import:             deps
     main-is:            bench.hs
     type:               exitcode-stdio-1.0
-    build-depends:      calculi, deepseq, strict, tasty, tasty-bench
+    build-depends:      calculi, deepseq < 2, random >= 1.2 && < 1.3, tasty, tasty-bench < 0.4
                         -- , poly, vector, vector-sized
     hs-source-dirs:     timings
     ghc-options:        -rtsopts -with-rtsopts=-T

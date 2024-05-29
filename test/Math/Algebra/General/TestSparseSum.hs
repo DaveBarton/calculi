@@ -1,4 +1,4 @@
-{- |  This module helps test the "SparseSum" module and its clients.  -}
+{- |  This module helps test the "Math.Algebra.General.SparseSum" module and its clients.  -}
 
 module Math.Algebra.General.TestSparseSum (
     ssTestOps
@@ -17,7 +17,7 @@ import qualified Hedgehog.Gen as Gen
 import Data.Foldable (toList)
 
 
-ssTestOps               :: forall c d. AbelianGroup c -> Cmp d ->
+ssTestOps               :: AbelianGroup c -> Cmp d ->
                             Range Int -> TestOps c -> TestOps d -> TestOps (SparseSum c d)
 -- ^ The caller tests @cAG@ and @dCmp@, including that @dCmp@ gives a total order.
 ssTestOps cAG dCmp sumRange cT dT   = TestOps tSP tCheck gen ssAG.eq

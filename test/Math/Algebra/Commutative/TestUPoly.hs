@@ -1,7 +1,7 @@
-{- |  This module tests the "UPoly" module.  -}
+{- |  This module tests the "Math.Algebra.Commutative.UPoly" module.  -}
 
 module Math.Algebra.Commutative.TestUPoly (
-    integralPowT, upTestOps, testUPoly
+    integralPowT, upTestOps, uPolyTests
 ) where
 
 import Math.Algebra.General.Algebra hiding (assert)
@@ -27,8 +27,8 @@ upTestOps           :: Ring c -> Range Int -> TestOps c -> TestOps Integer -> Te
 -- ^ @upTestOps cR sumRange cT dT@
 upTestOps cR        = ssTestOps cR.ag compare
 
-testUPoly               :: IO Bool
-testUPoly               = checkGroup "UPoly" props
+uPolyTests              :: TestTree
+uPolyTests              = testGroup "UPoly" testsL
   where
     -- should change to a noncommutative coef ring C with zero divisors, and check X commutes
     -- with it in C[X]:
@@ -38,12 +38,15 @@ testUPoly               = checkGroup "UPoly" props
         upTestOps zzRing (Range.linear 0 10) (zzTestOps { gen = zzExpGen 1_000_000 })
             (integralPowT "X" (Range.linear 0 10))
     monom c d       = ssLead zzRing.isZero c d ssZero
+    reqFlags        =
+        RingFlags { commutative = True, noZeroDivisors = True, nzInverses = False }
     
-    props           = ringProps pT zeroBits zxRing
-                        ++ ringHomomProps zzTestOps zzRing pT.tEq zxRing zToZX
-                        ++ [("x", propertyOnce $ pT.tEq xZX (monom 1 1))]
-                        ++ ringHomomProps pT zxRing (===) zzRing zxToT
-                        ++ [("C -> T",
-                                property $ sameFun1TR zzTestOps (===) (zxToT . zToZX) id),
-                            ("x ->", propertyOnce $ zxToT xZX === 12345),
-                            readsProp pT (polynomReads zxRing [("X", xZX)])]
+    testsL          = [ringTests pT (IsNontrivial True) reqFlags zxRing,
+                        ringHomomTests (Just "Ring Homomorphism from C") zzTestOps zzRing pT.tEq
+                            zxRing zToZX,
+                        testOnce "x" $ pT.tEq xZX (monom 1 1),
+                        ringHomomTests (Just "Ring Homomorphism to C") pT zxRing (===) zzRing
+                            zxToT,
+                        singleTest "C -> T" $ sameFun1TR zzTestOps (===) (zxToT . zToZX) id,
+                        testOnce "x ->" $ zxToT xZX === 12345,
+                        readsTest pT (polynomReads zxRing [("X", xZX)])]

@@ -30,17 +30,19 @@
     use partial functions, inexact approximations, or estimates that have only a (hopefully
     high) probability of being accurate.
     
-    This module uses LANGUAGE Strict. In particular, constructor fields are strict unless marked
-    with a ~.
+    This module uses LANGUAGE Strict. This is important both for parallelism, and more general
+    efficiency of algebraic code. In particular, except for re-exports, constructor fields and
+    function arguments are strict unless marked with a ~. Pairs are usually strict. We also
+    always use dot notation for records (OverloadedRecordDot and NoFieldSelectors).
 -}
 
 module Math.Algebra.General.Algebra (
-    -- * Extend "Prelude"
 #if ! MIN_VERSION_base(4, 20, 0)
+    -- * Extend "Prelude"
     foldl',
-#endif
 #if ! MIN_VERSION_base(4, 18, 0)
     liftA2,
+#endif
 #endif
     
     -- * Common function types
@@ -48,7 +50,7 @@ module Math.Algebra.General.Algebra (
     assert,
     Pred,
     -- ** Op1
-    Op1, pairOp1,
+    Op1,
     -- ** Op2
     Op2, pairOp2,
     (.*), on,
@@ -57,7 +59,6 @@ module Math.Algebra.General.Algebra (
     -- * Equivalence relations
     -- ** EqRel
     EqRel,
-    pairEq, liftEq,
     -- ** Cls
     Cls(Cls, rep),
     
@@ -66,21 +67,21 @@ module Math.Algebra.General.Algebra (
     Cmp,
     cmpEq,
     maxBy, minBy,
-    lex2Cmp, liftCompare,
     
-    -- * Groups
+    -- * Monoids and Groups
     -- ** MonoidFlags
-    show0x, IntBits, (.&.), (.|.), zeroBits, eiBit, eiBits, hasEIBit, hasEIBits,
-    MonoidFlag(Abelian, IsGroup), MonoidFlags, agFlags,
-    -- ** Group and AbelianGroup
-    Group(Group, monFlags, eq, op, ident, isIdent, inv,
+    MonoidFlags(MonoidFlags, nontrivial, abelian, isGroup), flagsContain,
+    IsNontrivial(..), agFlags,
+    -- ** MonoidOps, Group
+    MonoidOps(MkMonoid, monFlags, eq, op, ident, isIdent, inv,
         AbelianGroup, plus, zero, isZero, neg),
-    expt1, gpExpt, pairGp, gpModF, gpProductL', gpProductR,
-    AbelianGroup, abelianGroup, minus, sumL', sumR,
+    Group, expt1, gpExpt, pairMon, gpModF, monProductL', monProductR,
+    -- ** AbelianGroup
+    AbelianGroup, minus, sumL', sumR,
     
     -- * Rings and fields
     -- ** RingFlags
-    RingFlag(NotZeroRing, IsCommutativeRing, NoZeroDivisors, IsInversesRing), RingFlags,
+    RingFlags(RingFlags, commutative, noZeroDivisors, nzInverses),
     integralDomainFlags, divisionRingFlags, fieldFlags,
     -- ** Ring
     IsDeep(IsDeep, b),
@@ -95,7 +96,7 @@ module Math.Algebra.General.Algebra (
     Module(Module, ag, scale, bDiv), IsLeftMod(IsLeftMod, b), RMod, ModR,
     pairMd, mdModF,
     -- ** RAlg
-    RAlg(..),
+    RAlg(RAlg, aR, scale, fromR),
     algMd,
     
     -- * Basic numeric rings
@@ -106,7 +107,7 @@ module Math.Algebra.General.Algebra (
     dblAG, dblRing,
     
     -- * Converting \<-> String
-    pairShows, showGens,
+    show0x, showToShows, pairShows, pairShow, showGens,
     Prec, applPrec, exptPrec, multPrec, addPrec, ShowPrec,
     parensIf, plusSPrec, sumSPrec, timesSPrec, productSPrec,
     trimStart,
@@ -119,17 +120,18 @@ import GHC.Records
 import Control.Applicative (liftA2)     -- unnecesary in base 4.18+, since in Prelude
 #endif
 import Control.Exception (assert)
-import Data.Bits (Bits, FiniteBits, (.&.), (.|.), bit, finiteBitSize, testBit, zeroBits)
+import Data.Bifoldable (Bifoldable, bifoldr)
+import Data.Bifunctor (bimap, second)
 import Data.Char (isDigit, isSpace)
 #if ! MIN_VERSION_base(4, 20, 0)
 import Data.Foldable (foldl')           -- unnecesary in base 4.20+, since in Prelude
 #endif
 import Data.Function (on)
-import Data.Functor.Classes (liftCompare, liftEq)
+import Data.Functor.Classes (liftEq2)
 import Data.List (stripPrefix)
 import Data.List.Extra (list, trimStart)
 import Data.Maybe (maybeToList)
-import Data.Tuple.Extra (second)
+import Data.Strict.Tuple ((:!:), pattern (:!:))
 import Numeric (readDec, showHex)
 import Text.ParserCombinators.ReadPrec (Prec)
 
@@ -144,24 +146,20 @@ type Pred a     = a -> Bool
 -- ** Op1
 
 type Op1 a      = a -> a
--- ^ a 1-argument operation (function) on @a@
-
-pairOp1         :: (a -> a') -> (b -> b') -> (a, b) -> (a', b')
-{- ^ > pairOp1 f g (x, y) = (f x, g y)
-    
-    Note @pairOp1@'s type specializes to @Op1 a -> Op1 b -> Op1 (a, b)@. -}
-pairOp1 f g (x, y)  = (f x, g y)
+-- ^ a 1-argument operation (function) on @(a)@.
 
 -- ** Op2
 
 type Op2 a      = a -> a -> a
--- ^ a 2-argument operation (function) on @a@
+-- ^ a 2-argument operation (function) on @(a)@.
 
-pairOp2         :: (a -> a' -> a'') -> (b -> b' -> b'') -> (a, b) -> (a', b') -> (a'', b'')
-{- ^ > pairOp2 f g (x, y) (u, v) = (f x u, g y v)
+pairOp2         :: (a -> a' -> a'') -> (b -> b' -> b'') -> a :!: b -> a' :!: b' -> a'' :!: b''
+{- ^ > pairOp2 f g (x :!: y) (u :!: v) = (f x u :!: g y v)
     
-    Note @pairOp2@'s type specializes to @Op2 a -> Op2 b -> Op2 (a, b)@. -}
-pairOp2 f g (x, y) (u, v)   = (f x u, g y v)
+    Note 'pairOp2'\'s type specializes to (includes) @Op2 a -> Op2 b -> Op2 (a :!: b)@.
+    
+    'pairOp2' is like 'bimap', but for functions of 2 arguments. -}
+pairOp2 f g (x :!: y) (u :!: v)     = (f x u :!: g y v)
 
 (.*)            :: (c -> d) -> (a -> b -> c) -> (a -> b -> d)
 infixr 9 .*     -- for mixing with @.@
@@ -185,11 +183,9 @@ infixl 1 !$
 type EqRel a    = a -> a -> Bool
 {- ^ An (abstract) /equivalence relation/ ≡ must be reflexive (@x ≡ x@), symmetric
     (@x ≡ y => y ≡ x@), and transitive (@x ≡ y && y ≡ z => x ≡ z@). An @(EqRel a)@ attempts to
-    implement such a relation, but may be only approximate. -}
-
-pairEq          :: EqRel a -> EqRel b -> EqRel (a, b)
--- ^ > pairEq aEq ~bEq (x, ~y) (u, ~v) = aEq x u && bEq y v
-pairEq aEq ~bEq (x, ~y) (u, ~v)     = aEq x u && bEq y v
+    implement such a relation, but may be only approximate.
+    
+    'Data.Functor.Classes.liftEq' and 'liftEq2' may be useful when creating an 'EqRel'. -}
 
 -- ** Cls
 
@@ -204,13 +200,18 @@ newtype Cls a   = Cls { rep :: a }  deriving (Eq, Show)
 -- ** Cmp
 
 type Cmp a      = a -> a -> Ordering
-{- ^ A @(Cmp a)@ must be antisymmetric (@cmp a b@ is always the opposite of @cmp b a@) and
-    transitive (@a \<= b and b \<= c => a \<= c@). Then >=, ==, \<, and > are also transitive;
-    @a \<= b and b \< c => a \< c@; @a == b and b \< c => a \< c@; etc.; where e.g. @a == b@
-    here means @cmp a b == EQ@.
+{- ^ A @(Cmp a)@ must be antisymmetric (@cmp x y@ is always the opposite of @cmp y x@) and
+    transitive (@x \<= y and y \<= z => x \<= z@). Then >=, ==, \<, and > are also transitive;
+    @x \<= y and y \< z => x \< z@; @x == y and y \< z => x \< z@; etc.; where e.g. @x == y@
+    here means @cmp x y == EQ@.
     
     Also, this @==@ is an equivalence relation. If @==@ agrees with abstract equality, then
-    @cmp@ is a /total order/. -}
+    @cmp@ is a /total order/.
+    
+    'Data.Functor.Classes.liftCompare' and 'Data.Functor.Classes.liftCompare2' may be useful
+    when creating a 'Cmp'. For lists and pairs, they use lexicographic order: the resulting
+    'Cmp' function returns the first non-@EQ@ result when comparing its arguments
+    component-wise, else @EQ@. -}
 
 cmpEq           :: Cmp a -> EqRel a
 -- ^ > cmpEq cmp x y = cmp x y == EQ
@@ -224,67 +225,61 @@ minBy           :: Cmp a -> Op2 a
 -- ^ > minBy cmp x y = if cmp x y /= GT then x else y
 minBy cmp x y   = if cmp x y /= GT then x else y
 
-lex2Cmp         :: Cmp a -> Cmp b -> Cmp (a, b)
--- ^ lexicographic comparison; the @Cmp (a, b)@ returns the first non-EQ result
-lex2Cmp aCmp ~bCmp (x, ~y) (u, ~v)  = let d = aCmp x u in if d /= EQ then d else bCmp y v
 
-
--- * Groups
+-- * Monoids and Groups
 
 -- ** MonoidFlags
 
-show0x          :: (Integral a, Show a) => a -> String
--- ^ shows with a "0x" prefix; the argument must be nonnegative
-show0x n        = "0x" ++ showHex n ""
+data MonoidFlags        = MonoidFlags {
+        nontrivial  :: Bool,    -- ^ \=> more than 1 element
+        abelian     :: Bool,    -- ^ \=> @op@ is commutative
+        isGroup     :: Bool     -- ^ \=> all elements have inverses, and 'inv' computes them
+    } deriving (Eq, Show)
+-- ^ known properties of a 'MonoidOps' or 'Group'
 
-newtype IntBits e   = IntBits Int
-    deriving (Eq, Bits, FiniteBits)
--- ^ a set of @e@s. @|e| \<= finiteBitSize (0 :: Int)@.
+instance Semigroup MonoidFlags where
+    x <> y      = MonoidFlags {
+            nontrivial  = x.nontrivial  || y.nontrivial,
+            abelian     = x.abelian || y.abelian,
+            isGroup     = x.isGroup || y.isGroup
+        }
+-- ^ @(\<>)@ is @(||)@ applied to each property
 
-instance Show (IntBits e) where     -- e.g. for testing & debugging
-    show (IntBits n)    = show0x n
+flagsContain    :: (Eq f, Semigroup f) => f -> f -> Bool
+-- ^ whether the @True@ properties of the first argument contain those of the second
+flagsContain x y    = x <> y == x
 
-eiBit           :: forall e. (Enum e, Bounded e) => e -> IntBits e
--- ^ a singleton set
-eiBit e         =
-    assert (fromEnum (maxBound :: e) < finiteBitSize (0 :: Int)) (bit (fromEnum e))
+newtype IsNontrivial    = IsNontrivial { b :: Bool }
+-- ^ whether something is nontrivial, e.g. whether a monoid has more than one element
 
-eiBits          :: (Enum e, Bounded e) => [e] -> IntBits e
-eiBits es       = foldl' (.|.) zeroBits (map eiBit es)
+agFlags             :: IsNontrivial -> MonoidFlags
+-- ^ v'MonoidFlags' for an t'AbelianGroup'
+agFlags isNontriv   = MonoidFlags { nontrivial = isNontriv.b, abelian = True, isGroup = True }
 
-hasEIBit        :: Enum e => IntBits e -> e -> Bool
-hasEIBit bs e   = testBit bs (fromEnum e)
+-- ** MonoidOps, Group
 
-hasEIBits       :: IntBits e -> IntBits e -> Bool
--- ^ @hasEIBits bs req@ tests whether all the bits of @req@ are in @bs@
-hasEIBits bs req    = bs .&. req == req
-
-data MonoidFlag =
-          Abelian           -- ^ => @op@ is commutative
-        | IsGroup           -- ^ => all elements have inverses
-    deriving (Enum, Bounded)
--- ^ a single (1-bit or boolean) property of a 'Group'
-
-type MonoidFlags    = IntBits MonoidFlag
-
-agFlags             :: MonoidFlags
-agFlags             = eiBits [Abelian, IsGroup]
-
--- ** Group
-
-{- | A @(Group flags eq op ident isIdent inv)@ must satisfy the axioms below. This generalizes
-    the notion of a set of composable symmetries (such as translation, rotation, reflection,
-    scaling, etc.). -}
-data Group g        = Group {
+{- | Operations for a monoid. (We use the name 'MonoidOps' instead of 'Monoid' because
+    the latter is already used for a type class.) The operations must satisfy the axioms below.
+    Note though that 'inv' may be a partial function (defined only for some inputs). -}
+data MonoidOps g    = MkMonoid {
     monFlags    :: MonoidFlags,
     eq          :: EqRel g,     -- ^ @eq x y@ must imply abstract equality @x = y@
     op          :: Op2 g,       -- ^ @op@ is well defined and associative
     ident       :: g,           -- ^ @(ident \`op\`) = (\`op\` ident) = id@
     isIdent     :: Pred g,      -- ^ @isIdent x = ident \`eq\` x@ for all @x@
-    inv         :: Op1 g        -- ^ @(inv x) \`op\` x = x \`op\` (inv x) = ident@ for all @x@;
-        -- therefore @inv@ is well defined also
+    inv         :: Op1 g        -- ^ @(inv x) \`op\` x = x \`op\` (inv x) = ident@ where
+        -- @(inv x)@ is defined; therefore @inv@ is well defined also (where it is defined)
 }
-{- ^ A /homomorphism of groups/ is a well defined function @f :: G -> G'@ that satisfies
+{- ^ A /homomorphism of monoids/ is a well defined function @f :: G -> G'@ that satisfies
+    @f (op x y) = op' (f x) (f y)@ and @f ident = ident'@. -}
+
+type Group  = MonoidOps
+{- ^ A 'Group' is a monoid where 'isGroup' is True, i.e. all elements have inverses, and 'inv'
+    is a total function (defined for all inputs) that computes them. 'Group' generalizes the
+    notion of a set of composable symmetries (such as translation, rotation, reflection,
+    scaling, etc.).
+    
+    A /homomorphism of groups/ is a well defined function @f :: G -> G'@ that satisfies
     @f (op x y) = op' (f x) (f y)@. This implies @f ident = ident'@, and
     @f (inv x) = inv' (f x)@. -}
 
@@ -298,51 +293,59 @@ expt1 (*~) x n
 
 gpExpt          :: Integral b => Group a -> a -> b -> a
 -- ^ exponentiation to an integral power
-gpExpt (Group { .. }) x n
+gpExpt (MkMonoid { .. }) x n
     | n > 0     = expt1 op x n
     | n == 0    = ident
     | otherwise = inv (expt1 op x (- n))
 {-# SPECIALIZE gpExpt :: Group a -> a -> Int -> a #-}
 
-pairGp          :: Group a -> Group b -> Group (a, b)
--- ^ direct product of two groups
-pairGp aGp bGp  =
-    Group (aGp.monFlags .&. bGp.monFlags)
-          (pairEq aGp.eq bGp.eq)
-          (pairOp2 aGp.op bGp.op)
-          (aGp.ident, bGp.ident)
-          (\ (a, ~b) -> aGp.isIdent a && bGp.isIdent b)
-          (pairOp1 aGp.inv bGp.inv)
+pairMon         :: MonoidOps a -> MonoidOps b -> MonoidOps (a :!: b)
+-- ^ Direct product of two monoids. If both are 'Group's, then the result is also.
+pairMon aM bM   =
+    MkMonoid (MonoidFlags { .. })
+        (liftEq2 aM.eq bM.eq)
+        (pairOp2 aM.op bM.op)
+        (aM.ident :!: bM.ident)
+        (\ (a :!: ~b) -> aM.isIdent a && bM.isIdent b)
+        (bimap aM.inv bM.inv)
+  where
+    aFlags      = aM.monFlags
+    bFlags      = bM.monFlags
+    nontrivial  = aFlags.nontrivial || bFlags.nontrivial
+    abelian     = aFlags.abelian && bFlags.abelian
+    isGroup     = aFlags.isGroup && bFlags.isGroup
 
 gpModF          :: Group g -> Op1 g -> MonoidFlags -> Group (Cls g)
 -- ^ @gpModF gp reduce@ is @gp@ modulo a normal subgroup, using @reduce@ to produce @Cls@
 -- (coset) representatives.
-gpModF (Group { .. }) reduce extraFlags     =
+gpModF (MkMonoid { .. }) reduce extraFlags  =
     let modF    = Cls . reduce
         redId   = reduce ident
-    in  Group (monFlags .|. extraFlags)
+        flags   = MonoidFlags { nontrivial = False, abelian = monFlags.abelian,
+                    isGroup = monFlags.isGroup }
+    in  MkMonoid (flags <> extraFlags)
             (eq `on` (.rep)) (modF .* (op `on` (.rep))) (Cls redId)
             ((if isIdent redId then isIdent else eq redId) . (.rep))
             (modF . inv . (.rep))
 
-gpProductL'     :: Group g -> [g] -> g
+monProductL'    :: Foldable f => MonoidOps g -> f g -> g
 -- ^ product using foldl'
-gpProductL' Group{ .. }     = foldl' op ident
+monProductL' gM = foldl' gM.op gM.ident
 
-gpProductR      :: Group g -> [g] -> g
+monProductR     :: Foldable f => MonoidOps g -> f g -> g
 -- ^ product using foldr
-gpProductR Group{ .. }      = foldr op ident
+monProductR gM  = foldr gM.op gM.ident
 
 -- ** AbelianGroup
 
 type AbelianGroup       = Group
-{- ^ @op@ must be commutative. We then usually use additive notation, as in the next few
+{- ^ 'abelian' must be @True@. We then usually use additive notation, as in the next few
     functions. -}
 
 pattern AbelianGroup    :: MonoidFlags -> EqRel a -> Op2 a -> a -> Pred a -> Op1 a ->
                             AbelianGroup a
 pattern AbelianGroup { monFlags, eq, plus, zero, isZero, neg }  =
-    Group { monFlags, eq, op = plus, ident = zero, isIdent = isZero, inv = neg }
+    MkMonoid { monFlags, eq, op = plus, ident = zero, isIdent = isZero, inv = neg }
 {-# COMPLETE AbelianGroup #-}
 
 instance HasField "plus" (AbelianGroup g) (Op2 g) where
@@ -354,59 +357,68 @@ instance HasField "isZero" (AbelianGroup g) (Pred g) where
 instance HasField "neg" (AbelianGroup g) (Op1 g) where
     getField (AbelianGroup { neg }) = neg
 
-abelianGroup    :: EqRel a -> Op2 a -> a -> Pred a -> Op1 a -> AbelianGroup a
--- ^ @abelianGroup eq plus zero isZero neg@ creates an 'AbelianGroup'
-abelianGroup    = AbelianGroup agFlags
-
 minus           :: AbelianGroup a -> Op2 a
--- ^ @minus ag x y = x `plus` neg y@
+-- ^ @minus ag x y = x \`plus\` neg y@
 minus (AbelianGroup { .. }) x y  = x `plus` neg y
 
-sumL'           :: AbelianGroup a -> [a] -> a
+sumL'           :: Foldable f => AbelianGroup a -> f a -> a
 -- ^ sum using foldl'
-sumL'           = gpProductL'
+sumL'           = monProductL'
 
-sumR            :: AbelianGroup a -> [a] -> a
+sumR            :: Foldable f => AbelianGroup a -> f a -> a
 -- ^ sum using foldr
-sumR            = gpProductR
+sumR            = monProductR
 
 
 -- * Rings and fields
 
 -- ** RingFlags
 
-data RingFlag   =
-          NotZeroRing       -- ^ => 0 \/= 1
-        | IsCommutativeRing -- ^ => multiplication is commutative
-        | NoZeroDivisors    -- ^ => (ab == 0 => a == 0 or b == 0)
-        | IsInversesRing    -- ^ => every nonzero element has a multiplicative inverse
-    deriving (Enum, Bounded)
--- ^ a single (1-bit or boolean) property of a 'Ring'
+data RingFlags  = RingFlags {
+        commutative     :: Bool,    -- ^ \=> multiplication is commutative
+        noZeroDivisors  :: Bool,    -- ^ \=> (ab == 0 => a == 0 or b == 0)
+        nzInverses      :: Bool     -- ^ \=> every nonzero element has a multiplicative inverse,
+            -- which 'rInv' finds; this implies 'noZeroDivisors'
+    } deriving (Eq, Show)
+-- ^ known properties of a t'Ring'
 
-type RingFlags  = IntBits RingFlag
+instance Semigroup RingFlags where
+    x <> y      = RingFlags {
+            commutative     = x.commutative    || y.commutative,
+            noZeroDivisors  = x.noZeroDivisors || y.noZeroDivisors,
+            nzInverses      = x.nzInverses || y.nzInverses
+        }
+-- ^ @(\<>)@ is @(||)@ applied to each property
 
 integralDomainFlags :: RingFlags
--- ^ a commutative ring with 0 \/= 1 and no zero divisors
-integralDomainFlags = eiBits [NotZeroRing, IsCommutativeRing, NoZeroDivisors]
+{- ^ An /integral domain/ is a commutative ring with 0 \/= 1 and no zero divisors. It must
+    contain the flags @'nontrivial' = True@ and 'integralDomainFlags'. -}
+integralDomainFlags =
+    RingFlags { commutative = True, noZeroDivisors = True, nzInverses = False }
 
 divisionRingFlags   :: RingFlags
--- ^ 0 \/= 1 and every nonzero element has a multiplicative inverse
-divisionRingFlags   = eiBits [NotZeroRing, NoZeroDivisors, IsInversesRing]
+{- ^ A /division ring/ is a ring with 0 \/= 1 and every nonzero element has a (computable)
+    multiplicative inverse. It must contain the flags @'nontrivial' = True@ and
+    'divisionRingFlags'. -}
+divisionRingFlags   =
+    RingFlags { commutative = False, noZeroDivisors = True, nzInverses = True }
 
 fieldFlags          :: RingFlags
--- ^ a commutative division ring
-fieldFlags          = divisionRingFlags .|. eiBit IsCommutativeRing
+{- ^ A 'Field' is a commutative division ring. It must contain the flags @'nontrivial' = True@
+    and 'fieldFlags'. -}
+fieldFlags          = integralDomainFlags <> divisionRingFlags
 
 -- ** Ring
 
 newtype IsDeep      = IsDeep { b :: Bool }  deriving Show
+-- ^ whether to go beyond a \"top\" level
 
 {- | A @(Ring ag (*~) one fromZ bDiv)@ must satisfy the axioms below. Examples include the
     integers ℤ, and other rings of algebraic numbers, polynomials, n x n matrices, etc. -}
 data Ring a         = Ring {
-    ag          :: AbelianGroup a,
-    rFlags      :: RingFlags,
-    times       :: Op2 a,       -- ^ @(*.)@ is well defined, distributes over @plus@, and is
+    ag      :: AbelianGroup a,
+    rFlags  :: RingFlags,
+    times   :: Op2 a,       -- ^ @(*.)@ is well defined, distributes over @plus@, and is
         -- normally associative
     one     :: a,           -- ^ @(one *.) = (*. one) = id@
     fromZ   :: Integer -> a,    -- ^ the unique ring homomorphism from Z to this ring
@@ -485,15 +497,15 @@ rProductR Ring{ .. }    = foldr times one
 -- ** Field
 
 type Field      = Ring
-{- ^ A /division ring/ is a ring with @zero \/= one@ and in which every non-zero element is a
-    unit. A /field/ is a commutative division ring. -}
+{- ^ A 'Field' is a commutative division ring. It must contain the flags @'nontrivial' = True@
+    and 'fieldFlags'. -}
 
 divisionRing    :: AbelianGroup a -> RingFlags -> Op2 a -> a -> (Integer -> a) -> Op1 a ->
                     Ring a
--- ^ @divisionRing ag extraFlags (*~) one fromZ inv@ creates a division ring
+-- ^ @(divisionRing ag extraFlags (*~) one fromZ inv)@ creates a division ring
 divisionRing ag extraFlags (*~) one fromZ inv   =
-    let bDiv _ y m      = if ag.isZero m then (ag.zero, y) else (inv m *~ y, ag.zero)
-    in  Ring ag (divisionRingFlags .|. extraFlags) (*~) one fromZ bDiv
+    let bDiv _ y m  = if ag.isZero m then (ag.zero, y) else (inv m *~ y, ag.zero)
+    in  Ring ag (divisionRingFlags <> extraFlags) (*~) one fromZ bDiv
 
 field           :: AbelianGroup a -> Op2 a -> a -> (Integer -> a) -> Op1 a -> Field a
 -- ^ @field ag (*~) one fromZ inv@ creates a 'Field'
@@ -517,7 +529,7 @@ data Module r m     = Module {
     ag          :: AbelianGroup m,
     scale       :: r -> Op1 m,
     bDiv        :: IsDeep -> m -> m -> (r, m)
-        -- ^ like 'bDiv' for a 'Ring' (as a right module over itself),
+        -- ^ like @bDiv@ for a t'Ring' (as a right module over itself),
         -- @bDiv doFull y m = (q, r) => y = scale q m + r@,
 }
 {- ^ A /vector space/ is a module over a field.
@@ -526,30 +538,31 @@ data Module r m     = Module {
     that also satisfies @f (r \`scale\` m) = r \`scale\` f m@. -}
 
 newtype IsLeftMod   = IsLeftMod { b :: Bool }   deriving (Eq, Show)
+-- ^ whether a t'Module' is a left module
 
 type RMod           = Module
 -- ^ a left module over R
 type ModR           = Module
 -- ^ a right module over R
 
-pairMd              :: Ring r -> Module r a -> Module r b -> Module r (a, b)
+pairMd              :: Ring r -> Module r a -> Module r b -> Module r (a :!: b)
 -- ^ direct sum (or product) of two left modules or two right modules
 pairMd rR aMd bMd   =
-    Module (pairGp aMd.ag bMd.ag) (\r -> pairOp1 (aMd.scale r) (bMd.scale r)) pairBDiv
+    Module (pairMon aMd.ag bMd.ag) (\r -> bimap (aMd.scale r) (bMd.scale r)) pairBDiv
   where
-    pairBDiv doFull (y, z) (m, n)
+    pairBDiv doFull (y :!: z) (m :!: n)
         | aMd.ag.isZero m && doFull.b   =
             let (q, r) = bMd.bDiv doFull z n
-            in  (q, (y, r))
+            in  (q, (y :!: r))
         | otherwise                     =
             let (q, r)  = aMd.bDiv doFull y m
-            in  (q, (r, bMd.ag.plus z (bMd.scale (rR.neg q) n)))
+            in  (q, (r :!: bMd.ag.plus z (bMd.scale (rR.neg q) n)))
 
-mdModF              :: Module r a -> Op1 a -> Module r (Cls a)
-{- ^ @mdModF md reduce@ is @md@ modulo a submodule, using @reduce@ to produce @Cls@ (coset)
-    representatives. This @bDiv@ is very naive. -}
-mdModF (Module { .. }) reduce     =
-    Module (gpModF ag reduce zeroBits) (\ r (Cls m) -> modF (scale r m)) modBDiv
+mdModF              :: Module r a -> Op1 a -> MonoidFlags -> Module r (Cls a)
+{- ^ @(mdModF md reduce extraFlags)@ is @md@ modulo a submodule, using @reduce@ to produce @Cls@
+    (coset) representatives. This @bDiv@ is very naive. -}
+mdModF (Module { .. }) reduce extraFlags    =
+    Module (gpModF ag reduce extraFlags) (\ r (Cls m) -> modF (scale r m)) modBDiv
   where
     modF    = Cls . reduce
     modBDiv doFull (Cls m) (Cls n)  = second modF (bDiv doFull m n)
@@ -573,11 +586,11 @@ algMd (RAlg { .. })     = Module aR.ag scale
 -- * Basic numeric rings
 
 numAG           :: (Eq n, Num n) => AbelianGroup n
--- ^ @n@ under addition
-numAG           = abelianGroup (==) (+) 0 (== 0) negate
+-- ^ @(n)@ under addition; assumes @nontrivial@ (@0 /= 1@)
+numAG           = AbelianGroup (agFlags (IsNontrivial True)) (==) (+) 0 (== 0) negate
 
 numRing         :: (Eq n, Num n) => RingFlags -> (IsDeep -> n -> n -> (n, n)) -> Ring n
--- ^ @n@ as a 'Ring', @numRing rFlags bDiv@
+-- ^ @(n)@ as a t'Ring'; @(numRing rFlags bDiv)@
 numRing rFlags  = Ring numAG rFlags (*) 1 fromInteger
 
 -- ** Integer
@@ -611,8 +624,19 @@ dblRing         = field dblAG (*) 1 fromInteger recip
 
 -- * Converting \<-> String
 
-pairShows               :: (a -> ShowS) -> (b -> ShowS) -> (a, b) -> ShowS
-pairShows aShows bShows (a, b) t    = '(' : aShows a (',' : bShows b (')' : t))
+show0x          :: (Integral a, Show a) => a -> String
+-- ^ show in hexadecimal with a "0x" prefix; the argument must be nonnegative
+show0x n        = "0x" ++ showHex n ""
+
+showToShows     :: (a -> String) -> a -> ShowS
+showToShows aShow a     = (aShow a ++)
+
+pairShows       :: Bifoldable p => (a -> ShowS) -> (b -> ShowS) -> (p a b) -> ShowS
+pairShows aShows bShows ab t    =
+    bifoldr (\a c -> '(' : aShows a c) (\b c -> ',' : bShows b (')' : c)) t ab
+
+pairShow        :: Bifoldable p => (a -> String) -> (b -> String) -> (p a b) -> String
+pairShow aShow bShow ab     = pairShows (showToShows aShow) (showToShows bShow) ab ""
 
 showGens                    :: (g -> String) -> [g] -> String
 showGens _gShow []          = "⟨ ⟩"
@@ -678,7 +702,7 @@ productSPrec aSP    = asSP
 
 
 readSToRead     :: ReadS a -> String -> a
--- ^ Use a @ReadS a@ to read a complete string.
+-- ^ Use a @(ReadS a)@ to read a complete string.
 readSToRead aReads s    = case [x | (x, t) <- aReads s, all isSpace t] of
     [x]     -> x
     []      -> error ("Cannot parse: " ++ s)
@@ -729,7 +753,7 @@ rngReads rR@(Ring { .. }) atomReads     =
     in  rReads
 
 polynomReads    :: Ring p -> [(String, p)] -> ReadS p
--- ^ read a polynomial, given a list of variables. Each variable must have precedence > '^'.
+-- ^ read a polynomial, given a list of variables. Each variable must have precedence > \'^\'.
 polynomReads rR@(Ring { .. }) varSRs    =
     let digitsOrVarReads s  =
             let s' = trimStart s

@@ -24,9 +24,8 @@
     
     Note that the objects (and arrows) in a category may have different Haskell types.
     
-    This module uses LANGUAGE Strict. In particular, constructor fields are strict unless marked
-    with a ~. Also, some name(s) may conflict with "Prelude" and other modules, so you may want
-    to import this or those modules partially qualified.
+    This module uses LANGUAGE Strict. In particular, constructor fields and function arguments
+    are strict unless marked with a ~.
 -}
 
 module Math.Algebra.Category.Category (

@@ -3,8 +3,8 @@
 
 {- |  This module defines functions for computing and using a Groebner Basis.
     
-    This module uses LANGUAGE Strict. In particular, constructor fields are strict unless marked
-    with a ~.
+    This module uses LANGUAGE Strict. In particular, constructor fields and function arguments
+    are strict unless marked with a ~.
 -}
 
 module Math.Algebra.Commutative.GroebnerBasis (
@@ -19,6 +19,7 @@ import Math.Algebra.General.Algebra
 
 import Control.Monad (unless, void, when)
 import Control.Monad.Extra (ifM, orM, whenM)
+import Data.Bits ((.&.), (.|.))
 import Data.Foldable (find, minimumBy, toList)
 import Data.Int (Int64)
 import Data.List (elemIndex, findIndices, groupBy, intercalate, sortBy)
@@ -54,7 +55,7 @@ import System.IO (hFlush, stdout)
 -- import System.Process (callCommand)
 
 
--- | @@ Move and generalize 'SubmoduleOps' (include bDiv and syzygies?):
+-- | @@ Move and generalize t'SubmoduleOps' (include bDiv and syzygies?):
 data SubmoduleOps r m sm    = SubmoduleOps {
     zeroMd      :: sm,                  -- ^ zero module
     plusGens    :: Int -> sm -> [m] -> sm,  -- ^ @plusGens gbTrace@, add any generators
@@ -153,13 +154,13 @@ instance Eq (SPair ev) where
 instance Ord (SPair ev) where
     compare sp  = sp.cmp sp
 
-{- | 'GBEv', 'GBPoly', and 'GBPolyOps' together are the operations on Exponent Vectors @ev@ and
+{- | 'GBEv', 'GBPoly', and t'GBPolyOps' together are the operations on Exponent Vectors @ev@ and
     Polynomials @p@ that are needed by our (Buchberger) Groebner Basis algorithm. The typeclass
     operations depend only on the datatypes involved, and may be inlined by e.g. the
     SPECIALIZE pragma. An Exponent Vector is abstractly a vector of small nonnegative
     integers, possibly together with its total degree or other weights. Also, these
     polynomials may be reduced modulo some relations, and the exponents may thus have bounded
-    degrees. For example, see the "BinPoly" module. -}
+    degrees. For example, see the "Math.Algebra.Commutative.BinPoly" module. -}
 
 class GBEv ev where
     evDivides   :: Int -> ev -> ev -> Bool  -- ^ @evDivides nVars denominator numerator@ (note
@@ -168,7 +169,7 @@ class GBEv ev where
     evTotDeg    :: ev -> Word
 
 class (GBEv ev, p ~ SL.List term) => GBPoly ev term p | p -> ev where
-    leadEvNZ    :: p -> ev          -- ^ the argument must be nonzero
+    leadEvNz    :: p -> ev          -- ^ the argument must be nonzero
 -- ^ A polynomial's terms must be nonzero and have decreasing exponent vectors.
 
 pZero           :: GBPoly ev term p => p
@@ -180,9 +181,9 @@ pIsZero         = null
 numTerms        :: GBPoly ev term p => p -> Int
 numTerms        = length
 
-unconsNZ        :: GBPoly ev term p => p -> (term, p)
+unconsNz        :: GBPoly ev term p => p -> (term, p)
 -- ^ The argument must be nonzero.
-unconsNZ        = fromJust . SL.uncons
+unconsNz        = fromJust . SL.uncons
 
 data GBPolyOps ev p     = GBPolyOps {
     nVars       :: Int,
@@ -219,7 +220,7 @@ giNew               :: GBPoly ev term p => EPolyHDeg p -> GBGenInfo ev
 -- p /= 0, h is "sugar" (homog) degree
 {-# INLINABLE giNew #-}
 giNew (EPolyHDeg p h)   =
-    let ev      = leadEvNZ p
+    let ev      = leadEvNz p
     in  GBGenInfo ev (h - evTotDeg ev)
 
 {-# SCC updatePairs #-}
@@ -287,7 +288,7 @@ wngFirst                    :: (a -> a') -> WithNGens a -> WithNGens a'
 wngFirst f (WithNGens a n)  = WithNGens (f a) n
 
 
--- nEvGroups > 0, each enpss has increasing es, all p /= 0, (leadEvNZ p) unique:
+-- nEvGroups > 0, each enpss has increasing es, all p /= 0, (leadEvNz p) unique:
 type KerGens p      = Seq.Seq (SL.List (ENPs p))
 
 data GapKerGens p   = G1KGs { gap :: Word, _kgs :: KerGens p }
@@ -323,11 +324,11 @@ kgsFindReducer          :: GBPoly ev term p => (ev -> [Word]) -> p -> KerGens p 
 kgsFindReducer evGroup p kgs    =
     if pIsZero p then Nothing else
     let nVars   = Seq.length kgs
-        pEv     = leadEvNZ p
+        pEv     = leadEvNz p
         npsF bnp                   SL.Nil                               = bnp
         npsF bnp@(SizedEPoly bn _) (ng@(SizedEPoly n ~g) :! ~t)
             | bn <= n   = bnp
-            | otherwise = npsF (if evDivides nVars (leadEvNZ g) pEv then ng else bnp) t
+            | otherwise = npsF (if evDivides nVars (leadEvNz g) pEv then ng else bnp) t
         {-# INLINE npsF #-}
         esF bnp _  SL.Nil   = bnp
         esF bnp pe ((ENPs e ~nps) :! ~t)
@@ -348,13 +349,13 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
     
     kgsSepCmp           :: Cmp (SizedEPoly p)
     kgsSepCmp (SizedEPoly n1 p1) (SizedEPoly n2 p2)   =
-        n1 `compare` n2 <> evCmp (leadEvNZ p1) (leadEvNZ p2)
+        n1 `compare` n2 <> evCmp (leadEvNz p1) (leadEvNz p2)
 
     kgsInsert           :: p -> Op1 (KerGens p)
     -- p /= 0, nEvGroups > 0
     kgsInsert p kgs     =
         assert (not (pIsZero p) && Seq.length kgs > 0) $
-        let es      = evGroup (leadEvNZ p)
+        let es      = evGroup (leadEvNz p)
             m       = maximum es
             v       = fromJust (elemIndex m es)
             np      = sizeEP numTerms p
@@ -370,7 +371,7 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
     -- p /= 0, nEvGroups > 0
     gkgsInsert (EPolyHDeg p hDeg)     = TS.measurePure "gkgsInsert" $ go
       where
-        gap                     = if useSugar.b then hDeg - evTotDeg (leadEvNZ p) else 0
+        gap                     = if useSugar.b then hDeg - evTotDeg (leadEvNz p) else 0
         go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
             if gap == gap0 then G1KGs gap (kgsInsert p kgs0) :! t
             else if maybe True ((gap <) . (.gap)) (SL.headMaybe t) then
@@ -379,10 +380,10 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
         go SL.Nil                           = undefined
 
     kgsDelete           :: p -> Op1 (KerGens p)
-    -- p in kgs (so p /= 0, nEvGroups > 0), (leadEvNZ p) unique in kgs
+    -- p in kgs (so p /= 0, nEvGroups > 0), (leadEvNz p) unique in kgs
     kgsDelete p kgs     =
         assert (not (pIsZero p) && Seq.length kgs > 0) $
-        let es      = evGroup (leadEvNZ p)
+        let es      = evGroup (leadEvNz p)
             m       = maximum es
             v       = fromJust (elemIndex m es)
             np      = sizeEP numTerms p
@@ -397,10 +398,10 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
         in  Seq.adjust' del v kgs
 
     gkgsDelete          :: EPolyHDeg p -> Op1 (GapsKerGens p)
-    -- p in gkgs (so p /= 0, nEvGroups > 0), (leadEvNZ p) unique in gkgs
+    -- p in gkgs (so p /= 0, nEvGroups > 0), (leadEvNz p) unique in gkgs
     gkgsDelete (EPolyHDeg p hDeg)     = TS.measurePure "gkgsDelete" $ go
       where
-        gap                     = if useSugar.b then hDeg - evTotDeg (leadEvNZ p) else 0
+        gap                     = if useSugar.b then hDeg - evTotDeg (leadEvNz p) else 0
         go (h@(G1KGs gap0 kgs0) :! t)   = assert (gap >= gap0) $
             if gap == gap0 then G1KGs gap (kgsDelete p kgs0) :! t
             else h :! go t
@@ -418,7 +419,7 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
         listToMaybe (mapMaybe find1 (toList gkgs))
       where
         find1 (G1KGs gap kgs)   =   -- if not useSugar.b, then h can be wrong:
-            fmap (\g -> EPolyHDeg g (evTotDeg (leadEvNZ g) + gap))
+            fmap (\g -> EPolyHDeg g (evTotDeg (leadEvNz g) + gap))
                 (kgsFindReducer evGroup p kgs)
 
     gkgsReduce              :: GapsKerGens p -> IsDeep -> SL.List term -> p -> (p, Int)
@@ -432,7 +433,7 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
                 let (q, r)      = topDiv p gh.p
                 in  go (nRedSteps + numTerms q) rev r
             ~go2    = if not doFull.b then (SL.prependReversed rev p, nRedSteps) else
-                let (!cd, !t)   = unconsNZ p
+                let (!cd, !t)   = unconsNz p
                 in  go nRedSteps (cd :! rev) t
 
     sugarReduce             :: EPolyHDeg p -> EPolyHDeg p -> (EPolyHDeg p, Int)
@@ -461,15 +462,15 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
       where
         go nRedSteps rev p      =
             if pIsZero p then (False, SL.prependReversed rev p, nRedSteps) else
-            let pEv     = leadEvNZ p
-                mg      = find (\g -> evDivides nVars (leadEvNZ g) pEv) g0s
+            let pEv     = leadEvNz p
+                mg      = find (\g -> evDivides nVars (leadEvNz g) pEv) g0s
                 useG g  =
                     let (q, r)      = topDiv p g
-                    in  if evTotDeg (leadEvNZ q) > 0
+                    in  if evTotDeg (leadEvNz q) > 0
                         then (True, SL.prependReversed rev r, nRedSteps + numTerms q)
                         else go (nRedSteps + 1) rev r
                 ~go2    =
-                    let (!cd, !t)   = unconsNZ p
+                    let (!cd, !t)   = unconsNz p
                     in  go nRedSteps (cd :! rev) t
             in  maybe go2 useG mg
 
@@ -478,8 +479,8 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
     -- do 1 folding step if there's a top-reducer
     foldTopReduce1 ghs ph@(EPolyHDeg p _)   =       -- all gs /= 0
         if pIsZero p then Nothing else
-        let pEv     = leadEvNZ p
-            mgh     = find (\gh -> evDivides nVars (leadEvNZ gh.p) pEv) ghs
+        let pEv     = leadEvNz p
+            mgh     = find (\gh -> evDivides nVars (leadEvNz gh.p) pEv) ghs
                 -- @@ improve to find best reducer!?
         in  fmap (sugarReduce ph) mgh
 
@@ -492,7 +493,7 @@ data StdEvCmp       = LexCmp | GrLexCmp | GrRevLexCmp   deriving (Eq, Show)
 secIsGraded         :: StdEvCmp -> IsGraded
 secIsGraded sec     = IsGraded (sec /= LexCmp)
 
--- | gbTrace bits for 'groebnerBasis' tracing. Bits 0x0F are useful to end users.
+-- | gbTrace bits for Groebner Basis tracing. Bits 0x0F are useful to end users.
 gbTSummary, gbTProgressChars, gbTProgressInfo, gbTResults, gbTQueues, gbTProgressDetails  :: Int
 gbTSummary          = 0x01  -- ^ a short summary at the end of a run
 gbTProgressChars    = 0x02  -- ^ total degree for each s-poly reduction result
@@ -503,7 +504,7 @@ gbTProgressDetails  = 0x20  -- ^ details relating to selection strategy
 
 data GroebnerIdeal p    = GroebnerIdeal {
     gkgs        :: GapsKerGens p,
-    gbGhs       :: GBV.Vector (EPolyHDeg p),    -- nonzero g's with ascending (leadEvNZ g)
+    gbGhs       :: GBV.Vector (EPolyHDeg p),    -- nonzero g's with ascending (leadEvNz g)
     gbGens      :: GBV.Vector p,    -- a Groebner Basis
     redGbGens   :: ~(GBV.Vector p)  -- fully reduced Groebner Basis generators
 }
@@ -527,7 +528,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
             | pIsZero p     = pure pZero
             | otherwise     = do    -- fully reduce by 0 sugar gap generators
                 WithNGens (g0kgs@(G1KGs 0 _) :! _) _    <- readTVarIO gkgsRef
-                let (!cd, !t)       = unconsNZ p
+                let (!cd, !t)       = unconsNz p
                     (!t', !nSteps)  =
                         gkgsReduce (SL.singleton g0kgs) (IsDeep True) (SL.singleton cd) t
                 when (gbTrace .&. gbTSummary /= 0) $ fetchAddInt_ nRedStepsRef nSteps
@@ -537,8 +538,8 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
             when (gbTrace .&. gbTSummary /= 0) $ fetchAddInt_ nRedStepsRef nSteps
             g2                              <- reduce2 g1
             endReduce_n kN (EPolyHDeg g2 h1)
-        gap0NZ (EPolyHDeg g h)  =
-            if useSugar.b && h /= evTotDeg (leadEvNZ g) then Nothing else Just g
+        gap0Nz (EPolyHDeg g h)  =
+            if useSugar.b && h /= evTotDeg (leadEvNz g) then Nothing else Just g
         endReduce_n kN gh       = do    -- result is reduced like by reduce_n
             ghs         <- readTVarIO genHsRef
             let kN'     = length ghs
@@ -553,8 +554,8 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
                         when (gbTrace .&. gbTSummary /= 0) $ fetchAddInt_ nRedStepsRef nSteps
                         reduce_n ph
                     endRed2 (EPolyHDeg g h) = do
-                        let g0s                     = mapMaybe gap0NZ (toList endGHs)
-                            (!cd, !t)               = unconsNZ g
+                        let g0s                     = mapMaybe gap0Nz (toList endGHs)
+                            (!cd, !t)               = unconsNz g
                             (!todo, !t', !nSteps)   = foldReduce g0s (SL.singleton cd) t
                         when (gbTrace .&. gbTSummary /= 0) $ fetchAddInt_ nRedStepsRef nSteps
                         p       <- (if todo then reduce2 else pure) t'
@@ -568,13 +569,13 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
             whenM (maybeAtomicModifyTVarIO' gkgsRef p f) $ do
                 traceEventIO "  checkGkgs: atomic modified gkgsRef"
                 checkGkgs
-    -- rgs is a [(g, i)] of nonzero g with descending (leadEvNZ g)
+    -- rgs is a [(g, i)] of nonzero g with descending (leadEvNz g)
     rNTraceRef      <- newIORef 0
     let rgsInsert   :: EPolyHDeg p -> Int -> [(p, Int)] -> IO [(p, Int)]
         rgsInsert (EPolyHDeg g _) i []                  = pure [(g, i)]
         rgsInsert gh@(EPolyHDeg g gHDeg) i rgs@((g1, j) : t)
-            | evCmp (leadEvNZ g) (leadEvNZ g1) == GT    = pure ((g, i) : rgs)
-            | evDivides nVars (leadEvNZ g) (leadEvNZ g1)    = do
+            | evCmp (leadEvNz g) (leadEvNz g1) == GT    = pure ((g, i) : rgs)
+            | evDivides nVars (leadEvNz g) (leadEvNz g1)    = do
                 when (gbTrace .&. gbTProgressInfo /= 0) $
                     putStrLn $ " remove g" ++ show j ++ " (" ++ pShowEV g1 ++ ") by g" ++ show i
                         ++ " (" ++ pShowEV g ++ ")"
@@ -585,14 +586,14 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
                 rgsInsert gh i t
             | otherwise                                 = do
                 t'          <- rgsInsert gh i t
-                if useSugar.b && gHDeg /= evTotDeg (leadEvNZ g) then pure ((g1, j) : t') else do
+                if useSugar.b && gHDeg /= evTotDeg (leadEvNz g) then pure ((g1, j) : t') else do
                     let (q, r)  = pR.bDiv (IsDeep True) g1 g
                     if pIsZero q then pure ((g1, j) : t') else do
                         when (gbTrace .&. gbTSummary /= 0) $
                             fetchAddInt_ nRedStepsRef (numTerms q)
                         when (gbTrace .&. gbTQueues /= 0) $
-                            if evTotDeg (leadEvNZ q) == 0 then inc rNTraceRef 1 else putChar 'R'
-                        r'          <- if evTotDeg (leadEvNZ q) == 0 then pure r else reduce2 r
+                            if evTotDeg (leadEvNz q) == 0 then inc rNTraceRef 1 else putChar 'R'
+                        r'          <- if evTotDeg (leadEvNz q) == 0 then pure r else reduce2 r
                         ghs0        <- readTVarIO genHsRef
                         let hh      = ghs0 GBV.! j
                             rh'     = EPolyHDeg r' hh.h
@@ -620,7 +621,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
                         checkGkgs
                     when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ do
                         putS "d"
-                        let d       = evTotDeg (leadEvNZ gh.p)
+                        let d       = evTotDeg (leadEvNz gh.p)
                         gDShown     <- readIORef gDShownRef
                         when (d /= gDShown) $ do
                             putS $ show d ++ " "
@@ -722,7 +723,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
             pure True
         doSP        = maybe (pure False) newG =<< setPop ijcsRef
     mapM_ (\g -> addGenHN =<< reduce_n (EPolyHDeg g (homogDeg0 g)))
-        (sortBy (evCmp `on` leadEvNZ) (filter (not . pIsZero) newGens))
+        (sortBy (evCmp `on` leadEvNz) (filter (not . pIsZero) newGens))
     numSleepingVar  <- newTVarIO (0 :: Int)
     let traceTime   = do
             cpuTime2        <- getCPUTime
@@ -766,7 +767,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
         putStrLn $ "# reduction steps (quotient terms) = " ++ showBigN nRedSteps
             -- Macaulay just counts top-reduced
         ghs         <- readTVarIO genHsRef
-        let ndhs    = [(numTerms g, evTotDeg (leadEvNZ g), h) | EPolyHDeg g h <- toList ghs]
+        let ndhs    = [(numTerms g, evTotDeg (leadEvNz g), h) | EPolyHDeg g h <- toList ghs]
         putStrLn $ "generated (redundant) basis has " ++ showBigN (length ghs) ++
             " elements with " ++ showBigN (sum (map fst3 ndhs)) ++ " monomials"
         when (gbTrace .&. gbTProgressDetails /= 0) $ do
@@ -787,11 +788,11 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
         mapM_ (putStrLn . pShow) gbGens
     else when (gbTrace .&. gbTSummary /= 0) $ putStrLn s
     WithNGens gkgs _kN  <- readTVarIO gkgsRef
-    let fullReduce2NZ p     = fst (gkgsReduce gkgs (IsDeep True) (SL.singleton cd) t)
+    let fullReduce2Nz p     = fst (gkgsReduce gkgs (IsDeep True) (SL.singleton cd) t)
           where
-            (!cd, !t)   = unconsNZ p
+            (!cd, !t)   = unconsNz p
         ~redGbGens  =   if not useSugar.b then gbGens else
-            rrbMapParChunk 16 fullReduce2NZ gbGens
+            rrbMapParChunk 16 fullReduce2Nz gbGens
     {- when (gbTrace .&. gbTQueues /= 0) $ do
         hFlush stdout
         callCommand "echo; ps -v" -}
@@ -802,7 +803,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
     pShowEV p
         | pIsZero p         = "0"
         | numTerms p < 10   = pShow (monicizeU p)
-        | otherwise         = evShow (leadEvNZ p) ++ "+... (" ++ show (numTerms p) ++ " terms)"
+        | otherwise         = evShow (leadEvNz p) ++ "+... (" ++ show (numTerms p) ++ " terms)"
     -- hEvCmp         = spCmp evCmp useSugar      :: Cmp (SPair ev)
 
 

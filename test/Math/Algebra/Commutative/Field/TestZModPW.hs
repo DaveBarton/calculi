@@ -1,7 +1,7 @@
-{- |  This module tests the "ZModPW" module.  -}
+{- |  This module tests the "Math.Algebra.Commutative.Field.ZModPW" module.  -}
 
 module Math.Algebra.Commutative.Field.TestZModPW (
-    zpwTestOps, testZModPW
+    zpwTestOps, zModPWTests
 ) where
 
 import Math.Algebra.General.Algebra hiding (assert)
@@ -30,28 +30,26 @@ zpwTestOps              = TestOps (const tShow) tCheck gen (==)
     lim             = p `quot` 2
 
 
-test1                   :: SomeNat -> IO Bool
-test1 (SomeNat pProxy@(Proxy :: Proxy p))   = checkGroup ("ZModPW " ++ show p) props
+test1                   :: SomeNat -> TestTree
+test1 (SomeNat pProxy@(Proxy :: Proxy p))   = testGroup ("ZModPW " ++ show p) testsL
   where
     p               = fromIntegral $ natVal pProxy  :: Integer
     (zpField, balRep)   = zzModPW @p
     zpT             = zpwTestOps @p
     fromZ           = zpField.fromZ
     lim             = p `quot` 2
-    props           = fieldProps zpT zpField
-                        ++ [("p0", p0),
-                            ("balRepIsRep", balRepIsRep), ("balRepIsSmall", balRepIsSmall)]
-        -- fieldProps checks zzRing -> zpField is a homomorphism, 0 /= 1
-    p0              = propertyOnce $ fromZ p === zpField.zero
-    balRepIsRep     = property $ sameFun1TR zpT zpT.tEq (fromZ . balRep) id
-    balRepIsSmall   = property $ do
+    testsL          = [fieldTests zpT zpField, p0Test, balRepIsRep, balRepIsSmall]
+        -- fieldTests checks zzRing -> zpField is a homomorphism, 0 /= 1
+    p0Test          = testOnce "p0" $ fromZ p === zpField.zero
+    balRepIsRep     = singleTest "balRepIsRep" $ sameFun1TR zpT zpT.tEq (fromZ . balRep) id
+    balRepIsSmall   = singleTest "balRepIsSmall" $ do
         x       <- genVis zpT
         let n   = balRep x
         diff (abs n) (<=) lim
         -- if p == 2, could also specify & check (balRep zpField.one), i.e. 1 or -1
 
-testZModPW              :: IO Bool
-testZModPW              = checkAll $ test1 . someNatVal <$> primes
+zModPWTests             :: TestTree
+zModPWTests             = testGroup "ZModPW" $ test1 . someNatVal <$> primes
   where
     e2 n            = 2 ^ (n :: Int)
     primes          =

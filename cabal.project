@@ -9,4 +9,10 @@ package poly
     optimization:   2
 
 package mod
-    flags: -semirings
+    flags:  -semirings
+
+package unix
+    flags:  +os-string
+
+package directory
+    flags:  +os-string

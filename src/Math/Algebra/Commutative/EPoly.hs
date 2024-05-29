@@ -1,10 +1,10 @@
 {-# LANGUAGE Strict #-}
 
 {- |  An 'EPoly' is an \"Expanded\" or \"Exponent Vector\" Polynomial. That is, each term
-    consists of a coefficient and an exponent vector ('ExponVec').
+    consists of a coefficient and an exponent vector (t'ExponVec').
     
-    This module uses LANGUAGE Strict. In particular, constructor fields are strict unless marked
-    with a ~.
+    This module uses LANGUAGE Strict. In particular, constructor fields and function arguments
+    are strict unless marked with a ~.
 -}
 
 module Math.Algebra.Commutative.EPoly (
@@ -21,7 +21,7 @@ import Math.Algebra.Commutative.GroebnerBasis
 
 import Control.Monad (replicateM)
 import Data.Bifunctor (bimap)
-import Data.Bits (complement, rotateL, unsafeShiftL, unsafeShiftR, xor)
+import Data.Bits ((.&.), (.|.), complement, rotateL, unsafeShiftL, unsafeShiftR, xor)
 import Data.List.Extra (chunksOf)
 import Data.Maybe (fromJust)
 import Data.Ord (clamp)
@@ -145,7 +145,7 @@ evMinusMay nVars ev@(ExponVec d es) ev'@(ExponVec d' es')       = Just (evMinus 
         evMake (zipWithExact (-) (exponsL nVars ev) (exponsL nVars ev'))
 
 evDividesF      :: Int -> ExponVec -> ExponVec -> Bool
--- ^ note args reversed from evMinusMay; really vars^ev1 `divides` vars^ev2
+-- ^ note args reversed from evMinusMay; really vars^ev1 \`divides\` vars^ev2
 evDividesF _ (ExponVec d _) (ExponVec d' _)     | d > d'    = False     -- for efficiency
 evDividesF nVars ev@(ExponVec d es) ev'@(ExponVec d' es')   = expsDivs es es'
   where
@@ -241,8 +241,8 @@ instance GBEv ExponVec where
     evTotDeg        = (.totDeg)
 
 instance GBPoly ExponVec (SSTerm c ExponVec) (EPoly c) where
-    leadEvNZ        = sparseSum undefined (\_ ev _ -> ev)
-    {-# INLINE leadEvNZ #-}
+    leadEvNz        = sparseSum undefined (\_ ev _ -> ev)
+    {-# INLINE leadEvNz #-}
 
 {-# SPECIALIZE gbiSmOps :: GBPolyOps ExponVec (EPoly c) ->
     SubmoduleOps (EPoly c) (EPoly c) (GroebnerIdeal (EPoly c)) #-}
@@ -251,7 +251,7 @@ data RingTgtXs c t      = RingTgtXs (c -> t) [t]
 -- ^ a ring homomorphism C -> T, and a list of elements that commute with image(C)
 
 type EPolyUniv c        = UnivL Ring (RingTgtXs c) (->) (EPoly c)
--- ^ a @Ring (EPoly c)@, @RingTgtXs c (EPoly c)@, and a function for mapping to other 'Ring's
+-- ^ a @Ring (EPoly c)@, @RingTgtXs c (EPoly c)@, and a function for mapping to other t'Ring's
 -- that have a @RingTgtXs c@.  The vars are in big-endian order. That is, the most main vars are
 -- first for LexCmp or GrLexCmp, and least main for GrRevLexCmp.
 
@@ -274,8 +274,10 @@ epOps cR nVars evCmp    = EPolyOps { .. }
     inds        = [0 .. nVars - 1]
     xs          = [dcToSS (evMake [if i == j then 1 else 0 | j <- inds]) cR.one | i <- inds]
     cToEp       = dcToSS evZero
-    epFlags     = eiBits [NotZeroRing, IsCommutativeRing, NoZeroDivisors] .&. cR.rFlags
-    nzds        = hasEIBit cR.rFlags NoZeroDivisors
+    cFlags      = cR.rFlags
+    nzds        = cFlags.noZeroDivisors
+    epFlags     = RingFlags { commutative = cFlags.commutative, noZeroDivisors = nzds,
+                    nzInverses = False }
     epRing      = Ring ssAG epFlags
                     (if nzds then epTimesNzds else ssTimes ssUniv cR (evPlus nVars))
                     (cToEp cR.one) (cToEp . cR.fromZ) epDiv

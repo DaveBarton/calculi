@@ -1,7 +1,7 @@
-{- |  This module tests the "BinPoly" module.  -}
+{- |  This module tests the "Math.Algebra.Commutative.BinPoly" module.  -}
 
 module Math.Algebra.Commutative.TestBinPoly (
-    testBinPoly
+    binPolyTests
 ) where
 
 import Math.Algebra.General.Algebra hiding (assert)
@@ -15,18 +15,19 @@ import Hedgehog ((===))
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
-import Data.Bits (bit)
+import Data.Bits ((.&.), bit)
 import Data.Foldable (toList)
 import Data.Word (Word64)
 import qualified StrictList2 as SL
 
 
 boolField       :: Field Bool   -- Z/2Z, where 1 is True
-boolField       = field (abelianGroup (==) (/=) False not id) (&&) True odd id
+boolField       =
+    field (AbelianGroup (agFlags (IsNontrivial True)) (==) (/=) False not id) (&&) True odd id
 
-test1           :: Int -> StdEvCmp -> IO Bool
+test1           :: Int -> StdEvCmp -> TestTree
 -- 1 <= nVars <= 58
-test1 nVars sec = checkGroup ("BinPoly " ++ show nVars ++ " " ++ show sec) props
+test1 nVars sec = testGroup ("BinPoly " ++ show nVars ++ " " ++ show sec) testsL
   where
     evCmp           = evCmp58 sec
     isGraded        = secIsGraded sec
@@ -47,18 +48,20 @@ test1 nVars sec = checkGroup ("BinPoly " ++ show nVars ++ " " ++ show sec) props
     pGen            = rSumL' pR <$> Gen.list (Range.linear 0 10) (SL.singleton <$> evGen)
     pT              = TestOps pShowPrec pTCheck pGen (==)
     pToT p          = pAt p vals
-    gbProps         = if nVars > 6 then [] else
-                        groebnerBasisProps gbpA (listTestOps (Range.linear 0 5) pT)
-                            (bpCountZeros bpoA)
+    gbTestsL        = [groebnerBasisTests gbpA (listTestOps (Range.linear 0 5) pT)
+                        (bpCountZeros bpoA) | nVars <= 6]
+    reqFlags        =
+        RingFlags { commutative = True, noZeroDivisors = False, nzInverses = False }
     
-    props           = totalOrderProps evT (==) evCmp
-                        ++ ringProps pT (eiBit IsCommutativeRing) pR
-                        ++ ringHomomProps pT pR (===) boolField pToT
-                        ++ [readsProp pT (polynomReads pR (zip descVarSs descVarPs))]
-                        ++ gbProps
+    testsL          = [totalOrderTests evT (==) (IsNontrivial True) evCmp,
+                        ringTests pT (IsNontrivial True) reqFlags pR,
+                        ringHomomTests (Just "Ring Homomorphism to Bool") pT pR (===)
+                            boolField pToT,
+                        readsTest pT (polynomReads pR (zip descVarSs descVarPs))]
+                        ++ gbTestsL
 
-testBinPoly             :: IO Bool
-testBinPoly             =
-    checkAll $ checkGroup "boolField" (fieldProps (testOps0 Gen.bool) boolField)
+binPolyTests            :: TestTree
+binPolyTests            =
+    testGroup "BinPoly" $ testGroup "boolField" [fieldTests (testOps0 Gen.bool) boolField]
         : [test1 nVars sec
             | nVars <- [1 .. 6] ++ [14, 25 .. 58], sec <- [LexCmp, GrLexCmp, GrRevLexCmp]]

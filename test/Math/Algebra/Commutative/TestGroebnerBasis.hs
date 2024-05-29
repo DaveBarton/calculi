@@ -1,7 +1,8 @@
-{- |  This module helps test the "GroebnerBasis" module and its clients.  -}
+{- |  This module helps test the "Math.Algebra.Commutative.GroebnerBasis" module and its
+    clients.  -}
 
 module Math.Algebra.Commutative.TestGroebnerBasis (
-    groebnerBasisProps
+    groebnerBasisTests
 ) where
 
 import Math.Algebra.General.Algebra hiding (assert)
@@ -9,7 +10,7 @@ import Math.Algebra.Commutative.GroebnerBasis
 
 import Math.Algebra.General.TestAlgebra
 
-import Hedgehog (Property, PropertyName, (===), annotate, forAll, withTests)
+import Hedgehog ((===), annotate, forAll, withTests)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
@@ -17,13 +18,13 @@ import Data.Foldable (toList)
 import qualified Data.RRBVector as GBV
 
 
-groebnerBasisProps      :: GBPoly ev term p => GBPolyOps ev p -> ShowGen [p] ->
-                            ([p] -> Int) -> [(PropertyName, Property)]
+groebnerBasisTests      :: GBPoly ev term p => GBPolyOps ev p -> ShowGen [p] -> ([p] -> Int) ->
+                            TestTree
 -- currently checks original gens & s-pairs reduce to 0 using 'bModBy'; TODO add a bDivBy and
 -- test it & bModBy, and test the stdGens are in the original ideal
-{-# INLINABLE groebnerBasisProps #-}
-groebnerBasisProps gbpA@(GBPolyOps { .. }) halfInitGensSG countZeros    =
-    [("Groebner Bases", gbProp)]
+{-# INLINABLE groebnerBasisTests #-}
+groebnerBasisTests gbpA@(GBPolyOps { .. }) halfInitGensSG countZeros    =
+    testWith "Groebner Bases" (withTests 10) gbTM
   where
     scale11         = Gen.scale (Range.Size 11 *)
     gsSG11          = halfInitGensSG { gen = scale11 halfInitGensSG.gen }
@@ -31,9 +32,9 @@ groebnerBasisProps gbpA@(GBPolyOps { .. }) halfInitGensSG countZeros    =
       where
         f   = gs GBV.! i
         g   = gs GBV.! j
-        m   = evLCM nVars (leadEvNZ f) (leadEvNZ g)
+        m   = evLCM nVars (leadEvNz f) (leadEvNz g)
     gbTrace         = 0
-    gbProp          = withTests 10 $ property $ do
+    gbTM            = do
         gens0           <- genVis gsSG11
         gens1           <- genVis gsSG11
         -- nCores          <- forAll (scale11 (Gen.int (Range.linear 1 4)))
@@ -43,7 +44,7 @@ groebnerBasisProps gbpA@(GBPolyOps { .. }) halfInitGensSG countZeros    =
             gbIdeal         = plusGens gbTrace (fromGens smA gbTrace gens0) gens1
             gbGens          = stdGens doRedGens gbIdeal
             gbGensL         = toList gbGens
-            checkRes0s ps   = allPT pShow pR.isZero (map (bModBy doFullMod gbIdeal) ps)
+            checkRes0s ps   = allTM pShow pR.isZero (map (bModBy doFullMod gbIdeal) ps)
         annotate $ gsSG11.tShow gbGensL
         checkRes0s (gens0 ++ gens1)
         mapM_ checkRes0s

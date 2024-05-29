@@ -13,10 +13,10 @@
     An ideal of 'BinPoly's corresponds to a polynomial ideal containing all the generators
     @x^2+x@. Note that these generators cannot be represented as 'BinPoly's, so a Groebner Basis
     algorithm must handle them specially. If @p@'s leading term contains the variable @x@, then
-    the s-poly of @p@ and @x^2+x@ is @x*p@ `mod` @x^2+x@.
+    the s-poly of @p@ and @x^2+x@ is @x*p@ \`mod\` @x^2+x@.
     
-    This module uses LANGUAGE Strict. In particular, constructor fields are strict unless marked
-    with a ~.
+    This module uses LANGUAGE Strict. In particular, constructor fields and function arguments
+    are strict unless marked with a ~.
 -}
 
 module Math.Algebra.Commutative.BinPoly (
@@ -28,8 +28,8 @@ import Math.Algebra.General.Algebra
 import Math.Algebra.Commutative.GroebnerBasis
 
 import Control.Monad.Extra (pureIf)
-import Data.Bits (bit, complement, countLeadingZeros, popCount, testBit, unsafeShiftL,
-    unsafeShiftR)
+import Data.Bits ((.&.), (.|.), bit, complement, countLeadingZeros, popCount, testBit,
+    unsafeShiftL, unsafeShiftR)
 import Data.Foldable (toList)
 import Data.List (sortBy)
 import Data.Maybe (catMaybes, fromJust)
@@ -95,9 +95,9 @@ instance GBEv EV58 where
     evTotDeg            = totDeg58
 
 instance GBPoly EV58 EV58 (BinPoly EV58) where
-    leadEvNZ (ev :! _)  = ev
-    leadEvNZ SL.Nil     = undefined
-    {-# INLINE leadEvNZ #-}
+    leadEvNz (ev :! _)  = ev
+    leadEvNz SL.Nil     = undefined
+    {-# INLINE leadEvNz #-}
 
 {-# SPECIALIZE gbiSmOps :: GBPolyOps EV58 (BinPoly EV58) ->
     SubmoduleOps (BinPoly EV58) (BinPoly EV58) (GroebnerIdeal (BinPoly EV58)) #-}
@@ -160,8 +160,9 @@ bp58Ops evCmp isGraded descVarSs useSugar   = assert (nVars <= 58)
                 EQ  -> go r        t  u
         go r xs           SL.Nil        = SL.prependReversed r xs
         go r SL.Nil       ys            = SL.prependReversed r ys
-    bpAG                = abelianGroup (==) bpPlus SL.Nil null id
-    bpRFlags            = eiBits [NotZeroRing, IsCommutativeRing]
+    bpAG                = AbelianGroup (agFlags (IsNontrivial True)) (==) bpPlus SL.Nil null id
+    bpRFlags            =
+        RingFlags { commutative = True, noZeroDivisors = False, nzInverses = False }
     bpFromZ n           = if even (n :: Integer) then SL.Nil else SL.singleton evOne
     bpTimesEv bp ev     = if ev == evOne then bp else   -- for speed
         let (rts, rfs)      = SL.partitionReversed (evDivides nVars ev) bp  -- for speed

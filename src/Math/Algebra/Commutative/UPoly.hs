@@ -2,8 +2,8 @@
 
 {- |  A 'UPoly' is a Univariate (single variable) Polynomial.
     
-    This module uses LANGUAGE Strict. In particular, constructor fields are strict unless marked
-    with a ~.
+    This module uses LANGUAGE Strict. In particular, constructor fields and function arguments
+    are strict unless marked with a ~.
 -}
 
 module Math.Algebra.Commutative.UPoly (
@@ -27,7 +27,7 @@ data RingTgtX c t       = RingTgtX (c -> t) t
 -- ^ a ring homomorphism C -> T, and an element that commutes with image(C)
 
 type UPolyUniv c        = UnivL Ring (RingTgtX c) (->) (UPoly c)
--- ^ a @Ring (UPoly c)@, @RingTgtX c (UPoly c)@, and a function for mapping to other 'Ring's
+-- ^ a @Ring (UPoly c)@, @RingTgtX c (UPoly c)@, and a function for mapping to other t'Ring's
 -- that have a @RingTgtX c@
 
 
@@ -41,8 +41,10 @@ upUniv cR       = UnivL cxRing (RingTgtX cToCx x) cxUnivF
     ssUniv@(UnivL ssAG (TgtArrsF dcToSS) _ssUnivF)   = ssAGUniv cR.ag compare
     x           = dcToSS 1 cR.one
     cToCx       = dcToSS 0
-    cxFlags     = eiBits [NotZeroRing, IsCommutativeRing, NoZeroDivisors] .&. cR.rFlags
-    nzds        = hasEIBit cR.rFlags NoZeroDivisors
+    cFlags      = cR.rFlags
+    nzds        = cFlags.noZeroDivisors
+    cxFlags     = RingFlags { commutative = cFlags.commutative, noZeroDivisors = nzds,
+                    nzInverses = False }
     cxRing      = Ring ssAG cxFlags (if nzds then cxTimesNzds else ssTimes ssUniv cR (+))
                     (cToCx cR.one) (cToCx . cR.fromZ) cxDiv
     cxIsOne     = sparseSum False (\ ~c d ~t -> d == 0 && cEq c cR.one && null t)

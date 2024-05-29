@@ -48,7 +48,7 @@ module Control.Parallel.Cooperative (
     
     -- * Utilities
     seqSpine, seqElts, inc1TVar, maybeStateTVar, popTVar,
-    lowNZBit, fbTruncLog2, floorLogBase,
+    lowNzBit, fbTruncLog2, floorLogBase,
     getSystemTimeNS
 ) where
 
@@ -82,7 +82,7 @@ import qualified Debug.TimeStats as TS
 
 seqSpine        :: Foldable t => t a -> t a
 -- ^ Evaluate the spine of a structure, and return it.
-seqSpine xs     = foldr (flip const) xs xs
+seqSpine xs     = foldr (\ _ y -> y) xs xs
 
 seqElts         :: Foldable t => t a -> t a
 -- ^ @seq@ all elements of a structure, and return it.
@@ -105,9 +105,9 @@ popTVar             :: TVar [e] -> IO (Maybe e)
 popTVar esTVar      = atomically $ maybeStateTVar esTVar uncons
 
 
-lowNZBit        :: (Bits a, Num a) => a -> a
+lowNzBit        :: (Bits a, Num a) => a -> a
 -- ^ The lowest nonzero bit if any, else 0.
-lowNZBit n      = n .&. (- n)
+lowNzBit n      = n .&. (- n)
 
 fbTruncLog2     :: FiniteBits a => a -> Int
 -- ^ Floor of log base 2. Let's leave this undefined if the input is 0.
@@ -179,7 +179,7 @@ parNonBlocking wakeAllThreads numSleepingVar taskF  = do
 
 evalPar         :: [a] -> [a]
 {- ^ Use 'parNonBlocking' to evaluate each list element in parallel. This is similar to
-    @seqElts . (`using` parList rseq)@ from "Control.Parallel.Strategies", but may be somewhat
+    @seqElts . (\`using\` parList rseq)@ from "Control.Parallel.Strategies", but may be somewhat
     faster. Normally the input list has been \"chunked\" from a larger list or computation.
     If the chunking function is lazy, it'll be parallelized also. -}
 evalPar es      = if null (drop 1 es) then seqElts es else
@@ -208,7 +208,7 @@ checkChunkSize d    = if d < 1 then error ("Bad chunksize: " ++ show d) else id
 
 mapParChunk     :: HasCallStack => Int -> (a -> b) -> [a] -> [b]
 {- ^ Map a function down a list, processing chunks in parallel. The chunk size must be
-    positive. This is similar to @seqElts (map f es `using` parListChunk chunkSize rseq)@
+    positive. This is similar to @seqElts (map f es \`using\` parListChunk chunkSize rseq)@
     from "Control.Parallel.Strategies", but may be somewhat faster. -}
 mapParChunk chunkSize f es  = checkChunkSize chunkSize $
     seqSpine $ concat $ evalPar (map seqElts (chunksOf chunkSize (map f es)))
@@ -312,7 +312,7 @@ foldBalancedPar f as    = if null (drop 3 as) then foldBalanced f as else
             traversal, starting at 1. Thus row `i` from the bottom contains the nodes whose
             corresponding number has `i` trailing zeros. -}
         n               = length as
-        buddy k         = (2 * lowNZBit k) `xor` k
+        buddy k         = (2 * lowNzBit k) `xor` k
         top             = bit (fbTruncLog2 n)
 
 sortByPar   :: Int -> (a -> a -> Ordering) -> [a] -> [a]

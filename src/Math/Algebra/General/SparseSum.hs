@@ -2,15 +2,15 @@
 
 {- |  A 'SparseSum' is a linear combination where zero terms are omitted.
     
-    This module uses LANGUAGE Strict. In particular, constructor fields are strict unless marked
-    with a ~.
+    This module uses LANGUAGE Strict. In particular, constructor fields and function arguments
+    are strict unless marked with a ~.
 -}
 
 module Math.Algebra.General.SparseSum (
     SSTerm(..), SparseSum, SparseSumUniv,
     ssZero, pattern (:!), sparseSum, ssHead,
     ssLexCmp, ssDegCmp,
-    ssLead, ssMapC, ssMapNZFC, ssShift, ssShiftMapC, ssShiftMapNZFC,
+    ssLead, ssMapC, ssMapNzFC, ssShift, ssShiftMapC, ssShiftMapNzFC,
     ssAGUniv, ssFoldSort, ssDotWith,
     ssNzdCTimes, ssCTimes, ssMonicizeU, ssTimesNzdC, ssTimesC, ssTimesNzdMonom, ssTimesMonom,
         ssTimesNzds, ssTimes,
@@ -50,7 +50,7 @@ type SparseSum c d  = SL.List (SSTerm c d)
 
 type SparseSumUniv d c ss   = UnivL AbelianGroup (TgtArrsF (->) c d) (->) ss
 {- ^ an @AbelianGroup ss@, @dcToSS@ function, and a function for mapping to other
-    'AbelianGroup's @t@ that have a @d -> Hom_AG(c, t)@; \(⊕↙d C_d\) where each \(C_d\) is a
+    t'AbelianGroup's @t@ that have a @d -> Hom_AG(c, t)@; \(⊕↙d C_d\) where each \(C_d\) is a
     copy of \(C\). -}
 
 
@@ -104,10 +104,10 @@ ssMapC is0 f    = foldr k ssZero
     k cd    = ssLead is0 (f cd.c) cd.d
 {-# INLINABLE ssMapC #-}
 
-ssMapNZFC       :: (c -> c') -> SparseSum c d -> SparseSum c' d
+ssMapNzFC       :: (c -> c') -> SparseSum c d -> SparseSum c' d
 -- ^ assumes the @(c -> c')@ takes nonzero values to nonzero values
-ssMapNZFC f     = fmap (first f)
-{-# INLINE ssMapNZFC #-}
+ssMapNzFC f     = fmap (first f)
+{-# INLINE ssMapNzFC #-}
 
 ssShift         :: (d -> d') -> SparseSum c d -> SparseSum c d'
 -- ^ assumes the @(d -> d')@ is order-preserving
@@ -121,14 +121,15 @@ ssShiftMapC is0 df cf   = foldr k ssZero
     k cd    = ssLead is0 (cf cd.c) (df cd.d)
 {-# INLINABLE ssShiftMapC #-}
 
-ssShiftMapNZFC  :: (d -> d') -> (c -> c') -> SparseSum c d -> SparseSum c' d'
+ssShiftMapNzFC  :: (d -> d') -> (c -> c') -> SparseSum c d -> SparseSum c' d'
 {- ^ assumes the @(d -> d')@ is order-preserving, and the @(c -> c')@ takes nonzero values to
     nonzero values -}
-ssShiftMapNZFC df cf    = fmap (bimap cf df)
-{-# INLINE ssShiftMapNZFC #-}
+ssShiftMapNzFC df cf    = fmap (bimap cf df)
+{-# INLINE ssShiftMapNzFC #-}
 
 ssAGUniv        :: AbelianGroup c -> Cmp d -> SparseSumUniv d c (SparseSum c d)
-ssAGUniv (AbelianGroup _cFlags eq plus _zero isZero neg) dCmp   =
+-- ^ The result's @monFlags@ assumes @(d)@ is nonempty.
+ssAGUniv (AbelianGroup cFlags eq plus _zero isZero neg) dCmp    =
     UnivL ssAG (TgtArrsF dcToSS) univF
   where
     ssLead'     = ssLead isZero
@@ -140,13 +141,14 @@ ssAGUniv (AbelianGroup _cFlags eq plus _zero isZero neg) dCmp   =
                 GT  -> xh :! xt `ssPlus` y
                 LT  -> yh :! x `ssPlus` yt
                 EQ  -> ssLead' (xc `plus` yc) yd (xt `ssPlus` yt)
-    ssNeg       = ssMapNZFC neg
+    ssNeg       = ssMapNzFC neg
     ssEq x y    = case SL.uncons x of
         Nothing                     -> null y
         Just (SSTerm xc xd, xt)     -> case SL.uncons y of
             Nothing                     -> False
             Just (SSTerm yc yd, yt)     -> dCmp xd yd == EQ && eq xc yc && ssEq xt yt
-    ssAG        = abelianGroup ssEq ssPlus ssZero null ssNeg
+    ssFlags     = agFlags (IsNontrivial cFlags.nontrivial)
+    ssAG        = AbelianGroup ssFlags ssEq ssPlus ssZero null ssNeg
     dcToSS d c  = ssLead' c d ssZero
     univF (AbelianGroup _ _ vPlus vZero _ _) (TgtArrsF dcToV)   = go
       where
@@ -165,9 +167,9 @@ ssFoldSort (AbelianGroup _ _ cPlus _ cIsZero _) dCmp cds0   =
             | dCmp d cd.d == EQ     = go2 (cPlus c cd.c) t
         go2 c cds           = go (if cIsZero c then done else SSTerm c d :! done) cds
 
-ssDotWith       :: Cmp d -> (c -> c1 -> c2) -> AbelianGroup c2 ->
+ssDotWith       :: AbelianGroup c2 -> Cmp d -> (c -> c1 -> c2) ->
                         SparseSum c d -> SparseSum c1 d -> c2
-ssDotWith dCmp f (AbelianGroup { plus, zero })  = dot
+ssDotWith (AbelianGroup { plus, zero }) dCmp f  = dot
   where
     dot x y         = maybe zero xGo (SL.uncons x)
       where
@@ -180,7 +182,7 @@ ssDotWith dCmp f (AbelianGroup { plus, zero })  = dot
 
 ssNzdCTimes     :: Ring c -> c -> Op1 (SparseSum c d)
 -- ^ the @c@ must not be a left zero divisor, i.e. @c*a = 0 => a = 0@
-ssNzdCTimes (Ring { times }) c  = ssMapNZFC (c `times`)
+ssNzdCTimes (Ring { times }) c  = ssMapNzFC (c `times`)
 
 ssCTimes        :: Ring c -> c -> Op1 (SparseSum c d)
 -- ^ If the @c@ is not a left zero divisor, then 'ssNzdCTimes' is faster.
@@ -190,11 +192,11 @@ ssMonicizeU     :: Ring c -> Op1 (SparseSum c d)
 -- ^ @(ssMonicizeU s)@ requires that @s@ is nonzero, and its leading coefficient is a unit
 ssMonicizeU cR@(Ring { times }) s   =
     let c       = (ssHead s).c  -- check for c = 1 for speed
-    in  if rIsOne cR c then s else ssMapNZFC (rInv cR c `times`) s
+    in  if rIsOne cR c then s else ssMapNzFC (rInv cR c `times`) s
 
 ssTimesNzdC     :: Ring c -> c -> Op1 (SparseSum c d)
 -- ^ the @c@ must not be a right zero divisor, i.e. @a*c = 0 => a = 0@
-ssTimesNzdC (Ring { times }) c  = ssMapNZFC (`times` c)
+ssTimesNzdC (Ring { times }) c  = ssMapNzFC (`times` c)
 
 ssTimesC        :: Ring c -> c -> Op1 (SparseSum c d)
 -- ^ If the @c@ is not a right zero divisor, then 'ssTimesNzdC' is faster.
@@ -203,7 +205,7 @@ ssTimesC cR@(Ring { times }) c  = ssMapC cR.isZero (`times` c)
 ssTimesNzdMonom     :: Ring c -> Op2 d -> SparseSum c d -> d -> c -> SparseSum c d
 -- ^ assumes the @Op2 d@ is order-preserving in each argument, and the @c@ is not a right zero
 -- divisor
-ssTimesNzdMonom (Ring { times }) dOp2 s d c     = ssShiftMapNZFC (`dOp2` d) (`times` c) s
+ssTimesNzdMonom (Ring { times }) dOp2 s d c     = ssShiftMapNzFC (`dOp2` d) (`times` c) s
 
 ssTimesMonom    :: Ring c -> Op2 d -> SparseSum c d -> d -> c -> SparseSum c d
 -- ^ assumes the @Op2 d@ is order-preserving in each argument. Also, if the @c@ is not a right
