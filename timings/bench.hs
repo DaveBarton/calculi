@@ -26,7 +26,7 @@ import Data.Tuple.Extra (both)
 -- import qualified Data.Vector as PV
 -- import qualified Data.Vector.Unboxed as VU
 import Data.Word (Word64)
-import Fmt ((+|), (|+)
+import Fmt ((+|), (|+))
 import qualified StrictList2 as SL
 import System.Random (mkStdGen, uniformR, split)
 
