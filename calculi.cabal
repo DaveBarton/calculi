@@ -12,10 +12,10 @@ bug-reports:        https://github.com/DaveBarton/calculi/issues
 license:            BSD-3-Clause
 license-file:       LICENSE
 author:             Dave Barton
-maintainer:         dbarton@mathscribe.com
+maintainer:         Dave Barton
 copyright:          Copyright (c) David R. Barton, 2022-2024
 
-category:           Math
+category:           Math, Algebra
 extra-doc-files:    CHANGELOG.md dirs.txt timings/timings.txt
 tested-with:        ghc == 9.4.4 || == 9.6.1 || == 9.8.1 || == 9.10.1
 
@@ -26,7 +26,8 @@ source-repository   head
 common deps
     default-language:   GHC2021
     default-extensions: DuplicateRecordFields LambdaCase MonoLocalBinds NegativeLiterals
-                        NoFieldSelectors OverloadedRecordDot PatternSynonyms RecordWildCards
+                        NoFieldSelectors OverloadedRecordDot OverloadedStrings PatternSynonyms
+                        RecordWildCards
     other-extensions:   CPP DataKinds FunctionalDependencies Strict ViewPatterns
     ghc-options:        -Wall -Wcompat -feager-blackholing -threaded
     if impl(ghc >= 9.8.1)
@@ -35,7 +36,11 @@ common deps
         base >= 4.17 && < 5.0,
         containers >= 0.6 && < 0.8,
         extra >= 1.6 && < 1.8,
-        strict >= 0.4 && < 0.6
+        fmt >= 0.4 && < 0.7,
+        megaparsec < 9.7,
+        parser-combinators < 1.4,
+        strict >= 0.4 && < 0.6,
+        text < 2.2
 
 library
     import:             deps
@@ -60,7 +65,6 @@ library
     build-depends:
         async < 2.3,
         contiguous >= 0.6.1.1 && < 0.7,
-        -- fmt >= 0.4 && < 0.7,
         ghc-trace-events < 0.2,
         -- hashable, unordered-containers,
         -- inspection-testing >= 0.3 && < 0.6,
@@ -71,7 +75,6 @@ library
         rrb-vector >= 0.2.1 && < 0.3,
         stm >= 2.4 && < 2.6,
         strict-list < 0.2,
-        -- text,
         time >= 1.9.3 && < 2,
         timestats < 0.3,
         vector < 0.14
@@ -106,8 +109,6 @@ test-suite calculi-test
         Math.Algebra.Commutative.TestEPoly
         Math.Algebra.Commutative.TestBinPoly
 
-    other-extensions:   OverloadedStrings
-    
     build-depends:      calculi, hedgehog == 1.*, mod, rrb-vector, strict-list, tasty < 1.6,
                         tasty-hedgehog < 1.5
 

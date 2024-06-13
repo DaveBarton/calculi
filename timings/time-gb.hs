@@ -1,6 +1,7 @@
 import Math.Algebra.Commutative.GBDemo
 
 -- import Data.List (isInfixOf)
+import Fmt ((+|), (|+), (+||), (||+), fmtLn)
 
 import Control.Concurrent (getNumCapabilities, runInUnboundThread)
 import GHC.Conc (getNumProcessors)
@@ -38,9 +39,9 @@ main    = do
     tz          <- getCurrentTimeZone
     let today       = localDay (utcToLocalTime tz now)
     maxNCores   <- getNumProcessors
-    putStrLn $ "\n" ++ show today ++ ", " ++ arch ++ "-" ++ os ++ "/" ++ compilerName ++ "-"
-        ++ showVersion fullCompilerVersion
-        ++ ", using " ++ show nCores ++ " of " ++ show maxNCores ++ " cores\n"
+    fmtLn $ "\n"+||today||+", "+|arch|+"-"+|os|+"/"
+        +|compilerName|+"-"+|showVersion fullCompilerVersion|+
+        ", using "+|nCores|+" of "+|maxNCores|+" cores\n"
     runInUnboundThread $ gbDemo args
     -- hFlush stdout
     -- hFlush stderr

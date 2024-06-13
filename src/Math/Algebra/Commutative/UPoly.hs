@@ -88,6 +88,5 @@ upUniv cR       = UnivL cxRing (RingTgtX cToCx x) cxUnivF
 -- @@ -> RMod, RAlg (if R comm.), R[X] * M[X] ?
 
 
-upShowPrec      :: String -> ShowPrec c -> ShowPrec (UPoly c)
--- ^ varS prec > '^'
-upShowPrec varS = ssShowPrec (varPowShowPrec varS)
+upShowPrec      :: PrecText -> ShowPrec c -> ShowPrec (UPoly c)
+upShowPrec      = ssShowPrec . varPowShowPrec

@@ -10,7 +10,7 @@ import Math.Algebra.Commutative.GroebnerBasis
 
 import Math.Algebra.General.TestAlgebra
 
-import Hedgehog ((===), annotate, forAll, withTests)
+import Hedgehog ((===), forAll, withTests)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
@@ -44,8 +44,8 @@ groebnerBasisTests gbpA@(GBPolyOps { .. }) halfInitGensSG countZeros    =
             gbIdeal         = plusGens gbTrace (fromGens smA gbTrace gens0) gens1
             gbGens          = stdGens doRedGens gbIdeal
             gbGensL         = toList gbGens
-            checkRes0s ps   = allTM pShow pR.isZero (map (bModBy doFullMod gbIdeal) ps)
-        annotate $ gsSG11.tShow gbGensL
+            checkRes0s ps   = allTM pShowPrec pR.isZero (map (bModBy doFullMod gbIdeal) ps)
+        annotateB $ gsSG11.tSP gbGensL
         checkRes0s (gens0 ++ gens1)
         mapM_ checkRes0s
             [[sPolyIJ gbGens i j | i <- [0 .. j - 1]]

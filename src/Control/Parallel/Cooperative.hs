@@ -75,7 +75,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 import Data.Time.Clock.System (SystemTime(MkSystemTime), getSystemTime)
 import qualified Debug.TimeStats as TS
--- import Numeric (showFFloat)
+-- import Numeric (showFFloatAlt)
 
 
 -- * Utilities
@@ -191,9 +191,9 @@ evalPar es      = if null (drop 1 es) then seqElts es else
         let taskF _numCaps _capIndex    = do
                 me      <- popTVar todo
                 {- now     <- getSystemTimeNS
-                putStrLn $ "evalPar - capIndex " ++ show _capIndex ++ ", "
-                    ++ showFFloat (Just 3) (1e-9 * fromInteger (now - start) :: Double) "s: "
-                    ++ show (isJust me) -}
+                putStrLn $ "evalPar - capIndex " <> show _capIndex <> ", "
+                    <> showFFloatAlt (Just 3) (1e-9 * fromInteger (now - start) :: Double) "s: "
+                    <> show (isJust me) -}
                 pure (maybe False (`seq` True) me)
         parNonBlocking wakeAllThreads numSleepingVar taskF
         pure es
@@ -204,7 +204,7 @@ forkJoinPar     :: (a -> [b]) -> ([c] -> d) -> (b -> c) -> a -> d
 forkJoinPar split join f a  = join $ evalPar (map f (split a))
 
 checkChunkSize  :: HasCallStack => Int -> a -> a
-checkChunkSize d    = if d < 1 then error ("Bad chunksize: " ++ show d) else id
+checkChunkSize d    = if d < 1 then error ("Bad chunksize: " <> show d) else id
 
 mapParChunk     :: HasCallStack => Int -> (a -> b) -> [a] -> [b]
 {- ^ Map a function down a list, processing chunks in parallel. The chunk size must be

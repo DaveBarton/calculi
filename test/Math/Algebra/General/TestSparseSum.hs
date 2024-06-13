@@ -20,20 +20,20 @@ import Data.Foldable (toList)
 ssTestOps               :: AbelianGroup c -> Cmp d ->
                             Range Int -> TestOps c -> TestOps d -> TestOps (SparseSum c d)
 -- ^ The caller tests @cAG@ and @dCmp@, including that @dCmp@ gives a total order.
-ssTestOps cAG dCmp sumRange cT dT   = TestOps tSP tCheck gen ssAG.eq
+ssTestOps cAG dCmp sumRange cTA dTA     = TestOps tSP tCheck gen ssAG.eq
   where
     UnivL ssAG (TgtArrsF dcToSS) _univF     = ssAGUniv cAG dCmp
-    cdT             = TestOps cdSP cdTCheck undefined undefined
-    cdSP _prec cd   = cT.tShow cd.c ++ " " ++ dT.tShow cd.d
+    cdTA            = TestOps cdSP cdTCheck undefined undefined
+    cdSP cd         = infixPT multPrec " " (cTA.tSP cd.c) (dTA.tSP cd.d)    -- always show c & d
     cdTCheck notes cd   = do
-        cT.tCheck notes1 cd.c
-        dT.tCheck notes1 cd.d
-        tCheckBool (cdSP 0 cd : notes) (not (cAG.isZero cd.c))
+        cTA.tCheck notes1 cd.c
+        dTA.tCheck notes1 cd.d
+        tCheckBool ((cdSP cd).t : notes) (not (cAG.isZero cd.c))
       where
-        notes1  = ssTermShowPrec dT.tSP cT.tSP 0 cd : notes
-    slT             = slTestOps undefined cdT
-    tSP             = ssShowPrec dT.tSP cT.tSP
+        notes1  = (ssTermShowPrec dTA.tSP cTA.tSP cd).t : notes
+    slTA            = slTestOps undefined cdTA
+    tSP             = ssShowPrec dTA.tSP cTA.tSP
     tCheck notes s  = do
-        slT.tCheck notes s
-        tCheckBool (tSP 0 s : notes) (isSortedBy ((== GT) .* dCmp `on` (.d)) (toList s))
-    gen             = sumL' ssAG <$> Gen.list sumRange (liftA2 dcToSS dT.gen cT.gen)
+        slTA.tCheck notes s
+        tCheckBool ((tSP s).t : notes) (isSortedBy ((== GT) .* dCmp `on` (.d)) (toList s))
+    gen             = sumL' ssAG <$> Gen.list sumRange (liftA2 dcToSS dTA.gen cTA.gen)

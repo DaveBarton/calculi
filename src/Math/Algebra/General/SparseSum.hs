@@ -229,15 +229,14 @@ ssTimes (UnivL ssAG _ univF) cR dOp2 s  = univF ssAG (TgtArrsF (sToTimesDC s))
     sToTimesDC      = ssTimesMonom cR dOp2
 
 
-ssTermShowPrec                  :: ShowPrec d -> ShowPrec c -> ShowPrec (SSTerm c d)
-ssTermShowPrec dSP cSP prec cd  = timesSPrec cSP dSP prec cd.c cd.d
+ssTermShowPrec      :: ShowPrec d -> ShowPrec c -> ShowPrec (SSTerm c d)
+ssTermShowPrec dSP cSP cd   = timesPT (cSP cd.c) (dSP cd.d)
 
-ssShowPrec              :: ShowPrec d -> ShowPrec c -> ShowPrec (SparseSum c d)
-ssShowPrec dSP cSP prec = sumSPrec (ssTermShowPrec dSP cSP) prec . toList
+ssShowPrec          :: ShowPrec d -> ShowPrec c -> ShowPrec (SparseSum c d)
+ssShowPrec dSP cSP  = sumPT . map (ssTermShowPrec dSP cSP) . toList
 
-varPowShowPrec          :: (Integral d, Show d) => String -> ShowPrec d
--- ^ varS prec > '^'
-varPowShowPrec varS prec d  = case d of
-    0   -> "1"
-    1   -> varS
-    _   -> parensIf (exptPrec < prec) (varS ++ '^' : show d)
+varPowShowPrec      :: (Integral d, Show d) => PrecText -> ShowPrec d
+varPowShowPrec varPT d  = case d of
+    0   -> PrecText atomPrec "1"
+    1   -> varPT
+    _   -> exptPT varPT (integralPT d)

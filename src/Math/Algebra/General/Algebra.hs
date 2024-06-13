@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, DataKinds, Strict #-}
+{-# LANGUAGE CPP, DataKinds, Strict, ViewPatterns #-}
 
 {- |  This module defines the most common types of algebras, and simple functions using them.
     
@@ -9,8 +9,8 @@
     by using other algebras. We implement an algebra using a first-class data value rather than
     a type class, because a single type may admit more than one structure as a given type of
     algebra. (For example, consider quotient algebras such as @ℤ/pℤ@ or @R[X, Y]/(f, g)@ for
-    various @p@, @f@, and @g@.) Also, treating algebras as first-class values allows us to
-    construct them at arbitrary times in arbitrary ways.
+    various dynamically computed @p@, @f@, and @g@.) Also, treating algebras as first-class
+    values allows us to construct them at arbitrary times in arbitrary ways.
     
     Note that a set of constructive (e.g. Haskell) values is an attempt to represent a set of
     abstract (mathematical) values. The abstract values have an implicit notion of (abstract)
@@ -37,17 +37,8 @@
 -}
 
 module Math.Algebra.General.Algebra (
-#if ! MIN_VERSION_base(4, 20, 0)
-    -- * Extend "Prelude"
-    foldl',
-#if ! MIN_VERSION_base(4, 18, 0)
-    liftA2,
-#endif
-#endif
-    
     -- * Common function types
     -- ** Pred
-    assert,
     Pred,
     -- ** Op1
     Op1,
@@ -69,6 +60,7 @@ module Math.Algebra.General.Algebra (
     maxBy, minBy,
     
     -- * Monoids and Groups
+    -- $monoids
     -- ** MonoidFlags
     MonoidFlags(MonoidFlags, nontrivial, abelian, isGroup), flagsContain,
     IsNontrivial(..), agFlags,
@@ -80,6 +72,7 @@ module Math.Algebra.General.Algebra (
     AbelianGroup, minus, sumL', sumR,
     
     -- * Rings and fields
+    -- $rings
     -- ** RingFlags
     RingFlags(RingFlags, commutative, noZeroDivisors, nzInverses),
     integralDomainFlags, divisionRingFlags, fieldFlags,
@@ -106,12 +99,26 @@ module Math.Algebra.General.Algebra (
     -- ** Double
     dblAG, dblRing,
     
-    -- * Converting \<-> String
-    show0x, showToShows, pairShows, pairShow, showGens,
-    Prec, applPrec, exptPrec, multPrec, addPrec, ShowPrec,
-    parensIf, plusSPrec, sumSPrec, timesSPrec, productSPrec,
-    trimStart,
-    readSToRead, zzReads, agReads, rngReads, polynomReads
+    -- * Converting -> Text
+    show0x, Text, showT,
+    -- ** With Precedence
+    Prec, parensPrec, atomPrec, exptPrec, multPrec, addPrec, commaPrec,
+    PrecText(PrecText, prec, t), parensIf, ensurePrec, infixLPT, infixRPT, infixAssocPT,
+        infixPT, infixListPT, fencePT, plusPT, sumPT, timesPT, productPT, exptPT,
+    ShowPrec, integralPT, zzShowPrec, hex0xPT, sPairShowPrec, listShowPrec, gensShowPrec,
+    
+    -- * Parsing
+    Parser, spaceConsumer, parse, parseAllOrErr,
+    pInfixL, pParens, zzParse, agParse, rngParse, varNameParse, varParse, zzGensRingParse,
+    
+    -- * Re-exports
+#if ! MIN_VERSION_base(4, 20, 0)
+    foldl',
+#endif
+#if ! MIN_VERSION_base(4, 18, 0)
+    liftA2,
+#endif
+    assert
 ) where
 
 import GHC.Records
@@ -120,19 +127,25 @@ import GHC.Records
 import Control.Applicative (liftA2)     -- unnecesary in base 4.18+, since in Prelude
 #endif
 import Control.Exception (assert)
-import Data.Bifoldable (Bifoldable, bifoldr)
 import Data.Bifunctor (bimap, second)
-import Data.Char (isDigit, isSpace)
+import Data.Char (isDigit)
 #if ! MIN_VERSION_base(4, 20, 0)
 import Data.Foldable (foldl')           -- unnecesary in base 4.20+, since in Prelude
 #endif
+import Data.Foldable (toList)
 import Data.Function (on)
 import Data.Functor.Classes (liftEq2)
-import Data.List (stripPrefix)
-import Data.List.Extra (list, trimStart)
-import Data.Maybe (maybeToList)
+import Data.Maybe (fromMaybe)
 import Data.Strict.Tuple ((:!:), pattern (:!:))
-import Numeric (readDec, showHex)
+import qualified Data.Text as T
+import Data.Text (Text)
+import Data.Void (Void)
+import Fmt (Buildable, (+|), (|+), build)
+import Numeric (showHex)
+import Text.Megaparsec (Parsec, (<|>), (<?>), between, eof, errorBundlePretty, many,
+    notFollowedBy, parse)
+import Text.Megaparsec.Char (digitChar, letterChar, space1)
+import Text.Megaparsec.Char.Lexer as L
 import Text.ParserCombinators.ReadPrec (Prec)
 
 
@@ -227,6 +240,12 @@ minBy cmp x y   = if cmp x y /= GT then x else y
 
 
 -- * Monoids and Groups
+
+{- $monoids
+    Abstractly, a /monoid/ is a set, together with an associative operation with identity. If
+    there are more elements than just the identity, the monoid is /nontrivial/. If the operation
+    is commutative, the monoid is /abelian/. If every element has a (two-sided) inverse, the
+    monoid is a /group/. -}
 
 -- ** MonoidFlags
 
@@ -372,6 +391,10 @@ sumR            = monProductR
 
 -- * Rings and fields
 
+{- $rings
+    A /ring/ is an abelian group, together with an associative multiplication with identity.
+    Multiplication must distribute over addition. -}
+
 -- ** RingFlags
 
 data RingFlags  = RingFlags {
@@ -413,8 +436,8 @@ fieldFlags          = integralDomainFlags <> divisionRingFlags
 newtype IsDeep      = IsDeep { b :: Bool }  deriving Show
 -- ^ whether to go beyond a \"top\" level
 
-{- | A @(Ring ag (*~) one fromZ bDiv)@ must satisfy the axioms below. Examples include the
-    integers ℤ, and other rings of algebraic numbers, polynomials, n x n matrices, etc. -}
+{- | A t'Ring' must satisfy the axioms below. Examples include the integers ℤ, and other rings
+    of algebraic numbers, polynomials, n x n matrices, etc. -}
 data Ring a         = Ring {
     ag      :: AbelianGroup a,
     rFlags  :: RingFlags,
@@ -426,7 +449,8 @@ data Ring a         = Ring {
         @r@'s \"size\" is (attempted to be) minimized. If @doFull.b@, then all of @r@ is
         minimized; else just its \"topmost\" nonzero \"term\" is. (Words such as \"size\" have
         meanings that vary by context. Also in general, the results of @bDiv@ may not be
-        uniquely determined by these requirements.) -}
+        uniquely determined by these requirements. Finally, note that @m@ is allowed to be 0.)
+        -}
 }
 -- ^ A ring is /commutative/ if @*.@ is. A /unit/ is an element @x@ such that there exists a
 -- @y@ with @x *. y = y *. x = one@.
@@ -478,19 +502,19 @@ rExpt rR x n
     | otherwise = rInv rR (rExpt rR x (- n))
 {-# SPECIALIZE rExpt :: Ring a -> a -> Int -> a #-}
 
-rSumL'          :: Ring a -> [a] -> a
+rSumL'          :: Foldable f => Ring a -> f a -> a
 -- ^ sum using foldl'
 rSumL' aR       = sumL' aR.ag
 
-rSumR           :: Ring a -> [a] -> a
+rSumR           :: Foldable f => Ring a -> f a -> a
 -- ^ sum using foldr
 rSumR aR        = sumR aR.ag
 
-rProductL'      :: Ring g -> [g] -> g
+rProductL'      :: Foldable f => Ring g -> f g -> g
 -- ^ product using foldl'
 rProductL' Ring{ .. }   = foldl' times one
 
-rProductR       :: Ring g -> [g] -> g
+rProductR       :: Foldable f => Ring g -> f g -> g
 -- ^ product using foldr
 rProductR Ring{ .. }    = foldr times one
 
@@ -585,9 +609,11 @@ algMd (RAlg { .. })     = Module aR.ag scale
 
 -- * Basic numeric rings
 
-numAG           :: (Eq n, Num n) => AbelianGroup n
--- ^ @(n)@ under addition; assumes @nontrivial@ (@0 /= 1@)
-numAG           = AbelianGroup (agFlags (IsNontrivial True)) (==) (+) 0 (== 0) negate
+numAG           :: forall n. (Eq n, Num n) => AbelianGroup n
+-- ^ @(n)@ under addition
+numAG           = AbelianGroup (agFlags nontriv) (==) (+) 0 (== 0) negate
+  where
+    nontriv         = IsNontrivial ((0 :: n) /= 1)
 
 numRing         :: (Eq n, Num n) => RingFlags -> (IsDeep -> n -> n -> (n, n)) -> Ring n
 -- ^ @(n)@ as a t'Ring'; @(numRing rFlags bDiv)@
@@ -600,7 +626,7 @@ zzAG            :: AbelianGroup Integer
 zzAG            = numAG
 
 zzDiv           :: IsDeep -> Integer -> Integer -> (Integer, Integer)
--- ^ integer division, rounding toward 0
+-- ^ integer division, including by 0, minimizing the absolute value of the remainder
 zzDiv _ n d
     | d == 0    = (0, n)
     | d < 0     = let (q, r) = zzDiv (IsDeep False) n (- d) in (- q, r)
@@ -622,145 +648,241 @@ dblRing         :: Field Double
 dblRing         = field dblAG (*) 1 fromInteger recip
 
 
--- * Converting \<-> String
+-- * Converting -> Text
 
 show0x          :: (Integral a, Show a) => a -> String
 -- ^ show in hexadecimal with a "0x" prefix; the argument must be nonnegative
-show0x n        = "0x" ++ showHex n ""
+show0x n        = "0x" <> showHex n ""
 
-showToShows     :: (a -> String) -> a -> ShowS
-showToShows aShow a     = (aShow a ++)
-
-pairShows       :: Bifoldable p => (a -> ShowS) -> (b -> ShowS) -> (p a b) -> ShowS
-pairShows aShows bShows ab t    =
-    bifoldr (\a c -> '(' : aShows a c) (\b c -> ',' : bShows b (')' : c)) t ab
-
-pairShow        :: Bifoldable p => (a -> String) -> (b -> String) -> (p a b) -> String
-pairShow aShow bShow ab     = pairShows (showToShows aShow) (showToShows bShow) ab ""
-
-showGens                    :: (g -> String) -> [g] -> String
-showGens _gShow []          = "⟨ ⟩"
-showGens  gShow (g0 : gs)   = "⟨ " ++ gShow g0 ++ foldr (\g s -> ", " ++ gShow g ++ s) " ⟩" gs
+showT           :: Show a => a -> Text
+-- ^ Convert a value to 'Text' using a 'Show' instance.
+showT           = T.pack . show
 
 
-applPrec        :: Prec
--- ^ precedence of function application
-applPrec        = 10
+-- ** With Precedence
+
+parensPrec      :: Prec
+-- ^ precedence of a parenthesized expression; higher than a number or variable
+parensPrec      = 12
+atomPrec        :: Prec
+{- ^ precedence of an atomic expression, such as a positive number, atomic variable, or atomic
+    constant -}
+atomPrec        = 11
 exptPrec        :: Prec
--- ^ precedence of exponentiation
+-- ^ precedence of exponentiation or negation (prefix @\"-\"@), right associative
 exptPrec        = 8
 multPrec        :: Prec
--- ^ precedence of multiplication
+-- ^ precedence of multiplication and division, left associative
 multPrec        = 7
 addPrec         :: Prec
--- ^ precedence of addition
+-- ^ precedence of addition and subtraction, left associative
 addPrec         = 6
+commaPrec       :: Prec
+-- ^ precedence of a comma
+commaPrec       = 0
 
-type ShowPrec a = Prec -> a -> String
-{- ^ a function to show a value at a given minimum precedence. That is, the result is
-    parenthesized if its top operator has less than the given precedence. -}
+data PrecText   = PrecText { prec :: Prec, t :: Text }
+    deriving (Eq, Show)     -- e.g. for testing & debugging
+-- ^ A mathematical expression, and the precedence of its outermost operator.
 
-parensIf        :: Bool -> String -> String
--- ^ @parensIf b s@ encloses @s@ in parentheses if @b@
-parensIf b s    = if b then '(':s++")" else s
+instance Buildable PrecText where
+    build       = build . (.t)
+-- ^ discards the precedence
 
-plusSPrec       :: ShowPrec a -> ShowPrec b -> Prec -> a -> b -> String
-plusSPrec aSP bSP prec a b
-    | aS == "0"     = bSP prec b
-    | bS == "0"     = aSP prec a
-    | otherwise     = parensIf (addPrec < prec) (aS ++ (if isNeg bS then "" else "+") ++ bS)
+parensIf        :: Bool -> Text -> Text
+-- ^ @parensIf b t@ encloses @t@ in parentheses if @b@
+parensIf b t    = if b then T.concat ["(", t, ")"] else t
+
+ensurePrec      :: Prec -> PrecText -> Text
+-- ^ parenthesize an expression if its precedence is below the given value
+ensurePrec minP pt  = parensIf (pt.prec < minP) pt.t
+
+infixGenPT      :: Int -> Int -> Prec -> Text -> Op2 PrecText
+{- ^ format using an infix operator that requires the given left and right precedence increments
+    arounds its operands -}
+infixGenPT dl dr prec op x y    =
+    PrecText prec (T.concat [ensurePrec (prec + dl) x, op, ensurePrec (prec + dr) y])
+
+infixLPT        :: Prec -> Text -> Op2 PrecText
+-- ^ format using a non-associative @infixl@ operator
+infixLPT        = infixGenPT 0 1
+
+infixRPT        :: Prec -> Text -> Op2 PrecText
+-- ^ format using a non-associative @infixr@ operator
+infixRPT        = infixGenPT 1 0
+
+infixAssocPT    :: Prec -> Text -> Op2 PrecText
+{- ^ format using an infix operator that doesn't require parentheses around operands of the same
+    precedence -}
+infixAssocPT    = infixGenPT 0 0
+
+infixPT         :: Prec -> Text -> Op2 PrecText
+{- ^ format using an infix operator that requires parentheses around operands of the same
+    precedence -}
+infixPT         = infixGenPT 1 1
+
+infixListPT     :: Foldable f => Prec -> Bool -> Text -> f PrecText -> PrecText
+{- ^ @(infixListPT opPrec parenTies op args)@ combines the @args@ using the infix operator @op@.
+    @parenTies@ says whether to parenthesize arguments whose precedence is exactly @opPrec@. -}
+infixListPT opPrec parenTies op (toList -> args)
+    | null args         = PrecText 0 ""
+    | arg : [] <- args  = arg
+    | let minP = opPrec + (if parenTies then 1 else 0)
+                        = PrecText opPrec (T.intercalate op (map (ensurePrec minP) args))
+
+fencePT         :: Text -> Text -> Text -> PrecText
+{-^ @(fencePT open inner close)@ creates a \"fenced\" (parenthesized, bracketed, etc.)
+    expression around @inner@. -}
+fencePT open inner close    = PrecText parensPrec (T.concat [open, inner, close])
+
+sumPT           :: Foldable f => f PrecText -> PrecText
+-- ^ Sum of expressions, checking args for 0 and prefix @\"-\"@.
+sumPT           = go . filter (\pt -> pt.t /= "0") . toList
   where
-    aS      = aSP addPrec a
-    ~bS     = bSP addPrec b
-    isNeg ('-':_)   = True
-    isNeg _         = False
+    go []           = PrecText atomPrec "0"
+    go [pt]         = pt
+    go pts          = PrecText addPrec (dropPlus (T.concat (map toSignedArg pts)))
+    dropPlus t      = fromMaybe t (T.stripPrefix "+" t)
+    toSignedArg     = addPlus . ensurePrec addPrec
+    addPlus t       = if T.isPrefixOf "-" t then t else "+" <> t
 
-sumSPrec        :: ShowPrec a -> ShowPrec [a]
-sumSPrec aSP    = asSP
+plusPT          :: Op2 PrecText
+-- ^ Sum of two expressions, checking args for 0 and prefix @\"-\"@.
+plusPT aPT bPT  = sumPT [aPT, bPT]
+
+timesPT         :: Op2 PrecText
+-- ^ Product of two expressions, checking args for 1, prefix @\"-\"@, and concatenating digits.
+timesPT aPT bPT
+    | aPT.t == "1"      = bPT
+    | bPT.t == "1"      = aPT
+    | aPT.t == "-1"     =
+        PrecText (if bPT.prec == multPrec then multPrec else exptPrec) ("-" <> bT)
+    | otherwise         = PrecText multPrec (ensurePrec multPrec aPT <> b1T)
   where
-    asSP _prec []       = "0"
-    asSP  prec (h : t)  = plusSPrec aSP asSP prec h t
+    ~bT             = ensurePrec multPrec bPT
+    ~b1T            = parensIf (needsLParen bT) bT
+    needsLParen     = (maybe False (\(c, _) -> c == '-' || isDigit c)) . T.uncons
 
-timesSPrec      :: ShowPrec a -> ShowPrec b -> Prec -> a -> b -> String
-timesSPrec aSP bSP prec a b
-    | aS == "1"     = bSP prec b
-    | bS == "1"     = aSP prec a
-    | aS == "-1"    = parensIf (exptPrec < prec) ('-' : b1S)
-    | otherwise     = parensIf (multPrec < prec) (aS ++ b1S)
+productPT       :: Foldable f => f PrecText -> PrecText
+-- ^ Product of expressions, checking args for 1, prefix @\"-\"@, and concatenating digits.
+productPT       = foldl' timesPT (PrecText atomPrec "1")
+
+exptPT          :: Op2 PrecText
+-- ^ @\"^\"@ of two expressions
+exptPT          = infixRPT exptPrec "^"
+
+type ShowPrec a = a -> PrecText
+
+integralPT      :: (Integral a, Show a) => ShowPrec a
+-- ^ show an 'Int'/'Integer'/etc. with precedence
+integralPT n    = PrecText (if n < 0 then exptPrec else atomPrec) (showT n)
+
+zzShowPrec      :: ShowPrec Integer
+-- ^ show an 'Integer' with precedence
+zzShowPrec      = integralPT
+
+hex0xPT         :: (Integral a, Show a) => ShowPrec a
+-- ^ show in hexadecimal with a "0x" prefix; the argument must be nonnegative
+hex0xPT n       = assert (n >= 0) $ PrecText atomPrec (T.pack (show0x n))
+
+sPairShowPrec   :: ShowPrec a -> ShowPrec b -> ShowPrec (a :!: b)
+-- ^ show a strict pair with precedence
+sPairShowPrec aSP bSP (a :!: b)     = PrecText parensPrec (T.concat ["(", aT, ", ", bT, ")"])
   where
-    aS      = aSP multPrec a
-    ~bS     = bSP multPrec b
-    ~b1S    = parensIf (needsLParen bS) bS
-    needsLParen (c:_)   = c == '-' || isDigit c
-    needsLParen _       = False
+    aT      = ensurePrec (commaPrec + 1) (aSP a)
+    bT      = ensurePrec (commaPrec + 1) (bSP b)
 
-productSPrec    :: ShowPrec a -> ShowPrec [a]
-productSPrec aSP    = asSP
+infixCommasPT   :: Foldable f => Text -> f PrecText -> Text -> PrecText
+-- ^ show a 'Foldable' as a fenced list separated by commas, with precedence
+infixCommasPT open args close   = fencePT open (infixListPT commaPrec True ", " args).t close
+
+listShowPrec    :: (Functor f, Foldable f) => ShowPrec e -> ShowPrec (f e)
+-- ^ show a 'Foldable' as a list, with precedence
+listShowPrec eSP es     = infixCommasPT "[" (fmap eSP es) "]"
+
+gensShowPrec    :: (Functor f, Foldable f) => (ShowPrec g) -> f g -> PrecText
+-- ^ show a list of generators, with precedence
+gensShowPrec gSP gs     = infixCommasPT "⟨" (fmap gSP gs) "⟩"
+
+
+-- * Parsing
+
+type Parser     = Parsec Void Text
+{- ^ A monad for parsing, using the [megaparsec](https://hackage.haskell.org/package/megaparsec)
+    and [parser-combinators](https://hackage.haskell.org/package/parser-combinators) libraries.
+    Unless otherwise specified, parsers consume any following white space and comments, but not
+    leading ones. -}
+
+spaceConsumer   :: Parser ()
+{- ^ Consumes (skips) any white space, @\/\/@ end-of-line comments, and @\/\* ... *\/@ nestable
+    block comments. -}
+spaceConsumer   = L.space space1 (L.skipLineComment "//") (L.skipBlockCommentNested "/*" "*/")
+
+parseAllOrErr   :: Parser a -> Text -> a
+-- ^ Parse an entire input, or call 'error' on failure.
+parseAllOrErr p t   = either (error . errorBundlePretty) id (parse pAll "" t)
   where
-    asSP _prec []       = "1"
-    asSP  prec (h : t)  = timesSPrec aSP asSP prec h t
+    pAll    = spaceConsumer >> p <* eof
 
+pLexeme         :: Op1 (Parser a)
+{- Uses the given lexeme parser, followed by 'spaceConsumer' to skip any following white space
+    and comments. -}
+pLexeme         = L.lexeme spaceConsumer
 
-readSToRead     :: ReadS a -> String -> a
--- ^ Use a @(ReadS a)@ to read a complete string.
-readSToRead aReads s    = case [x | (x, t) <- aReads s, all isSpace t] of
-    [x]     -> x
-    []      -> error ("Cannot parse: " ++ s)
-    _       -> error ("Ambiguous parse: " ++ s)
+pSymbol         :: Text -> Parser Text
+-- Parses the verbatim text, followed by any white space and comments.
+pSymbol         = L.symbol spaceConsumer
 
-zzReads         :: ReadS Integer
--- ^ avoid using just @reads@ so e.g. @zzReads "2e+1" = [(2, "e+1")]@
-zzReads s       = case trimStart s of
-    '-':t   -> [(- n, u) | (n, u) <- readDec (trimStart t)]
-    t       -> readDec t
+pInfixL         :: Parser a -> Parser (a -> b -> a) -> Parser b -> Parser a
+-- ^ Parse left-associative operator(s) with the same precedence.
+pInfixL pA pOp pB   = pA >>= pOpBs
+  where
+    pOpBs a     = do
+            op      <- pOp
+            b       <- pB
+            pOpBs (a `op` b)
+        <|> pure a
 
-agReads         :: forall g. AbelianGroup g -> ReadS g -> ReadS g
--- ^ read a possible sum of terms or \"-\" terms, given a function to read a single term
-agReads (AbelianGroup { .. }) termReads     =
-    let sumReads            :: Maybe g -> ReadS g   -- result is mg followed by s
-        sumReads mg s       = case trimStart s of
-                                '-':t   -> reads1 mg neg t
-                                '+':t   -> reads1 mg id t
-                                _       -> maybe (reads1 mg id s) (\ g -> [(g, s)]) mg
-        reads1              :: Maybe g -> Op1 g -> ReadS g  -- mg + (f(next term) + rest of s)
-        reads1 mg f s       = [(maybe y (y `plus`) mg, u)
-                              | (x, t) <- termReads s,
-                                (y, u) <- sumReads (Just (f x)) t]
-    in  sumReads Nothing      -- right-associative sum for efficiency in common cases
+pParens         :: Parser a -> Parser a
+-- ^ Parse an expression in parentheses.
+pParens         = between (pSymbol "(") (pSymbol ")")
 
-rngReads        :: forall r. Ring r -> ReadS r -> ReadS r
-{- ^ read a ring element as a sum of products or quotients of powers of \"atom\"s, given a
-    function to read an \"atom\" -}
-rngReads rR@(Ring { .. }) atomReads     =
-    let rReads, power       :: ReadS r
-        rReads      = agReads ag termReads
-        power s     = do
-            let t = trimStart s
-            (base, u) <- case t of
-                '(':_   -> readParen True rReads t
-                _       -> atomReads t
-            case trimStart u of
-                '^':v   -> [(rExpt rR base e, w) | (e, w) <- zzReads v]
-                v       -> [(base, v)]
-        product2            :: (r, String) -> [(r, String)]
-        product2 (r, s)     =
-            case trimStart s of
-                '/':u   -> concatMap (\(d, v) -> product2 (exactQuo rR r d, v)) (power u)
-                u       -> case power u of
-                            []  -> [(r, u)]
-                            pvs -> concatMap (\(d, v) -> product2 (r `times` d, v)) pvs
-        termReads s = concatMap product2 (power s)
-    in  rReads
+zzParse         :: Parser Integer
+-- ^ Parse an optional sign, followed by a decimal integer.
+zzParse         = L.signed spaceConsumer (pLexeme L.decimal)
 
-polynomReads    :: Ring p -> [(String, p)] -> ReadS p
--- ^ read a polynomial, given a list of variables. Each variable must have precedence > \'^\'.
-polynomReads rR@(Ring { .. }) varSRs    =
-    let digitsOrVarReads s  =
-            let s' = trimStart s
-            in  case s' of
-                c:_     | isDigit c     -> [(fromZ n, t) | (n, t) <- zzReads s']
-                _                       -> [(var, t)
-                    | (varS, var) <- varSRs,
-                      t <- maybeToList (stripPrefix varS s'),
-                      list True (const . not . isDigit) t]
-    in  rngReads rR digitsOrVarReads
+agParse         :: AbelianGroup g -> Parser g -> Parser g
+{- ^ Parse a sum of terms or @\"-\"@ terms, given a parser for a single term. -}
+agParse ag pTerm    = sumR ag <$> liftA2 (:) (pOpTerm <|> pTerm) (many pOpTerm)
+    -- make right-associative for efficiency in common cases
+  where
+    pOpTerm     = (pSymbol "+" *> pTerm)
+              <|> (pSymbol "-" *> (ag.neg <$> pTerm))
+
+rngParse        :: Ring r -> Parser r -> Parser r
+{- ^ Parse a ring element as a sum of products or quotients of integer powers of \"atom\"s,
+    given an \"atom\" parser. -}
+rngParse rR@(Ring { .. }) pAtom     = pR
+  where
+    pPower  = liftA2 (rExpt rR) (pAtom <|> pParens pR) (pSymbol "^" *> zzParse <|> pure 1)
+    pOp     = pSymbol "/" *> pure (exactQuo rR)
+         <|> (pSymbol "*" <|> notFollowedBy digitChar *> pure "") *> pure times
+    pR      = agParse ag (pInfixL pPower pOp pPower)
+
+varNameParse    :: Parser Text
+-- ^ Parse a mathematical variable name: a unicode letter, optionally followed by digits.
+varNameParse    = T.pack <$> (liftA2 (:) letterChar (many digitChar))
+
+varParse        :: [Text] -> [a] -> Parser a
+-- ^ Parse a mathematical variable name, using lists of names and values.
+varParse names vals     = do
+    name        <- varNameParse
+    pure $ maybe (error ("Name not found: "+|name|+"")) id (lookup name (zip names vals))
+
+zzGensRingParse     :: Ring r -> Parser r -> Parser r
+{- ^ Parse a ring element, given a parser for \"generators\". Each generator name should not
+    start with white space or a ring operator. -}
+zzGensRingParse rR pGen     = rngParse rR pAtom
+  where
+    pAtom       = pGen <|> rR.fromZ <$> pLexeme L.decimal
+                    <?> "expression"

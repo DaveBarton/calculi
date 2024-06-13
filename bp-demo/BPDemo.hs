@@ -8,7 +8,9 @@ import Math.Algebra.Commutative.BinPoly
 
 -- import Control.Monad (when)
 import Data.Foldable (toList)
+import qualified Data.Text as T
 import Data.Word (Word64)
+import Fmt ((+|), (|+), (+||), (||+), build, fmtLn)
 
 import Control.Concurrent (runInUnboundThread)
 
@@ -17,30 +19,29 @@ import Control.Concurrent (runInUnboundThread)
 
 demoOps             :: Int -> StdEvCmp ->
                         (GBPolyOps EV58 (BinPoly EV58), BPOtherOps EV58 Word64)
-demoOps nVars sec   = bp58Ops evCmp isGraded descVarSs (UseSugar False)
+demoOps nVars sec   = bp58Ops evCmp isGraded descVarTs (UseSugar False)
   where
     evCmp           = evCmp58 sec
     isGraded        = secIsGraded sec
-    xVarSs          = ['X' : show n | n <- [1 :: Int ..]]
-    descVarSs       = take nVars (map (: []) ['a' .. 'z'] ++ xVarSs)
+    xVarTs          = ["X" <> showT n | n <- [1 :: Int ..]]
+    descVarTs       = take nVars (map T.singleton ['a' .. 'z'] ++ xVarTs)
 
 bpDemo              :: Int -> IO ()
 bpDemo gbTrace      = do
-    putStrLn $ name ++ " " ++ show sec
-    -- when (length reducedGBGensSeq < 250) $ mapM_ (putStrLn . pShow) reducedGBGensL
-    putStrLn $ show (bpCountZeros bpoA reducedGBGensL) ++ " receiver zeros"
-    putStrLn $ show (bpCountZeros bpoA toReduce) ++ " sender zeros"
-    putStrLn $ show (length revSend) ++ " of " ++ show (length toReduce) ++
-        " generators to send:"
-    putStrLn $ showGens pShow (reverse revSend)
+    fmtLn $ ""+|name|+" "+||sec||+""
+    -- when (length reducedGBGensSeq < 250) $ mapM_ (fmtLn . build . pShowPrec) reducedGBGensL
+    fmtLn $ ""+|bpCountZeros bpoA reducedGBGensL|+" receiver zeros"
+    fmtLn $ ""+|bpCountZeros bpoA toReduce|+" sender zeros"
+    fmtLn $ ""+|length revSend|+" of "+|length toReduce|+" generators to send:"
+    fmtLn $ build $ gensShowPrec pShowPrec (reverse revSend)
   where
     -- To run a demo, first set the "@@" lines below the way you want.
 
     sec             = LexCmp   -- @@ LexCmp, GrLexCmp, or GrRevLexCmp
-    (gbpA@(GBPolyOps { pR, pShow }), bpoA@(BPOtherOps { pRead }))   = demoOps nVars sec
+    (gbpA@(GBPolyOps { pR, pShowPrec }), bpoA@(BPOtherOps { pParse }))  = demoOps nVars sec
     smA@(SubmoduleOps { .. })   = gbiSmOps gbpA
     
-    initGensL       = map (map pRead) initGenSsL
+    initGensL       = map (map (parseAllOrErr pParse)) initGenSsL
     gbIdeal         = fromGens smA gbTrace (initGensL !! 1)
     reducedGBGensSeq    = stdGens (IsDeep True) gbIdeal
     reducedGBGensL      = toList reducedGBGensSeq
@@ -53,6 +54,7 @@ bpDemo gbTrace      = do
     
     -- @@ choose a name, nVars, and gens, commenting out the other examples:
     -- 'a' is the most main variable
+    name            :: Text
     {- 
     name            = "logic3"
     nVars           = 10

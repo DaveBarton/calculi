@@ -111,8 +111,7 @@ data BPOtherOps ev vals     = BPOtherOps {
     (∧)             :: Op2 (BinPoly ev),    -- ^ \"and\", same as multiplication
     (∨)             :: Op2 (BinPoly ev),    -- ^ \"or\", @x ∨ y = x + y + xy = (x+1)(y+1) + 1@
     pAt             :: BinPoly ev -> vals -> Bool,
-    pShowPrec       :: ShowPrec (BinPoly ev),
-    pRead           :: String -> BinPoly ev
+    pParse          :: Parser (BinPoly ev)
 }
 
 bpSortCancel            :: Cmp ev -> SL.List ev -> BinPoly ev
@@ -124,14 +123,14 @@ bpSortCancel evCmp evs  = cancelRev (sortBy evCmp (SL.toListReversed evs)) SL.Ni
     cancelRev [v] r         = v :! r
     cancelRev [] r          = r
 
-bp58Ops                         :: Cmp EV58 -> IsGraded -> [String] -> UseSugar ->
+bp58Ops                         :: Cmp EV58 -> IsGraded -> [Text] -> UseSugar ->
                                     (GBPolyOps EV58 (BinPoly EV58), BPOtherOps EV58 Word64)
--- ^ In @bp58Ops evCmp isGraded descVarSs useSugar@, @descVarSs@ lists more main variables
--- first.
-bp58Ops evCmp isGraded descVarSs useSugar   = assert (nVars <= 58)
+-- ^ In @bp58Ops evCmp isGraded descVarTs useSugar@, @descVarTs@ lists more main variables
+-- first, and each variable name must be a legal identifier name.
+bp58Ops evCmp isGraded descVarTs useSugar   = assert (nVars <= 58)
     (GBPolyOps { monicizeU = id, .. }, BPOtherOps { .. })
   where
-    nVars               = length descVarSs
+    nVars               = length descVarTs
     
     evOne               = EV58 0
     evTimes             = evLCM nVars
@@ -147,9 +146,9 @@ bp58Ops evCmp isGraded descVarSs useSugar   = assert (nVars <= 58)
     isRev               = nVars > 1 && evCmp (fromBits58 1) (fromBits58 2) == GT
     varBitJsDesc        =   -- most main first
         (if isRev then id else reverse) [0 .. nVars - 1]
-    evShowPrec prec w   = productSPrec (const id) prec (catMaybes mVarSs)
+    evShowPrec w        = productPT (map (PrecText atomPrec) (catMaybes mVarTs))
       where
-        mVarSs      = zipWith (pureIf . testBit w.w64) varBitJsDesc descVarSs
+        mVarTs      = zipWith (pureIf . testBit w.w64) varBitJsDesc descVarTs
     
     bpPlus              = go SL.Nil
       where
@@ -190,7 +189,7 @@ bp58Ops evCmp isGraded descVarSs useSugar   = assert (nVars <= 58)
         mult1 _             = undefined
     homogDeg0           = if isGraded.b then SL.match 0 (\v _ -> evTotDeg v) else
         foldl' (\d v -> max d (evTotDeg v)) 0
-    pShow               = pShowPrec 0
+    pShowPrec           = sumPT . map evShowPrec . toList
     
     evMainBit (EV58 w)  | isRev     = fromBits58 (w .&. (- w))
     evMainBit (EV58 0)              = EV58 0
@@ -201,8 +200,7 @@ bp58Ops evCmp isGraded descVarSs useSugar   = assert (nVars <= 58)
     (∧)                 = pR.times
     x ∨ y               = bpNot (bpNot x ∧ bpNot y)
     pAt p bs            = foldl' (\b v -> b /= evAt v bs) False p
-    pShowPrec prec      = sumSPrec evShowPrec prec . toList
-    pRead               = readSToRead $ polynomReads pR (zip descVarSs descVarPs)
+    pParse              = zzGensRingParse pR (varParse descVarTs descVarPs)
 
 bpCountZeros        :: BPOtherOps EV58 Word64 -> [BinPoly EV58] -> Int
 -- ^ @1 <= nVars <= 58@; fastest if the first polynomials are short or have few zeros

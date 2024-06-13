@@ -15,6 +15,8 @@ import Math.Algebra.Commutative.Field.ZModPW
 import Control.Monad (when)
 import Data.Bits ((.|.))
 import Data.List (find)
+import qualified Data.Text as T
+import Fmt ((+|), (|+), (+||), (||+), fmtLn)
 import GHC.TypeNats (KnownNat)
 
 import System.Environment (setEnv)
@@ -24,9 +26,9 @@ import System.Environment (setEnv)
 data GBEx       = GBEx {
     name            :: String,
     p               :: Integer,     -- @p@ must be a prime that fits in a 'Word'
-    descVarSs       :: [String],    -- lists more main vars first,
-                                    -- and each @varS@ has precedence > '^'
-    genSs           :: [String]
+    descVarTs       :: [Text],      -- lists more main vars first,
+                                    -- and each @varT@ is a legal identifier name
+    genTs           :: [Text]
 }
 
 data GBExOpts   = GBExOpts {
@@ -38,33 +40,34 @@ data GBExOpts   = GBExOpts {
     showTimes       :: Bool
 }
 
-epGbpA          :: forall p. KnownNat p => StdEvCmp -> UseSugar -> [String] ->
+epGbpA          :: forall p. KnownNat p => StdEvCmp -> UseSugar -> [Text] ->
                     GBPolyOps ExponVec (EPoly (Mod p))
-epGbpA sec useSugar descVarSs   =
-    epGBPOps evCmp isGraded cField descVarSs (const (show . cBalRep)) useSugar
+epGbpA sec useSugar descVarTs   =
+    epGBPOps evCmp isGraded cField descVarPTs (integralPT . cBalRep) useSugar
   where
     (cField, cBalRep)   = zzModPW @p
-    nVars       = length descVarSs
+    nVars       = length descVarTs
     evCmp       = epEvCmpF nVars sec
     isGraded    = secIsGraded sec
+    descVarPTs  = map (PrecText atomPrec) descVarTs
 
 gbDemo0         :: GBPoly ev term ep => GBExOpts -> GBEx -> GBPolyOps ev ep -> IO ()
-gbDemo0 (GBExOpts { sec, gbTrace }) (GBEx { name, descVarSs, genSs }) gbpA  = do
-    putStrLn $ name ++ " " ++ show sec
+gbDemo0 (GBExOpts { sec, gbTrace }) (GBEx { name, descVarTs, genTs }) gbpA  = do
+    fmtLn $ ""+|name|+" "+||sec||+""
     let _gbi    = fromGens smA gbTrace gens
     putChar '\n'
   where
     descVarPs   = gbpA.descVarPs
     smA         = gbiSmOps gbpA
-    pRead       = readSToRead $ polynomReads gbpA.pR (zip descVarSs descVarPs)
-    gens        = map pRead genSs
+    pParse      = zzGensRingParse gbpA.pR (varParse descVarTs descVarPs)
+    gens        = map (parseAllOrErr pParse) genTs
 
 gbDemo1         :: GBExOpts -> GBEx -> IO ()
-gbDemo1 opts@(GBExOpts { useVMPoly, sec, noSugar }) ex@(GBEx { p, descVarSs })  =
+gbDemo1 opts@(GBExOpts { useVMPoly, sec, noSugar }) ex@(GBEx { p, descVarTs })  =
     case someNatVal (fromInteger p) of
- SomeNat (Proxy :: Proxy p)     -> case someNatVal (fromIntegral (length descVarSs) + 1) of
+ SomeNat (Proxy :: Proxy p)     -> case someNatVal (fromIntegral (length descVarTs) + 1) of
   SomeNat (Proxy :: Proxy n1)   ->
-    if not useVMPoly then  gbDemo0 opts ex (epGbpA @p sec useSugar descVarSs) else case sec of
+    if not useVMPoly then  gbDemo0 opts ex (epGbpA @p sec useSugar descVarTs) else case sec of
         _               -> error "VMPoly is unimplemented"
         {-
         LexCmp          -> gbDemo0 opts ex (vmpModPwGbpOps @p @n1 @('IsGraded False) useSugar)
@@ -104,7 +107,7 @@ showUsage       = mapM_ putStrLn [
     "   if none are listed then katsura8 cyclic7 jason210",
     "",
     "+RTS options set the number of cores used, heap nursery size, etc., and are described at",
-    "   https://downloads.haskell.org/ghc/latest/docs//users_guide/runtime_control.html;",
+    "   https://downloads.haskell.org/ghc/latest/docs/users_guide/runtime_control.html;",
     "   the initial time-gb RTS options are -N -A64m -s",
     ""
     ]
@@ -123,7 +126,7 @@ parseOpt s opts = case s of
     "--tq"          -> Right $ opts { gbTrace = opts.gbTrace .|. gbTQueues }
     "--ts"          -> Right $ opts { gbTrace = opts.gbTrace .|. gbTProgressDetails }
     "--tt"          -> Right $ opts { showTimes = True }
-    _               -> Left $ "Unknown option: " ++ s
+    _               -> Left $ "Unknown option: " <> s
 
 parseArgs       :: [String] -> Either String (GBExOpts, [GBEx])
 parseArgs args  = goOpts args opts0
@@ -140,12 +143,11 @@ parseArgs args  = goOpts args opts0
                         names
     parseEx         :: String -> Either String GBEx
     parseEx name    =
-        maybe (Left $ "Unknown example: " ++ name) Right (find (\ex -> ex.name == name) gbExs)
+        maybe (Left $ "Unknown example: " <> name) Right (find (\ex -> ex.name == name) gbExs)
 
 usageErr        :: String -> IO ()
 usageErr s      = do
-    putStrLn s
-    putStrLn ""
+    fmtLn $ ""+|s|+"\n"
     showUsage
 
 gbDemo          :: [String] -> IO ()
@@ -430,7 +432,7 @@ x^5t^2 - z^2t^5] (z^2t^5 ≡ y^2z^3t^2)
             "a^6"
         ],
 
-    GBEx "yang" 101 (map (: []) (['a' .. 'z'] ++ ['A' .. 'V']))
+    GBEx "yang" 101 (map T.singleton (['a' .. 'z'] ++ ['A' .. 'V']))
         [
             "dgjm-chjm-dfkm+bhkm+cflm-bglm-dgin+chin+dekn-ahkn-celn+agln+dfio-bhio-dejo+ahjo+belo-aflo-cfip+bgip+cejp-agjp-bekp+afkp",
             "dgjq-chjq-dfkq+bhkq+cflq-bglq-dgir+chir+dekr-ahkr-celr+aglr+dfis-bhis-dejs+ahjs+bels-afls-cfit+bgit+cejt-agjt-bekt+afkt",
@@ -470,7 +472,7 @@ x^5t^2 - z^2t^5] (z^2t^5 ≡ y^2z^3t^2)
             "JMPS-INPS-JLQS+HNQS+ILRS-HMRS-JMOT+INOT+JKQT-GNQT-IKRT+GMRT+JLOU-HNOU-JKPU+GNPU+HKRU-GLRU-ILOV+HMOV+IKPV-GMPV-HKQV+GLQV"
         ],
     
-    GBEx "mayr42" 101 (map (: []) (['a' .. 'z'] ++ ['A' .. 'Y']))
+    GBEx "mayr42" 101 (map T.singleton (['a' .. 'z'] ++ ['A' .. 'Y']))
         [
             "dW-jY", "cV-iY", "bU-hY", "aT-gY", "dR-iW", "cQ-hV", "bP-gU", "aO-fT", "dM-iW",
             "cL-hV", "bK-gU", "aJ-fT", "iH-iW", "dH-eY", "hG-hV", "cG-dY", "gF-gU", "bF-cY",

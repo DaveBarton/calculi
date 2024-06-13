@@ -10,7 +10,7 @@
 module Math.Algebra.Commutative.EPoly (
     ExponVec, evMake, exponsL, evPlus, evMinusMay, evDividesF, evLCMF, epEvCmpF,
     EPoly, RingTgtXs(..), EPolyUniv, EPolyOps(..),
-    headTotDeg, epOps, EvVarSs(..), evVarSs, evShowPrecF,
+    headTotDeg, epOps, EvVarPTs(..), evVarPTs, evShowPrecF,
     epGBPOps, epCountZeros
 ) where
 
@@ -49,7 +49,7 @@ data Expons     = Expons1 Word64
 
 instance Show Expons where  -- e.g. for testing & debugging
     show (Expons1 w)        = show0x w
-    show (Expons2 w v)      = show0x w ++ " " ++ show0x v
+    show (Expons2 w v)      = show0x w <> " " <> show0x v
     show (ExponsB m ws)     = unwords (map show0x (m : U.toList ws))
     show (ExponsN a)        = show a
 
@@ -325,34 +325,33 @@ epOps cR nVars evCmp    = EPolyOps { .. }
             foldr1 tR.times (cToT c : zipWithExact (rExpt tR) xTs (exponsL nVars ev))
 
 
-data EvVarSs    = EvVarSs { descVarSs :: [String], nVars :: Int, isRev :: Bool }
--- ^ @descVarSs@ lists more main variables first, and each @varS@ has precedence > '^'.
+data EvVarPTs   = EvVarPTs { descVarPTs :: [PrecText], nVars :: Int, isRev :: Bool }
+-- ^ @descVarPTs@ lists more main variables first.
 
-evVarSs                     :: [String] -> Cmp ExponVec -> EvVarSs
-evVarSs descVarSs evCmp     = EvVarSs { descVarSs, nVars, isRev }
+evVarPTs                    :: [PrecText] -> Cmp ExponVec -> EvVarPTs
+evVarPTs descVarPTs evCmp   = EvVarPTs { descVarPTs, nVars, isRev }
   where
-    nVars           = length descVarSs
+    nVars           = length descVarPTs
     isRev           = nVars > 0 && evCmp (evMake es) (evMake (reverse es)) == LT
       where
         ~es     = 1 : replicate (nVars - 1) 0
 
-evShowPrecF                 :: EvVarSs -> ShowPrec ExponVec
-evShowPrecF (EvVarSs { descVarSs, nVars, isRev }) prec ev   =
-    productSPrec powSP prec (zip descVarSs es)
+evShowPrecF                 :: EvVarPTs -> ShowPrec ExponVec
+evShowPrecF (EvVarPTs { descVarPTs, nVars, isRev }) ev  =
+    productPT (zipWith varPowShowPrec descVarPTs es)
   where
     es              = (if isRev then reverse else id) (exponsL nVars ev)
-    powSP prec1 (varS, e)   = varPowShowPrec varS prec1 e
 
-epGBPOps        :: forall c. Cmp ExponVec -> IsGraded -> Ring c -> [String] -> ShowPrec c ->
+epGBPOps        :: forall c. Cmp ExponVec -> IsGraded -> Ring c -> [PrecText] -> ShowPrec c ->
                     UseSugar -> GBPolyOps ExponVec (EPoly c)
-{- ^ In @ep58GBPOps evCmp isGraded cR descVarSs cShowPrec useSugar@, @descVarSs@ lists more main
-    variables first, and each @varS@ has precedence > '^'. -}
-epGBPOps evCmp isGraded cR descVarSs cShowPrec useSugar     = GBPolyOps { .. }
+{- ^ In @ep58GBPOps evCmp isGraded cR descVarPTs cShowPrec useSugar@, @descVarPTs@ lists more
+    main variables first. -}
+epGBPOps evCmp isGraded cR descVarPTs cShowPrec useSugar    = GBPolyOps { .. }
   where
-    evSs@(EvVarSs { nVars, isRev })     = evVarSs descVarSs evCmp
+    evVPTs@(EvVarPTs { nVars, isRev })  = evVarPTs descVarPTs evCmp
     nEvGroups           = nVars
     evGroup             = (if isRev then reverse else id) . exponsL nVars
-    evShowPrec          = evShowPrecF evSs
+    evShowPrec          = evShowPrecF evVPTs
     EPolyOps { epUniv } = epOps cR nVars evCmp
     UnivL pR (RingTgtXs _cToP xs) _pUnivF   = epUniv
     descVarPs           = if isRev then reverse xs else xs
@@ -364,7 +363,7 @@ epGBPOps evCmp isGraded cR descVarSs cShowPrec useSugar     = GBPolyOps { .. }
             (\ _ ev t -> ssShift (evPlus nVars (fromJust (evMinusMay nVars m ev))) t)
     homogDeg0           = if isGraded.b then sparseSum 0 (\_ ev _ -> evTotDeg ev) else
         foldl' (\acc (SSTerm _ !ev) -> max acc ev.totDeg) 0
-    pShow               = ssShowPrec evShowPrec cShowPrec 0
+    pShowPrec           = ssShowPrec evShowPrec cShowPrec
 
 epCountZeros        :: Ring c -> [c] -> EPolyOps c -> [EPoly c] -> Int
 -- ^ fastest if the first polynomials are short or have few zeros

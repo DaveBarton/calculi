@@ -26,6 +26,7 @@ import Data.Tuple.Extra (both)
 -- import qualified Data.Vector as PV
 -- import qualified Data.Vector.Unboxed as VU
 import Data.Word (Word64)
+import Fmt ((+|), (|+)
 import qualified StrictList2 as SL
 import System.Random (mkStdGen, uniformR, split)
 
@@ -65,7 +66,8 @@ benchesStrictList   =
   where
     numsSL n        = SL.fromList [0 .. n - 1 :: Int]
     numsLL n        = force [0 .. n - 1 :: Int]
-    showSize adj n  = adj ++ " " ++ show n
+    showSize        :: Text -> Int -> String
+    showSize adj n  = ""+|adj|+" "+|n|+""
     forceBenches    = map ($ 1000) [
         benchWhnf force               (showSize "force SL")        numsSL,
         benchWhnf force               (showSize "force LL")        numsLL]
@@ -94,15 +96,15 @@ intRing         = numRing rFlags (const intDiv)
 divDeep'        :: Ring r -> (r -> r -> S.Pair r r)
 divDeep' rR     = toStrict .* rR.bDiv (IsDeep True)
 
-adjNTermsS          :: String -> Int -> String
+adjNTermsS          :: Text -> Int -> String
 -- show an adjective and number of terms
-adjNTermsS adj nt   = show nt ++ " " ++ adj ++ " terms"
+adjNTermsS adj nt   = ""+|nt|+" "+|adj|+" terms"
 
 showNtSparse, showNtDense       :: Int -> String
 (showNtSparse, showNtDense)     = both adjNTermsS ("sparse", "dense")
 
 op2SF                   :: (c -> String) -> String -> (c -> String) -> c -> String
-op2SF xSF opS ySF c     = xSF c ++ opS ++ ySF c
+op2SF xSF opS ySF c     = xSF c <> opS <> ySF c
 
 benchesSV       :: [Benchmark]
 benchesSV       = plusBenches
@@ -111,7 +113,7 @@ benchesSV       = plusBenches
     makeSV g (m, n) = sumL' vAG $ take m    -- 11 should not divide n
         [iCToV (r `rem` n) (r `rem` 11 - 5) | r <- randomsBy (uniformR (0, 11 * n - 1)) g]
     (g0, g1)        = split (mkStdGen 37)
-    plusBenches     = bench2Whnf vAG.plus (("Add " ++) . show) (makeSV g0) (makeSV g1) <$>
+    plusBenches     = bench2Whnf vAG.plus (("Add " <>) . show) (makeSV g0) (makeSV g1) <$>
                         [(20, 1000), (300, 1000), (700, 1000),
                          (1000, 100_000), (10_000, 100_000), (30_000, 100_000),
                          (1000, 2 ^ (finiteBitSize (0 :: Int) - 5))]
@@ -144,7 +146,7 @@ benchesEPoly    = concatMap concat . transpose $ map ptdBs [3, 6, 9, 12]
         UnivL pR _ _    = (epOps intRing nVars evCmp).epUniv
         poly m d        = ssFoldSort intRing.ag evCmp
                             [SSTerm (fromIntegral (sum eL) + m) (evMake eL) | eL <- eLs d nVars]
-        showSize d      = show nVars ++ " vars, " ++ showNtDense (fromIntegral (d + 1) ^ nVars)
+        showSize d      = ""+|nVars|+" vars, "+|showNtDense (fromIntegral (d + 1) ^ nVars)|+""
         plusBenches     = bench2Whnf pR.plus  (op2SF showSize " + " showSize) (poly 2) (poly 3)
                             <$> [1 .. if nVars < 9 then 2 else 1]
         timesBenches    = bench2Whnf pR.times (op2SF showSize " * " showSize) (poly 2) (poly 3)
@@ -157,8 +159,8 @@ benchesBinPoly  :: [Benchmark]
 benchesBinPoly  = concat [plusBenches, timesBenches, divBenches]
   where
     evCmp           = evCmp58 LexCmp
-    descVarSs       = replicate 30 "x"
-    (GBPolyOps { pR }, _)   = bp58Ops evCmp (secIsGraded LexCmp) descVarSs (UseSugar False)
+    descVarTs       = replicate 30 "x"
+    (GBPolyOps { pR }, _)   = bp58Ops evCmp (secIsGraded LexCmp) descVarTs (UseSugar False)
     binom n k       = foldl' (\res (m, d) -> res * m `quot` d) 1 (zip [n, n - 1 ..] [1 .. k])
         -- assumes 0 <= k and the multiplications don't overflow
     okPops          :: Int -> Int -> Int -> [Word64]
@@ -180,7 +182,7 @@ benchesBinPoly  = concat [plusBenches, timesBenches, divBenches]
     poly minPop maxPop nVars    =
         SL.fromListReversed (fromBits58 <$> okPops minPop maxPop nVars)
     showSize minPop maxPop nVars    =
-        show nVars ++ " vars, " ++ showNtDense (sum (binom nVars <$> [minPop .. maxPop]))
+        ""+|nVars|+" vars, "+|showNtDense (sum (binom nVars <$> [minPop .. maxPop]))|+""
     plusBenches     = bench2Whnf pR.plus  (op2SF (showSize 4 4) " + " (showSize 0 4))
                         (poly 4 4) (poly 0 4) <$> [5, 10, 20, 30]
     timesBenches    = bench2Whnf pR.times (op2SF (showSize 4 4) " * " (showSize 0 4))
@@ -205,7 +207,7 @@ benchesVMPoly   = concatMap concat . transpose $ map ptdBs [3, 6, 9, 12]
             force $ VMPolyModPw $ toMultiPoly {- sorts and filters -} $ PV.fromList
                 [(fromExps $ VU.fromList eL, fromInteger $ fromIntegral (sum eL) + m)
                     | eL <- eLs d nVars]
-        showSize d      = show nVars ++ " vars, " ++ showNtDense (fromIntegral (d + 1) ^ nVars)
+        showSize d      = ""+|nVars|+" vars, "+|showNtDense (fromIntegral (d + 1) ^ nVars)|+""
         plusBenches     = bench2Whnf (force . pR.plus)  (op2SF showSize " + " showSize)
                             (poly 2) (poly 3) <$> [1 .. if nVars < 9 then 2 else 1]
         timesBenches    = bench2Whnf (force . pR.times) (op2SF showSize " * " showSize)

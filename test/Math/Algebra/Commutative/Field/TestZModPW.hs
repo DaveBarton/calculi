@@ -19,11 +19,11 @@ import GHC.TypeNats (KnownNat, natVal)
 
 zpwTestOps              :: forall p. KnownNat p => TestOps (Mod p)
 -- ^ caller shows @p@
-zpwTestOps              = TestOps (const tShow) tCheck gen (==)
+zpwTestOps              = TestOps tSP tCheck gen (==)
   where
     (zpField, balRep)   = zzModPW @p
-    tShow           = show . balRep
-    tCheck notes x  = tCheckBool (show x : notes) (unMod x < pW)
+    tSP             = integralPT . balRep
+    tCheck notes x  = tCheckBool (showT x : notes) (unMod x < pW)
     gen             = zpField.fromZ <$> Gen.integral (Range.constantFrom 0 (- lim) lim)
     p               = fromIntegral (natVal (Proxy :: Proxy p))
     pW              = fromIntegral p :: Word
@@ -31,19 +31,19 @@ zpwTestOps              = TestOps (const tShow) tCheck gen (==)
 
 
 test1                   :: SomeNat -> TestTree
-test1 (SomeNat pProxy@(Proxy :: Proxy p))   = testGroup ("ZModPW " ++ show p) testsL
+test1 (SomeNat pProxy@(Proxy :: Proxy p))   = testGroup ("ZModPW " <> show p) testsL
   where
     p               = fromIntegral $ natVal pProxy  :: Integer
     (zpField, balRep)   = zzModPW @p
-    zpT             = zpwTestOps @p
+    zpTA            = zpwTestOps @p
     fromZ           = zpField.fromZ
     lim             = p `quot` 2
-    testsL          = [fieldTests zpT zpField, p0Test, balRepIsRep, balRepIsSmall]
+    testsL          = [fieldTests zpTA zpField, p0Test, balRepIsRep, balRepIsSmall]
         -- fieldTests checks zzRing -> zpField is a homomorphism, 0 /= 1
     p0Test          = testOnce "p0" $ fromZ p === zpField.zero
-    balRepIsRep     = singleTest "balRepIsRep" $ sameFun1TR zpT zpT.tEq (fromZ . balRep) id
+    balRepIsRep     = singleTest "balRepIsRep" $ sameFun1TR zpTA zpTA.tEq (fromZ . balRep) id
     balRepIsSmall   = singleTest "balRepIsSmall" $ do
-        x       <- genVis zpT
+        x       <- genVis zpTA
         let n   = balRep x
         diff (abs n) (<=) lim
         -- if p == 2, could also specify & check (balRep zpField.one), i.e. 1 or -1

@@ -1,7 +1,7 @@
 {- |  This module tests the "Math.Algebra.Commutative.UPoly" module.  -}
 
 module Math.Algebra.Commutative.TestUPoly (
-    integralPowT, upTestOps, uPolyTests
+    integralPowTA, upTestOps, uPolyTests
 ) where
 
 import Math.Algebra.General.Algebra hiding (assert)
@@ -18,13 +18,12 @@ import qualified Hedgehog.Range as Range
 
 
 -- @@ move to TestSparseSum.hs !?:
-integralPowT        :: (Integral d, Show d) => String -> Range d -> TestOps d
--- ^ varS prec > '^'
-integralPowT varS dRange    =
-    TestOps (varPowShowPrec varS) (\_ _ -> pure ()) (Gen.integral dRange) (==)
+integralPowTA       :: (Integral d, Show d) => PrecText -> Range d -> TestOps d
+integralPowTA varPT dRange  =
+    TestOps (varPowShowPrec varPT) (\_ _ -> pure ()) (Gen.integral dRange) (==)
 
 upTestOps           :: Ring c -> Range Int -> TestOps c -> TestOps Integer -> TestOps (UPoly c)
--- ^ @upTestOps cR sumRange cT dT@
+-- ^ @upTestOps cR sumRange cTA dTA@
 upTestOps cR        = ssTestOps cR.ag compare
 
 uPolyTests              :: TestTree
@@ -34,19 +33,19 @@ uPolyTests              = testGroup "UPoly" testsL
     -- with it in C[X]:
     UnivL zxRing (RingTgtX zToZX xZX) zxUnivF   = upUniv zzRing
     zxToT           = zxUnivF zzRing (RingTgtX id 12345)
-    pT              =   -- polys of degree up to 10
+    pTA             =   -- polys of degree up to 10
         upTestOps zzRing (Range.linear 0 10) (zzTestOps { gen = zzExpGen 1_000_000 })
-            (integralPowT "X" (Range.linear 0 10))
+            (integralPowTA (PrecText atomPrec "X") (Range.linear 0 10))
     monom c d       = ssLead zzRing.isZero c d ssZero
     reqFlags        =
         RingFlags { commutative = True, noZeroDivisors = True, nzInverses = False }
     
-    testsL          = [ringTests pT (IsNontrivial True) reqFlags zxRing,
-                        ringHomomTests (Just "Ring Homomorphism from C") zzTestOps zzRing pT.tEq
-                            zxRing zToZX,
-                        testOnce "x" $ pT.tEq xZX (monom 1 1),
-                        ringHomomTests (Just "Ring Homomorphism to C") pT zxRing (===) zzRing
+    testsL          = [ringTests pTA (IsNontrivial True) reqFlags zxRing,
+                        ringHomomTests (Just "Ring Homomorphism from C") zzTestOps zzRing
+                            pTA.tEq zxRing zToZX,
+                        testOnce "x" $ pTA.tEq xZX (monom 1 1),
+                        ringHomomTests (Just "Ring Homomorphism to C") pTA zxRing (===) zzRing
                             zxToT,
                         singleTest "C -> T" $ sameFun1TR zzTestOps (===) (zxToT . zToZX) id,
                         testOnce "x ->" $ zxToT xZX === 12345,
-                        readsTest pT (polynomReads zxRing [("X", xZX)])]
+                        parseTest pTA (zzGensRingParse zxRing (varParse ["X"] [xZX]))]

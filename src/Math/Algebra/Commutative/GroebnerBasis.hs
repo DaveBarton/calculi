@@ -22,16 +22,17 @@ import Control.Monad.Extra (ifM, orM, whenM)
 import Data.Bits ((.&.), (.|.))
 import Data.Foldable (find, minimumBy, toList)
 import Data.Int (Int64)
-import Data.List (elemIndex, findIndices, groupBy, intercalate, sortBy)
+import Data.List (elemIndex, findIndices, groupBy, sortBy)
 import Data.List.Extra (chunksOf)
-import Data.Maybe (catMaybes, fromJust, isJust, listToMaybe, mapMaybe)
+import Data.Maybe (catMaybes, fromJust, isJust, isNothing, listToMaybe, mapMaybe)
 import qualified Data.RRBVector as GBV
 import qualified Data.Sequence as Seq
 import qualified Data.Set as Set
 import Data.Set (Set)
+import qualified Data.Text.IO as T
 import Data.Tuple.Extra (fst3)
 import qualified Data.Vector as V
-import Numeric (showFFloat)
+import Fmt ((+|), (|+), (|++|), build, commaizeF, fixedF, fmt, fmtLn, whenF)
 import StrictList2 (pattern (:!))
 import qualified StrictList2 as SL
 
@@ -50,8 +51,7 @@ import qualified Debug.TimeStats as TS
 import Debug.Trace.String (traceEvent, traceEventIO)
 import GHC.Stats (RTSStats, getRTSStats, getRTSStatsEnabled, mutator_cpu_ns, mutator_elapsed_ns)
 import System.CPUTime (getCPUTime)
-import System.IO (hPutStr, stderr)
-import System.IO (hFlush, stdout)
+import System.IO (hFlush, stderr, stdout)
 -- import System.Process (callCommand)
 
 
@@ -67,12 +67,6 @@ data SubmoduleOps r m sm    = SubmoduleOps {
 fromGens        :: SubmoduleOps r m sm -> Int -> [m] -> sm
 -- ^ @fromGens smA gbTrace gens@
 fromGens smA gbTrace    = smA.plusGens gbTrace smA.zeroMd
-
-
-showBigN        :: Int -> String
-showBigN n      = if n < 0 then '-' : go (- n) else go n
-  where
-    go m    = intercalate "," $ reverse $ map reverse $ chunksOf 3 $ reverse (show m)
 
 
 inc             :: IORef Int -> Int -> IO ()
@@ -125,23 +119,23 @@ elapsedNs (MkSystemTime s0 ns0)     = do
 getMaybeRTSStats    :: IO (Maybe RTSStats)
 getMaybeRTSStats    = ifM getRTSStatsEnabled (Just <$> getRTSStats) (pure Nothing)
 
-cpuElapsedStr       :: Integer -> SystemTime -> Maybe RTSStats -> IO String
-cpuElapsedStr cpuTime0 sysTime0 mStats0     = do
+cpuElapsedText      :: Integer -> SystemTime -> Maybe RTSStats -> IO Text
+cpuElapsedText cpuTime0 sysTime0 mStats0    = do
     t       <- getCPUTime
     t1      <- elapsedNs sysTime0
     mutS    <- maybe (pure "") getMutS mStats0
-    pure (showNs2 (quot (t - cpuTime0) 1000) t1 ++ mutS)
+    pure (showNs2 (quot (t - cpuTime0) 1000) t1 <> mutS)
   where
-    showSecs t          = showFFloat (Just 3) (t :: Double) "s"
+    showSecsB t         = fixedF 3 (t :: Double) <> "s"
     fromNs n            = 1e-9 * fromIntegral n :: Double
-    showNs n            = showSecs (fromNs n)
-    showNs2 cpu elapsed = showNs cpu ++ "/" ++ showNs elapsed ++ "=" ++
-                            showFFloat (Just 1) (fromNs cpu / fromNs elapsed) ""
+    showNsB n           = showSecsB (fromNs n)
+    showNs2 cpu elapsed = ""+|showNsB cpu|+"/"+|showNsB elapsed|+"="
+                            +|fixedF 1 (fromNs cpu / fromNs elapsed)|+"" :: Text
     getMutS stats0      = do
         stats       <- getRTSStats
         let cpu     = mutator_cpu_ns stats - mutator_cpu_ns stats0
             elapsed = mutator_elapsed_ns stats - mutator_elapsed_ns stats0
-        pure $ ", MUT " ++ showNs2 cpu elapsed
+        pure $ ", MUT "+|showNs2 cpu elapsed|+""
 
 
 newtype UseSugar    = UseSugar { b :: Bool }    deriving Show
@@ -197,7 +191,7 @@ data GBPolyOps ev p     = GBPolyOps {
     extraSPairs :: ev -> Int -> Word -> [SPair ev],     -- ^ @extraSPairs ev j h@
     sPoly       :: p -> p -> SPair ev -> p, -- ^ @sPoly f g sp@ assumes @f@ and @g@ are monic
     homogDeg0   :: p -> Word,       -- ^ max totDeg, or 0 for the 0 polynomial
-    pShow       :: p -> String,     -- ^ e.g. for debugging or logging
+    pShowPrec   :: p -> PrecText,   -- ^ e.g. for debugging or logging
     useSugar    :: UseSugar         -- ^ use "sugar" (homogeneous degree) heuristic
 }
 
@@ -576,9 +570,8 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
         rgsInsert gh@(EPolyHDeg g gHDeg) i rgs@((g1, j) : t)
             | evCmp (leadEvNz g) (leadEvNz g1) == GT    = pure ((g, i) : rgs)
             | evDivides nVars (leadEvNz g) (leadEvNz g1)    = do
-                when (gbTrace .&. gbTProgressInfo /= 0) $
-                    putStrLn $ " remove g" ++ show j ++ " (" ++ pShowEV g1 ++ ") by g" ++ show i
-                        ++ " (" ++ pShowEV g ++ ")"
+                when (gbTrace .&. gbTProgressInfo /= 0) $ fmtLn $
+                    " remove g"+|j|+" ("+|pShowEVT g1|+") by g"+|i|+" ("+|pShowEVT g|+")"
                 ghs     <- readTVarIO genHsRef
                 let hh  = ghs GBV.! j
                 checkGkgs
@@ -603,7 +596,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
                         assert (not (pIsZero r')) (pure ((r', j) : t'))
     wakeAllThreads  <- newTVarIO 0          :: IO (TVar Int)
     gDShownRef      <- newIORef 0           :: IO (IORef Word)
-    let putS        = if gbTrace .&. gbTProgressChars /= 0 then hPutStr stderr else putStr
+    let putT        = if gbTrace .&. gbTProgressChars /= 0 then T.hPutStr stderr else T.putStr
     let addGenHN (WithNGens gh kN)  = {-# SCC addGenHN #-}
             unless (pIsZero gh.p) $ do
                 traceEventIO "  addGenHN start"
@@ -620,13 +613,13 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
                         traceEventIO "  atomic modified gkgsRef"
                         checkGkgs
                     when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ do
-                        putS "d"
+                        putT "d"
                         let d       = evTotDeg (leadEvNz gh.p)
                         gDShown     <- readIORef gDShownRef
                         when (d /= gDShown) $ do
-                            putS $ show d ++ " "
+                            putT $ ""+|d|+" "
                             writeIORef gDShownRef d
-                    traceEventIO ("  addGenHN end " ++ show kN)
+                    traceEventIO ("  addGenHN end " <> show kN)
     gMGisRef        <- newTVarIO (fmap (Just . giNew) gbi0.gbGhs)
                                         :: IO (TVar (GBV.Vector (Maybe (GBGenInfo ev))))
     ijcsRef         <- newTVarIO Set.empty  :: IO (TVar (SortedSPairs ev))
@@ -646,7 +639,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
                 case mx of
                     Nothing                     -> pure False
                     Just (!gMGis0, !t, !gh, !tGi)       -> TS.measureM "1 newIJCs" $ do
-                        traceEventIO ("  newIJCs start " ++ show t)
+                        traceEventIO ("  newIJCs start " <> show t)
                         let (skipIs, skipIJCs, addITCs)    =
                                 TS.measurePure "1.1 updatePairs" $
                                     updatePairs gbpA (toList gMGis0) ijcs0 tGi
@@ -655,7 +648,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
                             toIJ (SPair i j _ _ _)  = (i, j)
                             toIJs ijms              = map toIJ (toList ijms)
                         traceEvent ("  updatePairs result: "
-                            ++ show (t, skipIs, toIJs skipIJCs, toIJs addITCs)) $ pure ()
+                            <> show (t, skipIs, toIJs skipIJCs, toIJs addITCs)) $ pure ()
                         -}
                         unless (null skipIs) $ TS.measureM "1.2 skipIs" $  -- 'unless' for speed
                             atomically $ modifyTVar' gMGisRef (\ms -> foldl' skipIF ms skipIs)
@@ -674,13 +667,11 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
                         when (gbTrace .&. gbTQueues /= 0) $ do
                             let n       = Set.size ijcs
                                 n'      = Set.size ijcs'
-                            when (n' < n || n' > n + 10) $
-                                putStr $ 'p' : show n ++ "-" ++ show n' ++ " "
-                            when ((t + 1) `rem` 50 == 0) $
-                                putStr $ 'p' : show (t + 1) ++ ":" ++ show n' ++ " "
+                            when (n' < n || n' > n + 10) $ fmt $ "p"+|n|+"-"+|n'|+" "
+                            when ((t + 1) `rem` 50 == 0) $ fmt $ "p"+|t + 1|+":"+|n'|+" "
                         when (gbTrace .&. gbTProgressInfo /= 0) $
-                            putStrLn $ " g" ++ show t ++ ": " ++ pShowEV gh.p
-                        traceEvent ("  newIJCs done " ++ show t) $ pure True
+                            fmtLn $ " g"+|t|+": "+|pShowEVT gh.p|+""
+                        traceEvent ("  newIJCs done " <> show t) $ pure True
         rgs0        = reverse (zipWith (\gh i -> (gh.p, i)) (toList gbi0.gbGhs) [0 ..])
     rgsRef          <- newIORef rgs0                            :: IO (IORef [(p, Int)])
     rgsMNGensRef    <- newIORef (Just (length gbi0.gbGens))     :: IO (IORef (Maybe Int))
@@ -703,18 +694,17 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
                                 rNTrace     <- readIORef rNTraceRef
                                 when (rNTrace > 0) $ do
                                     putChar 'r'
-                                    when (rNTrace > 1) $ putStr $ show rNTrace ++ " "
+                                    when (rNTrace > 1) $ fmt $ ""+|rNTrace|+" "
                                     writeIORef rNTraceRef 0
-                                when ((k + 1) `rem` 50 == 0) $
-                                    putStr $ "rg" ++ show (k + 1) ++ " "
+                                when ((k + 1) `rem` 50 == 0) $ fmt $ "rg"+|k + 1|+" "
                         pure res
                     else pure False
                 Nothing     -> pure False
         newG sp@(SPair i j h c _)   = {-# SCC newG #-} TS.measureM "newG" $ do
-            let ~s  = " start spair(g" ++ show i ++ ",g" ++ show j ++ "): sugar degree " ++
-                        show h ++ ", lcm of heads " ++ evShow c
-            when (gbTrace .&. gbTProgressDetails /= 0) $ putStrLn s
-            traceEventIO ("  newG" ++ show (i, j))
+            let ~s  = " start spair(g"+|i|+",g"+|j|+"): sugar degree "+|h|+
+                        ", lcm of heads "+|evShow c|+""
+            when (gbTrace .&. gbTProgressDetails /= 0) $ fmtLn s
+            traceEventIO ("  newG" <> show (i, j))
             when (gbTrace .&. gbTSummary /= 0) $ fetchAddInt_ nSPairsRedRef 1
             ghs     <- readTVarIO genHsRef
             let f   = if i < 0 then pZero else (ghs GBV.! i).p
@@ -729,8 +719,8 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
             cpuTime2        <- getCPUTime
             cpuTime1        <- readIORef cpuTime1Ref
             when (cpuTime2 - cpuTime1 > 1_000_000_000_000) $ do
-                s               <- cpuElapsedStr cpuTime0 sysTime0 mRTSStats0
-                putStr $ ' ' : s ++ ": "
+                t               <- cpuElapsedText cpuTime0 sysTime0 mRTSStats0
+                fmt $ " "+|t|+": "
                 writeIORef cpuTime1Ref cpuTime2
                 numSleeping <- readTVarIO numSleepingVar
                 ghs         <- readTVarIO genHsRef
@@ -739,54 +729,54 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
                 rgs         <- readIORef rgsRef
                 gMGis       <- readTVarIO gMGisRef
                 ijcs        <- readTVarIO ijcsRef
-                putStrLn $
-                    show (length ghs) ++ " gens, " ++
-                    show kN ++ " gkg'd, " ++
-                    maybe "busy" show rgsMNGHs ++ " rg'd, " ++
-                    show (length rgs) ++ " rgs, " ++    -- omit?
-                    show (length gMGis) ++ " paired, " ++
-                    show (Set.size ijcs) ++ " pairs" ++
-                    if numSleeping > 0 then ", " ++ show numSleeping ++ " sleeping" else ""
+                fmtLn $ ""
+                    +|length ghs|+" gens, "
+                    +|kN|+" gkg'd, "
+                    +|maybe "busy" showT rgsMNGHs|+" rg'd, "
+                    +|length rgs|+" rgs, "  -- omit?
+                    +|length gMGis|+" paired, "
+                    +|Set.size ijcs|+" pairs"
+                    +|whenF (numSleeping > 0) (", "+|numSleeping|+" sleeping")|+""
             pure False
         checkQueues _nCores t   = orM (tasks ++ [logSleep])
           where
             logSleep    = do
-                traceEventIO ("  sleep " ++ show t)
+                traceEventIO ("  sleep " <> show t)
                 when (gbTrace .&. gbTQueues /= 0) $ putChar 's'
                 pure False
             tasks       = [traceTime | t == 0 && gbTrace /= 0] ++ [checkRgs1 | t == 1]
                             ++ [newIJCs] ++ [checkRgs1 | t == 0] ++ [doSP]
     parNonBlocking wakeAllThreads numSleepingVar checkQueues
-    when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ putS "\n"
+    when (gbTrace .&. (gbTQueues .|. gbTProgressChars) /= 0) $ putT "\n"
     when (gbTrace .&. gbTSummary /= 0) $ do
-        t           <- cpuElapsedStr cpuTime0 sysTime0 mRTSStats0
-        putStrLn $ "Groebner Basis CPU/Elapsed Times: " ++ t
+        t           <- cpuElapsedText cpuTime0 sysTime0 mRTSStats0
+        fmtLn $ "Groebner Basis CPU/Elapsed Times: "+|t|+""
         nSPairsRed  <- atomicReadInt nSPairsRedRef
-        putStrLn $ "# SPairs reduced = " ++ showBigN nSPairsRed
+        fmtLn $ "# SPairs reduced = "+|commaizeF nSPairsRed|+""
         nRedSteps   <- atomicReadInt nRedStepsRef
-        putStrLn $ "# reduction steps (quotient terms) = " ++ showBigN nRedSteps
+        fmtLn $ "# reduction steps (quotient terms) = "+|commaizeF nRedSteps|+""
             -- Macaulay just counts top-reduced
         ghs         <- readTVarIO genHsRef
         let ndhs    = [(numTerms g, evTotDeg (leadEvNz g), h) | EPolyHDeg g h <- toList ghs]
-        putStrLn $ "generated (redundant) basis has " ++ showBigN (length ghs) ++
-            " elements with " ++ showBigN (sum (map fst3 ndhs)) ++ " monomials"
+        fmtLn $ "generated (redundant) basis has "+|commaizeF (length ghs)|+" elements with "
+            +|commaizeF (sum (map fst3 ndhs))|+" monomials"
         when (gbTrace .&. gbTProgressDetails /= 0) $ do
-            putStrLn "(whether used & head degree + sugar, # monomials):"
+            fmtLn "(whether used & head degree + sugar, # monomials):"
             let show4 (n, d, h) m   =
                     let dh  = h - d
-                    in  maybe "x" (const "") m ++ show d ++
-                            (if dh > 0 then '+' : show dh else "") ++ "," ++ show n
+                    in  ""+|whenF (isNothing m) "x"|++|d|++|whenF (dh > 0) ("+"+|dh|+"")|+","
+                            +|n|+""
             gMGisL      <- toList <$> readTVarIO gMGisRef
             mapM_ (putStrLn . unwords) (chunksOf 10 (zipWith show4 ndhs gMGisL))
     rgs1        <- readIORef rgsRef
     ghs1        <- readTVarIO genHsRef
     let gbGhs   = GBV.fromList (map ((ghs1 GBV.!) . snd) (reverse rgs1))
         gbGens  = fmap (.p) gbGhs
-        ~s      = show (length gbGens) ++ " generators"
+        ~s      = ""+|length gbGens|+" generators"
     if gbTrace .&. gbTResults /= 0 then do
-        putStrLn (s ++ ":")
-        mapM_ (putStrLn . pShow) gbGens
-    else when (gbTrace .&. gbTSummary /= 0) $ putStrLn s
+        fmtLn $ ""+|s|+":"
+        mapM_ (fmtLn . build . pShowPrec) gbGens
+    else when (gbTrace .&. gbTSummary /= 0) $ fmtLn s
     WithNGens gkgs _kN  <- readTVarIO gkgsRef
     let fullReduce2Nz p     = fst (gkgsReduce gkgs (IsDeep True) (SL.singleton cd) t)
           where
@@ -799,11 +789,11 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
     when (gbTrace /= 0) $ hFlush stdout     -- e.g. for TS.scope
     pure $ GroebnerIdeal { gkgs, gbGhs, gbGens, redGbGens }
   where
-    evShow          = evShowPrec 0
-    pShowEV p
+    evShow          = (.t) . evShowPrec
+    pShowEVT p
         | pIsZero p         = "0"
-        | numTerms p < 10   = pShow (monicizeU p)
-        | otherwise         = evShow (leadEvNz p) ++ "+... (" ++ show (numTerms p) ++ " terms)"
+        | numTerms p < 10   = (pShowPrec (monicizeU p)).t
+        | otherwise         = ""+|evShow (leadEvNz p)|+"+... ("+|numTerms p|+" terms)"
     -- hEvCmp         = spCmp evCmp useSugar      :: Cmp (SPair ev)
 
 

@@ -300,7 +300,7 @@ index cZero vRoot iRoot     = S.fromMaybe cZero (indexMaybe vRoot iRoot)
 indexMaybe      :: Vector c -> Int -> S.Maybe c
 -- ^ Like 'index'. \(d\) steps.
 indexMaybe vRoot iRoot
-    | iRoot < 0     = error ("SV.indexMaybe: negative index " ++ show iRoot)
+    | iRoot < 0     = error ("SV.indexMaybe: negative index " <> show iRoot)
     | otherwise     = go vRoot iRoot
   where
     go (SVE bs nzs) i       = if i > 63 || j == -1 then S.Nothing else S.Just (C.index nzs j)
@@ -569,6 +569,6 @@ monicizeU cR@(Ring { times }) i v   =
 -- * I/O
 
 showPrec        :: ShowPrec Int -> ShowPrec c -> ShowPrec (Vector c)
-showPrec iSP cSP prec v     = sumSPrec termSP prec (toDistinctAscNzs v)
+showPrec iSP cSP    = sumPT . map termSP . toDistinctAscNzs
   where
-    termSP prec1 (i :!: c)      = timesSPrec cSP iSP prec1 c i
+    termSP (i :!: c)    = timesPT (cSP c) (iSP i)
