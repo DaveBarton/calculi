@@ -337,8 +337,9 @@ evVarPTs descVarPTs evCmp   = EvVarPTs { descVarPTs, nVars, isRev }
         ~es     = 1 : replicate (nVars - 1) 0
 
 evShowPrecF                 :: EvVarPTs -> ShowPrec ExponVec
+-- ^ Format an exponent vector.
 evShowPrecF (EvVarPTs { descVarPTs, nVars, isRev }) ev  =
-    productPT (zipWith varPowShowPrec descVarPTs es)
+    productPT (zipWith integralPowPT descVarPTs es)
   where
     es              = (if isRev then reverse else id) (exponsL nVars ev)
 

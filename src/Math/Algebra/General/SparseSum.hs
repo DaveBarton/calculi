@@ -14,7 +14,7 @@ module Math.Algebra.General.SparseSum (
     ssAGUniv, ssFoldSort, ssDotWith,
     ssNzdCTimes, ssCTimes, ssMonicizeU, ssTimesNzdC, ssTimesC, ssTimesNzdMonom, ssTimesMonom,
         ssTimesNzds, ssTimes,
-    ssTermShowPrec, ssShowPrec, varPowShowPrec
+    ssTermShowPrec, ssShowPrec
 ) where
 
 import Math.Algebra.General.Algebra
@@ -229,14 +229,8 @@ ssTimes (UnivL ssAG _ univF) cR dOp2 s  = univF ssAG (TgtArrsF (sToTimesDC s))
     sToTimesDC      = ssTimesMonom cR dOp2
 
 
-ssTermShowPrec      :: ShowPrec d -> ShowPrec c -> ShowPrec (SSTerm c d)
+ssTermShowPrec  :: ShowPrec d -> ShowPrec c -> ShowPrec (SSTerm c d)
 ssTermShowPrec dSP cSP cd   = timesPT (cSP cd.c) (dSP cd.d)
 
-ssShowPrec          :: ShowPrec d -> ShowPrec c -> ShowPrec (SparseSum c d)
+ssShowPrec      :: ShowPrec d -> ShowPrec c -> ShowPrec (SparseSum c d)
 ssShowPrec dSP cSP  = sumPT . map (ssTermShowPrec dSP cSP) . toList
-
-varPowShowPrec      :: (Integral d, Show d) => PrecText -> ShowPrec d
-varPowShowPrec varPT d  = case d of
-    0   -> PrecText atomPrec "1"
-    1   -> varPT
-    _   -> exptPT varPT (integralPT d)

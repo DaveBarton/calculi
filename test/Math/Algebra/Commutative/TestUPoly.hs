@@ -20,7 +20,7 @@ import qualified Hedgehog.Range as Range
 -- @@ move to TestSparseSum.hs !?:
 integralPowTA       :: (Integral d, Show d) => PrecText -> Range d -> TestOps d
 integralPowTA varPT dRange  =
-    TestOps (varPowShowPrec varPT) (\_ _ -> pure ()) (Gen.integral dRange) (==)
+    TestOps (integralPowPT varPT) (\_ _ -> pure ()) (Gen.integral dRange) (==)
 
 upTestOps           :: Ring c -> Range Int -> TestOps c -> TestOps Integer -> TestOps (UPoly c)
 -- ^ @upTestOps cR sumRange cTA dTA@

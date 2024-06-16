@@ -89,4 +89,5 @@ upUniv cR       = UnivL cxRing (RingTgtX cToCx x) cxUnivF
 
 
 upShowPrec      :: PrecText -> ShowPrec c -> ShowPrec (UPoly c)
-upShowPrec      = ssShowPrec . varPowShowPrec
+-- ^ Format a polynomial, given its variable name and coef formatter.
+upShowPrec      = ssShowPrec . integralPowPT

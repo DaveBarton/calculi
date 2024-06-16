@@ -22,7 +22,6 @@ import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
 import Data.List (unfoldr)
-import qualified Data.Text as T
 
 
 evTestOps               :: Cmp ExponVec -> [PrecText] -> Range Word -> TestOps ExponVec
@@ -38,12 +37,11 @@ evTestOps evCmp descVarPTs eRange   = TestOps (evShowPrecF evVPTs) evTCheck evGe
 
 epTestOps               :: Ring c -> Cmp ExponVec -> Range Int -> TestOps c ->
                             TestOps ExponVec -> TestOps (EPoly c)
--- ^ @epTestOps cR evCmp sumRange cTA evTA@
+-- ^ @epTestOps cR evCmp sumRange cTA evTA@.
 -- The caller tests @cR@ and @evCmp@, including that @evCmp@ gives a total order.
 epTestOps cR            = ssTestOps cR.ag
 
 test1                   :: Int -> TestTree
--- 1 <= nVars <= 26
 test1 nVars             = testGroup ("EPoly " <> show nVars) testsL
   where
     -- should change to a noncommutative coef ring C with zero divisors, and check indets
@@ -58,7 +56,7 @@ test1 nVars             = testGroup ("EPoly " <> show nVars) testsL
     nextT b         = cR.plus (cR.times (nToT 1234) b) (nToT 567)
     ts              = take nVars (unfoldr (\b -> Just (b, nextT b)) (nToT 12345))
     epToT           = epUnivF cR (RingTgtXs id ts)
-    descVarTs       = map T.singleton (take nVars ['a' .. 'z'])
+    descVarTs       = take nVars alphaNumVarNames
     descVarPTs      = map (PrecText atomPrec) descVarTs
     useSugar        = UseSugar True     -- @@@
     gbpA@(GBPolyOps { descVarPs, pShowPrec })   =

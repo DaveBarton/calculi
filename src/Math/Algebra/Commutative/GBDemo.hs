@@ -15,7 +15,6 @@ import Math.Algebra.Commutative.Field.ZModPW
 import Control.Monad (when)
 import Data.Bits ((.|.))
 import Data.List (find)
-import qualified Data.Text as T
 import Fmt ((+|), (|+), (+||), (||+), fmtLn)
 import GHC.TypeNats (KnownNat)
 
@@ -432,7 +431,7 @@ x^5t^2 - z^2t^5] (z^2t^5 ≡ y^2z^3t^2)
             "a^6"
         ],
 
-    GBEx "yang" 101 (map T.singleton (['a' .. 'z'] ++ ['A' .. 'V']))
+    GBEx "yang" 101 (take 48 alphaNumVarNames)
         [
             "dgjm-chjm-dfkm+bhkm+cflm-bglm-dgin+chin+dekn-ahkn-celn+agln+dfio-bhio-dejo+ahjo+belo-aflo-cfip+bgip+cejp-agjp-bekp+afkp",
             "dgjq-chjq-dfkq+bhkq+cflq-bglq-dgir+chir+dekr-ahkr-celr+aglr+dfis-bhis-dejs+ahjs+bels-afls-cfit+bgit+cejt-agjt-bekt+afkt",
@@ -472,7 +471,7 @@ x^5t^2 - z^2t^5] (z^2t^5 ≡ y^2z^3t^2)
             "JMPS-INPS-JLQS+HNQS+ILRS-HMRS-JMOT+INOT+JKQT-GNQT-IKRT+GMRT+JLOU-HNOU-JKPU+GNPU+HKRU-GLRU-ILOV+HMOV+IKPV-GMPV-HKQV+GLQV"
         ],
     
-    GBEx "mayr42" 101 (map T.singleton (['a' .. 'z'] ++ ['A' .. 'Y']))
+    GBEx "mayr42" 101 (take 51 alphaNumVarNames)
         [
             "dW-jY", "cV-iY", "bU-hY", "aT-gY", "dR-iW", "cQ-hV", "bP-gU", "aO-fT", "dM-iW",
             "cL-hV", "bK-gU", "aJ-fT", "iH-iW", "dH-eY", "hG-hV", "cG-dY", "gF-gU", "bF-cY",

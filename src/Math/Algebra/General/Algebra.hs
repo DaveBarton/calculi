@@ -105,11 +105,15 @@ module Math.Algebra.General.Algebra (
     Prec, parensPrec, atomPrec, exptPrec, multPrec, addPrec, commaPrec,
     PrecText(PrecText, prec, t), parensIf, ensurePrec, infixLPT, infixRPT, infixAssocPT,
         infixPT, infixListPT, fencePT, plusPT, sumPT, timesPT, productPT, exptPT,
-    ShowPrec, integralPT, zzShowPrec, hex0xPT, sPairShowPrec, listShowPrec, gensShowPrec,
+    ShowPrec, integralPT, zzShowPrec, hex0xPT, integralPowPT, sPairShowPrec, listShowPrec,
+        gensShowPrec,
     
     -- * Parsing
     Parser, spaceConsumer, parse, parseAllOrErr,
-    pInfixL, pParens, zzParse, agParse, rngParse, varNameParse, varParse, zzGensRingParse,
+    pInfixL, pParens, zzParse, agParse, rngParse, zzGensRingParse,
+    
+    -- * Variable names
+    numVarPT, alphaNumVarNames, varNameParse, varParse,
     
     -- * Re-exports
 #if ! MIN_VERSION_base(4, 20, 0)
@@ -658,7 +662,6 @@ showT           :: Show a => a -> Text
 -- ^ Convert a value to 'Text' using a 'Show' instance.
 showT           = T.pack . show
 
-
 -- ** With Precedence
 
 parensPrec      :: Prec
@@ -785,6 +788,13 @@ hex0xPT         :: (Integral a, Show a) => ShowPrec a
 -- ^ show in hexadecimal with a "0x" prefix; the argument must be nonnegative
 hex0xPT n       = assert (n >= 0) $ PrecText atomPrec (T.pack (show0x n))
 
+integralPowPT   :: (Integral d, Show d) => PrecText -> ShowPrec d
+-- ^ Power of a given base, checking the exponent for 0 or 1.
+integralPowPT bPT d     = case d of
+    0   -> PrecText atomPrec "1"
+    1   -> bPT
+    _   -> exptPT bPT (integralPT d)
+
 sPairShowPrec   :: ShowPrec a -> ShowPrec b -> ShowPrec (a :!: b)
 -- ^ show a strict pair with precedence
 sPairShowPrec aSP bSP (a :!: b)     = PrecText parensPrec (T.concat ["(", aT, ", ", bT, ")"])
@@ -869,6 +879,27 @@ rngParse rR@(Ring { .. }) pAtom     = pR
          <|> (pSymbol "*" <|> notFollowedBy digitChar *> pure "") *> pure times
     pR      = agParse ag (pInfixL pPower pOp pPower)
 
+zzGensRingParse     :: Ring r -> Parser r -> Parser r
+{- ^ Parse a ring element, given a parser for \"generators\". Each generator name should not
+    start with white space or a ring operator. -}
+zzGensRingParse rR pGen     = rngParse rR pAtom
+  where
+    pAtom       = pGen <|> rR.fromZ <$> pLexeme L.decimal
+                    <?> "expression"
+
+
+-- * Variable names
+
+numVarPT        :: Text -> Int -> PrecText
+{- ^ Create a variable name from a prefix, usually a single unicode letter, followed by a
+    number, which is usually nonnegative. -}
+numVarPT prefix n   = PrecText atomPrec (prefix <> showT n)
+
+alphaNumVarNames    :: [Text]
+-- ^ An infinite list of variable names: @a-z, A-Z, xN@ for @N > 0@.
+alphaNumVarNames    = (T.singleton <$> ['a' .. 'z'] ++ ['A' .. 'Z'])
+                        ++ (T.cons 'x' . showT <$> [1 :: Int ..])
+
 varNameParse    :: Parser Text
 -- ^ Parse a mathematical variable name: a unicode letter, optionally followed by digits.
 varNameParse    = T.pack <$> (liftA2 (:) letterChar (many digitChar))
@@ -878,11 +909,3 @@ varParse        :: [Text] -> [a] -> Parser a
 varParse names vals     = do
     name        <- varNameParse
     pure $ maybe (error ("Name not found: "+|name|+"")) id (lookup name (zip names vals))
-
-zzGensRingParse     :: Ring r -> Parser r -> Parser r
-{- ^ Parse a ring element, given a parser for \"generators\". Each generator name should not
-    start with white space or a ring operator. -}
-zzGensRingParse rR pGen     = rngParse rR pAtom
-  where
-    pAtom       = pGen <|> rR.fromZ <$> pLexeme L.decimal
-                    <?> "expression"

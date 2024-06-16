@@ -17,7 +17,6 @@ import qualified Hedgehog.Range as Range
 
 import Data.Bits ((.&.), bit)
 import Data.Foldable (toList)
-import qualified Data.Text as T
 import Data.Word (Word64)
 import Fmt ((+|), (|+), (+||), (||+))
 import qualified StrictList2 as SL
@@ -33,8 +32,7 @@ test1 nVars sec = testGroup ("BinPoly "+|nVars|+" "+||sec||+"") testsL
   where
     evCmp           = evCmp58 sec
     isGraded        = secIsGraded sec
-    xVarTs          = ["X" <> showT n | n <- [1 :: Int ..]]
-    descVarTs       = take nVars (map T.singleton ['a' .. 'z'] ++ xVarTs)
+    descVarTs       = take nVars alphaNumVarNames
     useSugar        = UseSugar False    -- @@ change to use Gen.bool
     (gbpA@(GBPolyOps { evShowPrec, pR, descVarPs, pShowPrec }), bpoA@(BPOtherOps { pAt }))  =
         bp58Ops evCmp isGraded descVarTs useSugar

@@ -109,7 +109,8 @@ op2SF xSF opS ySF c     = xSF c <> opS <> ySF c
 benchesSV       :: [Benchmark]
 benchesSV       = plusBenches
   where
-    UnivL vAG (TgtArrsF iCToV) _univF   = SV.agUniv intRing.ag
+    vAG             = SV.mkAG intRing.ag
+    iCToV           = SV.fromPIC intRing.ag.isZero
     makeSV g (m, n) = sumL' vAG $ take m    -- 11 should not divide n
         [iCToV (r `rem` n) (r `rem` 11 - 5) | r <- randomsBy (uniformR (0, 11 * n - 1)) g]
     (g0, g1)        = split (mkStdGen 37)

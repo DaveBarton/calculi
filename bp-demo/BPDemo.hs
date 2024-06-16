@@ -8,7 +8,6 @@ import Math.Algebra.Commutative.BinPoly
 
 -- import Control.Monad (when)
 import Data.Foldable (toList)
-import qualified Data.Text as T
 import Data.Word (Word64)
 import Fmt ((+|), (|+), (+||), (||+), build, fmtLn)
 
@@ -23,8 +22,7 @@ demoOps nVars sec   = bp58Ops evCmp isGraded descVarTs (UseSugar False)
   where
     evCmp           = evCmp58 sec
     isGraded        = secIsGraded sec
-    xVarTs          = ["X" <> showT n | n <- [1 :: Int ..]]
-    descVarTs       = take nVars (map T.singleton ['a' .. 'z'] ++ xVarTs)
+    descVarTs       = take nVars alphaNumVarNames
 
 bpDemo              :: Int -> IO ()
 bpDemo gbTrace      = do

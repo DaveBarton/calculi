@@ -68,6 +68,9 @@ module Math.Algebra.General.TestAlgebra (
     -- * Parse
     parseTest,
     
+    -- * Variable names
+    numVarTestOps,
+    
     -- * Algebra module
     algebraTests
 ) where
@@ -533,6 +536,13 @@ parseTest aTA aParse    = readShow
         a       <- genVis aTA
         let b   = parseAllOrErr aParse (aTA.tShowT a)   -- don't use 'error'?
         aTA.tEq a b
+
+
+-- * Variable names
+
+numVarTestOps   :: Text -> Range Int -> TestOps Int
+-- Create test operations for numbered variables, given a prefix.
+numVarTestOps prefix range  = TestOps (numVarPT prefix) (\_ _ -> pure ()) (Gen.int range) (==)
 
 
 -- * Algebra module

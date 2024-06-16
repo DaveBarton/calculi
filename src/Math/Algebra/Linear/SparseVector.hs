@@ -26,13 +26,13 @@
 
 module Math.Algebra.Linear.SparseVector (
     -- * Vector
-    Vector, VectorUniv,
+    Vector, check,
     -- * Create
     zero, fromPIC, fromIMaybeC, fromNzIC, fromDistinctAscNzs,
     -- * Modify
     update, invPermute, swap,
     -- * Split/Concat
-    splitAt, concat,
+    splitAt, concat,    -- @@@ rename Concat/concat
     -- * Query
     isZero, index, indexMaybe, size, headPairMaybe, headPair, lastPairMaybe, lastPair,
     -- * Map
@@ -40,7 +40,7 @@ module Math.Algebra.Linear.SparseVector (
     -- * Fold
     foldBIMap', iFoldR, iFoldL, toDistinctAscNzs,
     -- * Addition
-    unionWith, mkAG, agUniv,
+    unionWith, mkAG,
     -- * Multiplication
     dotWith, timesNzdC, timesC, monicizeU,
     -- * I/O
@@ -50,13 +50,11 @@ module Math.Algebra.Linear.SparseVector (
 import Prelude hiding (concat, splitAt)
 
 import Math.Algebra.General.Algebra
-import Math.Algebra.Category.Category
-import Math.Algebra.General.SparseSum (SparseSumUniv)
 
 import Control.Monad.ST (ST, runST)
 import Control.Parallel.Cooperative (fbTruncLog2, lowNzBit)
-import Data.Bits ((.&.), (.|.), (.^.), (!<<.), (!>>.), countTrailingZeros, popCount)
-    -- @@ is countLeadingZeros faster on ARM?
+import Data.Bits ((.&.), (.|.), (.^.), (!<<.), (!>>.), countTrailingZeros, finiteBitSize,
+    popCount)   -- @@ is countLeadingZeros faster on ARM?
 import Data.Functor.Classes (liftEq)
 import qualified Data.Primitive.Contiguous as C
 import Data.Primitive.SmallArray (SmallArray, SmallMutableArray, shrinkSmallMutableArray)
@@ -64,6 +62,7 @@ import qualified Data.Strict.Maybe as S
 import qualified Data.Strict.Tuple as S
 import Data.Strict.Tuple ((:!:), pattern (:!:))
 import Data.Word (Word64)
+import Fmt ((+|), (|+))
 
 
 nothingIf       :: Pred a -> a -> S.Maybe a     -- move and export?
@@ -98,11 +97,27 @@ data Vector c   = SVE { bs :: Word64, nzs :: SmallArray c }
     
     In an SVV, @bs > 1@ (except possibly for unsimplified intermediate results). -}
 
-type VectorUniv c   = SparseSumUniv Int c (Vector c)
-{- ^ an @AbelianGroup (Vector c)@, @iCToV@ function, and a function for mapping to other
-    t'AbelianGroup's @t@ that have an @Int -> Hom_AG(c, t)@; \(⊕↙i C_i\) where each \(C_i\) is a
-    copy of \(C\). -}
+aCheck          :: Pred c -> Word64 -> SmallArray c -> [Text]
+aCheck cIsZero bs64 nzs     =
+       ["Lengths don't match: "+|nBs|+" and "+|nNzs|+"" | nBs /= nNzs]
+    ++ [""+|nZs|+" zero elements" | nZs > 0]
+  where
+    nBs     = popCount bs64
+    nNzs    = C.size nzs
+    nZs     = foldl' (\n c -> if cIsZero c then n + 1 else n) (0 :: Int) nzs
 
+check           :: Pred c -> Vector c -> [Text]
+{- ^ Check the integrity (internal invariants) of a 'Vector', given a @cIsZero@ predicate, and
+    return a list of errors. The integrity of the individual coordinates is not checked. -}
+check cIsZero   = go (finiteBitSize (0 :: Int))
+  where
+    go _     (SVE bs nzs)       = aCheck cIsZero bs nzs
+    go parW2 (SVV bs iW2 nzts)  =
+           ["iW2 too big: "+|iW2|+" >= "+|parW2|+"" | iW2 >= parW2]
+        ++ ["iW2 illegal: "+|iW2|+""                | iW2 < 6 || iW2 `rem` 6 /= 0]
+        ++ aCheck isZero bs nzts
+        ++ ["bs <= 1: "+|show0x bs|+""              | bs <= 1]
+        ++ foldMap (go iW2) nzts
 
 getIW2          :: Vector c -> Int
 getIW2 (SVE {})         = 0
@@ -514,11 +529,6 @@ mkAG ag         = AbelianGroup svFlags svEq svPlus zero isZero (mapNzFC ag.neg)
     svPlus          = unionWith ag.isZero ag.plus
     svFlags         = agFlags (IsNontrivial ag.monFlags.nontrivial)
 
-agUniv          :: AbelianGroup c -> VectorUniv c
-agUniv ag       = UnivL (mkAG ag) (TgtArrsF (fromPIC ag.isZero)) univF
-  where
-    univF tAG (TgtArrsF iCToT)  = foldBIMap' tAG.plus tAG.zero iCToT
-
 -- * Multiplication
 
 dotWith1        :: AbelianGroup c2 -> (c -> c1 -> c2) -> Word64 -> SmallArray c
@@ -569,6 +579,7 @@ monicizeU cR@(Ring { times }) i v   =
 -- * I/O
 
 showPrec        :: ShowPrec Int -> ShowPrec c -> ShowPrec (Vector c)
+-- ^ show a 'Vector' with precedence
 showPrec iSP cSP    = sumPT . map termSP . toDistinctAscNzs
   where
     termSP (i :!: c)    = timesPT (cSP c) (iSP i)

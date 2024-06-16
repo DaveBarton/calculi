@@ -103,6 +103,7 @@ test-suite calculi-test
     other-modules:
         Math.Algebra.General.TestAlgebra
         Math.Algebra.Commutative.Field.TestZModPW
+        Math.Algebra.Linear.TestSparseVector
         Math.Algebra.General.TestSparseSum
         Math.Algebra.Commutative.TestUPoly
         Math.Algebra.Commutative.TestGroebnerBasis
