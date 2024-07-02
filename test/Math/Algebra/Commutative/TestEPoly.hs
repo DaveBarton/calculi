@@ -17,11 +17,8 @@ import Math.Algebra.Commutative.Field.TestZModPW
 import Math.Algebra.General.TestSparseSum
 import Math.Algebra.Commutative.TestGroebnerBasis
 
-import Hedgehog ((===))
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
-
-import Data.List (unfoldr)
 
 
 evTestOps               :: Cmp ExponVec -> [PrecText] -> Range Word -> TestOps ExponVec
@@ -54,10 +51,10 @@ test1 nVars             = testGroup ("EPoly " <> show nVars) testsL
     UnivL pR (RingTgtXs cToEp xs) epUnivF   = epUniv
     nToT            = cR.fromZ
     nextT b         = cR.plus (cR.times (nToT 1234) b) (nToT 567)
-    ts              = take nVars (unfoldr (\b -> Just (b, nextT b)) (nToT 12345))
+    ts              = take nVars (iterate nextT (nToT 12345))
     epToT           = epUnivF cR (RingTgtXs id ts)
     descVarTs       = take nVars alphaNumVarNames
-    descVarPTs      = map (PrecText atomPrec) descVarTs
+    descVarPTs      = map (PrecText AtomPrec) descVarTs
     useSugar        = UseSugar True     -- @@@
     gbpA@(GBPolyOps { descVarPs, pShowPrec })   =
         epGBPOps evCmp (secIsGraded sec) cR descVarPTs cTA.tSP useSugar

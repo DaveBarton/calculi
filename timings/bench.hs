@@ -107,13 +107,17 @@ op2SF                   :: (c -> String) -> String -> (c -> String) -> c -> Stri
 op2SF xSF opS ySF c     = xSF c <> opS <> ySF c
 
 benchesSV       :: [Benchmark]
-benchesSV       = plusBenches
+benchesSV       = picBenches <> plusBenches
   where
-    vAG             = SV.mkAG intRing.ag
+    vAG             = SV.mkAG intRing.ag :: AbelianGroup (SV.Vector Int)
     iCToV           = SV.fromPIC intRing.ag.isZero
-    makeSV g (m, n) = sumL' vAG $ take m    -- 11 should not divide n
-        [iCToV (r `rem` n) (r `rem` 11 - 5) | r <- randomsBy (uniformR (0, 11 * n - 1)) g]
+    makeSV g (m, n) = sumL' vAG $ take m    -- sum m terms in dim n; 11 should not divide n
+        [iCToV (r `rem` n) (r `rem` 11 - 5) :: SV.Vector Int
+            | r <- randomsBy (uniformR (0, 11 * n - 1)) g]
     (g0, g1)        = split (mkStdGen 37)
+    iToVs i         = sum [SV.index 0 (SV.fromNzIC i n :: SV.Vector Int) i | n <- [1 .. 1000]]
+    picBenches      = benchWhnf iToVs (("index iCToV x1000 " <>) . show) id <$>
+                        [10 ^ n | n <- [0 :: Int, 2, 4, 6, 12, 18]]
     plusBenches     = bench2Whnf vAG.plus (("Add " <>) . show) (makeSV g0) (makeSV g1) <$>
                         [(20, 1000), (300, 1000), (700, 1000),
                          (1000, 100_000), (10_000, 100_000), (30_000, 100_000),

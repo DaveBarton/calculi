@@ -39,6 +39,7 @@ common deps
         fmt >= 0.4 && < 0.7,
         megaparsec < 9.7,
         parser-combinators < 1.4,
+        safe < 0.4,
         strict >= 0.4 && < 0.6,
         text < 2.2
 

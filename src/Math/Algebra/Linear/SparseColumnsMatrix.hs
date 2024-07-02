@@ -135,4 +135,4 @@ matrixOps cR maxN   = MatrixOps { .. }
     bDiv _doFull y _t       = (SV.zero, y) -- @@ improve (incl. solving linear equations in parallel)
 
 transpose       :: Op1 (Matrix c)
-transpose       = SV.foldBIMap' SV.concat SV.zero (\j -> SV.mapNzFC (SV.fromNzIC j))
+transpose       = SV.foldBIMap' SV.join SV.zero (SV.mapNzFC . SV.fromNzIC)

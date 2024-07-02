@@ -16,10 +16,9 @@
     
     > import Math.Algebra.General.Algebra hiding (assert)
     > import Math.Algebra.General.TestAlgebra
-    > import Test.Tasty (defaultMain)
-    > import Hedgehog ((===))
     > import qualified Hedgehog.Gen as Gen
     > import qualified Hedgehog.Range as Range
+    > import Test.Tasty (defaultMain)
     >
     > triangularNumber      :: Int -> Int
     > triangularNumber n    = n * (n + 1) `quot` 2
@@ -42,12 +41,12 @@ module Math.Algebra.General.TestAlgebra (
     TestName, TestTree, testGroup,
     
     -- * Hedgehog tests
-    TestM, singleTest, testWith, testOnce, Range, annotateB,
-    TestRel, diffWith, TestOps(TestOps, tSP, tCheck, gen, eq, ShowGen), ShowGen, testOps0,
-    tCheckBool, genVis,
+    TestM, singleTest, testWith, testOnce, Range, TestRel, diffWith, (===),
+    TestOps(TestOps, tSP, tCheck, gen, eq, ShowGen), ShowGen,
+    annotateB, tAnnotate, tImageEq, testOps0, tCheckBool, genVis,
     
     -- * Function tests
-    sameFun1TR, sameFunAABTR,
+    almostInjectiveTM, sameFun1TR, sameTMF1TR, sameFunAABTR, sameTMFAABTR,
     symmetricTest, commutativeTest, antiSymmetricTest, associativeTest, identityTest,
     homomTM, endomTM,
     
@@ -87,7 +86,7 @@ import Test.Tasty.Hedgehog (testProperty)
 
 import GHC.Records
 
-import Control.Monad (unless, when)
+import Control.Monad (join, unless, when)
 import Data.Functor.Classes (liftEq, liftEq2)
 import Data.Maybe (fromMaybe)
 import Data.Strict.Tuple ((:!:), pattern (:!:))
@@ -130,25 +129,23 @@ testOnce            :: TestName -> TestM () -> TestTree
 -- ^ Create a named test that has no random nonconstant generators, so it's only run once.
 testOnce name       = testWith name (withTests 1)
 
-annotateB           :: Buildable b => b -> TestM ()
--- ^ Annotate with textual information to show if the current test fails.
-annotateB           = annotate . fmt . build
-
 type TestRel a      = a -> a -> TestM ()
 {- ^ A @(TestRel a)@ tests that a relation (probably) holds, possibly generating random value(s)
-    to help test. Usually the relation is equality, unless otherwise noted. -}
+    to help test. Usually the relation is equality, unless otherwise noted. On failure, the
+    @TestRel@ shows where the values differ or the relation fails to hold. Often the @TestRel@
+    also calls 'tCheck', as its documentation may state. -}
 
 diffWith            :: (a -> Text) -> (a -> a -> Bool) -> TestRel a
 {- ^ @(diffWith aShowT rel x y)@ checks @(rel x y)@, and shows a git-like diff if the test
     fails. -}
 diffWith aShowT rel a b     = diff (ShowWith aShowT a) (rel `on` (.val)) (ShowWith aShowT b)
 
-{- |  A @(TestOps a)@ contains operations to help test the type @(a)@. -}
+{- | A @(TestOps a)@ contains operations to help test the type @(a)@. -}
 data TestOps a      = TestOps {
     tSP         :: ShowPrec a,
     tCheck      :: [Text] -> a -> TestM (),
-        {- ^ @(tCheck notes x)@ checks @(x)@ for invariants beyond just type-correctness,
-            showing these additional @notes@ on failure -}
+        {- ^ @(tCheck notes x)@ checks @x@ for invariants beyond just type-correctness. On
+            failure, it shows the problem, @x@, and these additional @notes@ of context. -}
     gen         :: Gen a,       -- ^ optional; generates a pseudo-random @(a)@
     eq          :: EqRel a      -- ^ optional; an equality function for checking test results
 }
@@ -174,11 +171,28 @@ instance HasField "tEq"     (TestOps a) (TestRel a)     where
         diffWith tTA.tShowT eq x y
 -- ^ tests that a result satisfies the invariants for an @(a)@, and equals an expected value
 
+annotateB           :: Buildable b => b -> TestM ()
+-- ^ Annotate with textual information that will be shown if the current test fails.
+annotateB           = annotate . fmt . build
+
+tAnnotate           :: TestOps a -> a -> TestM a
+-- ^ 'tCheck' an intermediate result, return it, and show it if the test fails.
+tAnnotate aTA a     = do
+    aTA.tCheck [] a
+    annotate (T.unpack (aTA.tShowT a))
+    pure a
+
+tImageEq            :: TestOps a -> TestRel b -> (a -> b) -> a -> b -> TestM ()
+-- ^ 'tAnnotate' an intermediate result of type @(a)@, and test its image under a map.
+tImageEq aTA bTestEq f a b  = do
+    b'          <- f <$> tAnnotate aTA a
+    bTestEq b' b
+
 testOps0            :: (Eq a, Show a) => Gen a -> TestOps a
--- ^ v'TestOps' using 'show' (not 'showsPrec'), 'atomPrec', and 'Eq', and no invariant checking
+-- ^ v'TestOps' using 'show' (not 'showsPrec'), 'AtomPrec', and 'Eq', and no invariant checking.
 testOps0 gen        = TestOps tSP (\_ _ -> pure ()) gen (==)
   where
-    tSP a       = PrecText atomPrec (showT a)
+    tSP a       = PrecText AtomPrec (showT a)
 
 tCheckBool          :: [Text] -> Bool -> TestM ()
 -- ^ Check the 'Bool' is 'True', showing the notes on failure.
@@ -188,8 +202,8 @@ tCheckBool notes ok =
         failure
 
 genVis              :: ShowGen a -> TestM a
-{- ^ Generate a visible (showable) random value for a property test. The value will be shown if
-    the test fails, to help with debugging. -}
+{- ^ Generate a visible (showable) random value for a property test, and 'tCheck' it. The value
+    will be shown if the test fails, to help with debugging. -}
 genVis aTA          = do
     a       <- forAllWith (T.unpack . aTA.tShowT) aTA.gen
     aTA.tCheck [] a
@@ -198,11 +212,25 @@ genVis aTA          = do
 
 -- * Function tests
 
+almostInjectiveTM   :: TestOps a -> EqRel b -> (a -> b) -> TestM ()
+{- ^ Test that a function @f@ almost always takes distinct (unequal) elements to distinct
+    elements. Then one can test values of type @(a)@ using @(tImageEq aTA bTestEq f)@. -}
+almostInjectiveTM aTA bEq f     = do
+    x       <- genVis aTA
+    y       <- genVis aTA
+    cover 90 "injective" (aTA.eq x y || not (bEq (f x) (f y)))
+
 sameFun1TR          :: ShowGen a -> TestRel b -> TestRel (a -> b)
 -- ^ test two functions are equal
 sameFun1TR sga bTestEq f g  = do
     a       <- genVis sga
     bTestEq (f a) (g a)
+
+sameTMF1TR          :: ShowGen a -> TestRel b -> TestRel (a -> TestM b)
+-- ^ test two functions are equal
+sameTMF1TR sga bTestEq f g  = do
+    a       <- genVis sga
+    join $ liftA2 bTestEq (f a) (g a)
 
 sameFunAABTR        :: ShowGen a -> TestRel b -> TestRel (a -> a -> b)
 -- ^ test two functions of type @(a -> a -> b)@ are equal
@@ -211,13 +239,21 @@ sameFunAABTR sga bTestEq f g    = do
     y      <- genVis sga
     bTestEq (f x y) (g x y)
 
+sameTMFAABTR        :: ShowGen a -> TestRel b -> TestRel (a -> a -> TestM b)
+-- ^ test two functions of type @(a -> a -> TestM b)@ are equal
+sameTMFAABTR sga bTestEq f g    = do
+    x      <- genVis sga
+    y      <- genVis sga
+    join $ liftA2 bTestEq (f x y) (g x y)
+
 symmetricTest       :: Maybe TestName -> ShowGen a -> TestRel b -> (a -> a -> b) -> TestTree
 -- ^ test a function is symmetric (@f x y = f y x@)
 symmetricTest name sga bTestEq f    =
     singleTest (fromMaybe "symmetric" name) $ sameFunAABTR sga bTestEq f (flip f)
 
 commutativeTest     :: TestOps a -> Op2 a -> TestTree
--- ^ test a function of type @(a -> a -> a)@ is commutative (@f x y = f y x@)
+{- ^ Test a function of type @(a -> a -> a)@ is commutative (@f x y = f y x@), and 'tCheck' its
+    results. -}
 commutativeTest aTA = symmetricTest (Just "commutative") aTA aTA.tEq
 
 antiSymmetricTest   :: ShowGen a -> TestRel b -> Op1 b ->
@@ -227,7 +263,8 @@ antiSymmetricTest sga bTestEq bOpp f    =
     singleTest "antiSymmetric" $ sameFunAABTR sga bTestEq (bOpp .* f) (flip f)
 
 associativeTest     :: TestOps a -> Op2 a -> TestTree
--- ^ test a function is associative @((x \`op\` y) \`op\` z = x \`op\` (y \`op\` z))@
+{- ^ Test a function is associative @((x \`op\` y) \`op\` z = x \`op\` (y \`op\` z))@, and
+    'tCheck' its results. -}
 associativeTest aTA (*~)    = associative
   where
     rand            = genVis aTA
@@ -235,12 +272,16 @@ associativeTest aTA (*~)    = associative
         a       <- rand
         b       <- rand
         c       <- rand
-        aTA.tEq ((a *~ b) *~ c) (a *~ (b *~ c))
+        ab      <- tAnnotate aTA (a *~ b)
+        bc      <- tAnnotate aTA (b *~ c)
+        aTA.tEq (ab *~ c) (a *~ bc)
 
 identityTest        :: TestOps a -> Op2 a -> a -> TestTree
--- ^ test an element is the identity for an @(Op2 a)@: @x \`op\` e = e \`op\` x = x@ for all @x@
-identityTest aTA (*~) e     = identity
+{- ^ Test an element is the identity for an @(Op2 a)@:
+    @x \`op\` e = e \`op\` x = x@ for all @x@; and 'tCheck' the element. -}
+identityTest aTA (*~) e     = testGroup "identity element" [identityOk, identity]
   where
+    identityOk      = testOnce "identityOk" $ aTA.tCheck [] e
     identity        = singleTest "identity" $ do
         a       <- genVis aTA
         aTA.tEq (a *~ e) a
@@ -312,54 +353,56 @@ totalOrderTests sg equal nontriv cmp    =
 monoidTests             :: TestOps g -> MonoidFlags -> MonoidOps g -> TestTree
 {- ^ Test the algebra is a Monoid including the given t'MonoidFlags'. If 'Algebra.eq' and
     'Algebra.op' are correct, then this tests whether all the Monoid or 'Group' operations are
-    correct. -}
+    correct, and 'tCheck's their results. -}
 monoidTests gTA requiredFlags (MkMonoid { .. })     = testGroup "Monoid" $
     [flagsOk, equalityTests gTA (IsNontrivial monFlags.nontrivial) eq,
         associativeTest gTA op, identityTest gTA op ident, isIdentity, identityIsIdentity] ++
     [inverse                | monFlags.isGroup] ++
-    [commutativeTest gTA op  | monFlags.abelian]
+    [commutativeTest gTA op | monFlags.abelian]
   where
-    flagsOk         = testOnce "required MonoidFlags" $ do
+    flagsOk         = testOnce "required MonoidFlags" $
         diff monFlags flagsContain requiredFlags
     isIdentity      = singleTest "isIdentity" $ do
         a       <- genVis gTA
         isIdent a === (a `eq` ident)
-    identityIsIdentity  = testOnce "identityIsIdentity" $ do
-        annotateB $ gTA.tShowT ident
-        assert (isIdent ident)
+    identityIsIdentity  = testOnce "identityIsIdentity" $
+        assert . isIdent =<< tAnnotate gTA ident
     inverse         = singleTest "inverse" $ do
         a       <- genVis gTA
-        let b   = inv a
-        annotateB $ gTA.tShowT b
+        b       <- tAnnotate gTA $ inv a
         gTA.tEq (a `op` b) ident
         gTA.tEq ident (a `op` b)
 
 abelianGroupTests       :: TestOps g -> IsNontrivial -> AbelianGroup g -> TestTree
 {- ^ Test the algebra is an t'AbelianGroup'. If 'Algebra.eq' and 'Algebra.plus' are correct,
-    then this tests whether all the t'AbelianGroup' operations are correct. -}
+    then this tests whether all the t'AbelianGroup' operations are correct, and 'tCheck's their
+    results. -}
 abelianGroupTests gTA nontriv   = monoidTests gTA (agFlags nontriv)
 
-bDivTests               :: ShowPrec q -> TestOps m -> Module q m -> TestTree
--- ^ Test @(y = m*q + r)@. The attempted minimalness of @(r)@ is not tested.
-bDivTests qSP mTA (Module { .. })   = testGroup "bDiv"
+bDivTests               :: TestOps q -> TestOps m -> Module q m -> TestTree
+{- ^ Test @(y = m*q + r)@, and 'tCheck' @q@ and @r@. The attempted minimalness of @(r)@ is not
+    tested. -}
+bDivTests qTA mTA (Module { .. })   = testGroup "bDiv"
     [divTest doFull | doFull <- IsDeep <$> [False, True]]
   where
     divTest doFull      = singleTest ("bDiv ("+||doFull||+")") $ do
         y       <- genVis mTA
         m       <- genVis mTA
         let (q, r)  = bDiv doFull y m
-        annotateB $ sPairShowPrec qSP mTA.tSP (q :!: r)
+        _       <- tAnnotate qTA q
+        _       <- tAnnotate mTA r
         mTA.tEq y (ag.plus (scale q m) r)
 
 ringTests               :: TestOps r -> IsNontrivial -> RingFlags -> Ring r -> TestTree
 {- ^ Test the algebra is a t'Ring' including the given flags. If 'Algebra.eq', 'Algebra.plus',
     and 'Algebra.times' are correct, then this tests whether all the t'Ring' operations are
-    correct, except for the minimalness of remainders. -}
+    correct, except for the minimalness of remainders. This also 'tCheck's the results of all
+    the t'Ring' operations. -}
 ringTests rTA nontriv reqRingFlags rR@(Ring { .. })     = testGroup "Ring" $
     [abelianGroupTests rTA nontriv ag, ringFlagsOk, leftDistrib, rightDistrib,
         associativeTest rTA times, identityTest rTA times one,
         ringHomomTests (Just "Ring Homomorphism from Z") zzTestOps zzRing rTA.tEq rR fromZ,
-        bDivTests rTA.tSP rTA (Module ag (flip times) bDiv)] ++
+        bDivTests rTA rTA (Module ag (flip times) bDiv)] ++
     [commutativeTest rTA times  | rFlags.commutative] ++
     [noZeroDivs                 | rFlags.noZeroDivisors] ++
     [inverses                   | rFlags.nzInverses]
@@ -396,18 +439,23 @@ ringHomomTests mName sga aR bTestEq bR f     = testGroup (fromMaybe "Ring Homomo
 
 fieldTests              :: TestOps r -> Field r -> TestTree
 {- ^ Test the algebra is a t'Field'. If 'Algebra.eq', 'Algebra.plus', and 'Algebra.times' are
-    correct, then this tests whether all the t'Field' operations are correct. -}
+    correct, then this tests whether all the t'Field' operations are correct and 'tCheck's their
+    results. -}
 fieldTests rTA          = ringTests rTA (IsNontrivial True) fieldFlags
 
 moduleTests             :: IsLeftMod -> ShowGen r -> Ring r -> TestOps m ->
                             IsNontrivial -> Module r m -> TestTree
 {- ^ Test that @(m)@ is a t'Module' over @(r)@, assuming that @(r)@'s ring operations are
-    correct. -}
+    correct. This also 'tCheck's the results of the t'Module' operations. -}
 moduleTests isLeftMod rTA rR mTA nontriv mM@(Module { .. })     =
     testGroup ((if isLeftMod.b then "Left" else "Right") <> " Module")
-        [abelianGroupTests mTA nontriv ag, endoM, distribM, identityM, assocM,
-            bDivTests rTA.tSP mTA mM]
+        [abelianGroupTests mTA nontriv ag, scaleOk, endoM, distribM, identityM, assocM,
+            bDivTests rTA mTA mM]
   where
+    scaleOk         = singleTest "scaleOk" $ do
+        r       <- genVis rTA
+        m       <- genVis mTA
+        mTA.tCheck [] (scale r m)
     endoM           = singleTest "endoM" $ do
         r       <- genVis rTA
         endomTM mTA ag.plus (scale r)
@@ -435,7 +483,7 @@ modRTests               = moduleTests (IsLeftMod False)
 rAlgTests               :: ShowGen r -> Ring r -> TestOps a ->
                             IsNontrivial -> RingFlags -> RAlg r a -> TestTree
 {- ^ Test that @(a)@ is an t'RAlg' over @(r)@, including the given flags, assuming that the
-    @(Ring r)@ is correct. -}
+    @(Ring r)@ is correct. This also 'tCheck's the results of the t'RAlg' operations. -}
 rAlgTests rTA rR aTA nontriv reqAFlags (RAlg { .. })    = testGroup "R-Algebra"
     [ringTests aTA nontriv reqAFlags aR, ringHomomTests Nothing rTA rR aTA.tEq aR fromR,
         centerA, scaleA]
@@ -444,6 +492,7 @@ rAlgTests rTA rR aTA nontriv reqAFlags (RAlg { .. })    = testGroup "R-Algebra"
     centerA         = singleTest "centerA" $ do
         r       <- genVis rTA
         let ra  = fromR r
+        aTA.tCheck [] ra
         a       <- genVis aTA
         aTA.tEq (ra *~ a) (a *~ ra)
     scaleA          = singleTest "scaleA" $ do
@@ -497,7 +546,7 @@ listTestEq              :: TestOps a -> TestRel [a]
 -- ^ test two lists are equal
 listTestEq aTA          = (listTestOps undefined aTA).tEq
 
-allTM                   :: (Functor f, Foldable f) => (ShowPrec a) -> Pred a -> f a -> TestM ()
+allTM                   :: (Functor f, Foldable f) => ShowPrec a -> Pred a -> f a -> TestM ()
 -- ^ test all elements of a list (or list-like) satisfy a predicate
 allTM aSP p as          = do
     let qs          = fmap p as
@@ -529,7 +578,7 @@ slTestOps lenRange aTA  = TestOps tSP tCheck gen (SL.eqBy aTA.eq)
 -- * Parse
 
 parseTest               :: TestOps a -> Parser a -> TestTree
--- ^ Test that reading a shown value produces the original value.
+-- ^ Test that reading a shown value produces the original value, and 'tCheck' the read value.
 parseTest aTA aParse    = readShow
   where
     readShow        = singleTest "parse" $ do
@@ -540,9 +589,9 @@ parseTest aTA aParse    = readShow
 
 -- * Variable names
 
-numVarTestOps   :: Text -> Range Int -> TestOps Int
+numVarTestOps   :: Text -> Gen Int -> TestOps Int
 -- Create test operations for numbered variables, given a prefix.
-numVarTestOps prefix range  = TestOps (numVarPT prefix) (\_ _ -> pure ()) (Gen.int range) (==)
+numVarTestOps prefix gen    = (testOps0 gen) { tSP = numVarPT prefix }
 
 
 -- * Algebra module

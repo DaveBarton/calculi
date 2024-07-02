@@ -48,7 +48,7 @@ epGbpA sec useSugar descVarTs   =
     nVars       = length descVarTs
     evCmp       = epEvCmpF nVars sec
     isGraded    = secIsGraded sec
-    descVarPTs  = map (PrecText atomPrec) descVarTs
+    descVarPTs  = map (PrecText AtomPrec) descVarTs
 
 gbDemo0         :: GBPoly ev term ep => GBExOpts -> GBEx -> GBPolyOps ev ep -> IO ()
 gbDemo0 (GBExOpts { sec, gbTrace }) (GBEx { name, descVarTs, genTs }) gbpA  = do

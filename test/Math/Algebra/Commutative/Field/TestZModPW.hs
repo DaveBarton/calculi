@@ -9,7 +9,7 @@ import Math.Algebra.Commutative.Field.ZModPW
 
 import Math.Algebra.General.TestAlgebra
 
-import Hedgehog ((===), diff)
+import Hedgehog (diff)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 

@@ -12,7 +12,6 @@ import Math.Algebra.Commutative.UPoly
 import Math.Algebra.General.TestAlgebra
 import Math.Algebra.General.TestSparseSum
 
-import Hedgehog ((===))
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
@@ -35,7 +34,7 @@ uPolyTests              = testGroup "UPoly" testsL
     zxToT           = zxUnivF zzRing (RingTgtX id 12345)
     pTA             =   -- polys of degree up to 10
         upTestOps zzRing (Range.linear 0 10) (zzTestOps { gen = zzExpGen 1_000_000 })
-            (integralPowTA (PrecText atomPrec "X") (Range.linear 0 10))
+            (integralPowTA (PrecText AtomPrec "X") (Range.linear 0 10))
     monom c d       = ssLead zzRing.isZero c d ssZero
     reqFlags        =
         RingFlags { commutative = True, noZeroDivisors = True, nzInverses = False }

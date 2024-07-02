@@ -102,9 +102,9 @@ module Math.Algebra.General.Algebra (
     -- * Converting -> Text
     show0x, Text, showT,
     -- ** With Precedence
-    Prec, parensPrec, atomPrec, exptPrec, multPrec, addPrec, commaPrec,
-    PrecText(PrecText, prec, t), parensIf, ensurePrec, infixLPT, infixRPT, infixAssocPT,
-        infixPT, infixListPT, fencePT, plusPT, sumPT, timesPT, productPT, exptPT,
+    Prec(..), PrecText(PrecText, prec, t), parensIf, ensurePrec,
+        infixLPT, infixRPT, infixAssocPT, infixPT, infixListPT, fencePT,
+        plusPT, sumPT, timesPT, productPT, exptPT,
     ShowPrec, integralPT, zzShowPrec, hex0xPT, integralPowPT, sPairShowPrec, listShowPrec,
         gensShowPrec,
     
@@ -138,6 +138,7 @@ import Data.Foldable (foldl')           -- unnecesary in base 4.20+, since in Pr
 #endif
 import Data.Foldable (toList)
 import Data.Function (on)
+import Data.Functor (($>))
 import Data.Functor.Classes (liftEq2)
 import Data.Maybe (fromMaybe)
 import Data.Strict.Tuple ((:!:), pattern (:!:))
@@ -150,7 +151,6 @@ import Text.Megaparsec (Parsec, (<|>), (<?>), between, eof, errorBundlePretty, m
     notFollowedBy, parse)
 import Text.Megaparsec.Char (digitChar, letterChar, space1)
 import Text.Megaparsec.Char.Lexer as L
-import Text.ParserCombinators.ReadPrec (Prec)
 
 
 -- * Common function types
@@ -176,7 +176,7 @@ pairOp2         :: (a -> a' -> a'') -> (b -> b' -> b'') -> a :!: b -> a' :!: b' 
     Note 'pairOp2'\'s type specializes to (includes) @Op2 a -> Op2 b -> Op2 (a :!: b)@.
     
     'pairOp2' is like 'bimap', but for functions of 2 arguments. -}
-pairOp2 f g (x :!: y) (u :!: v)     = (f x u :!: g y v)
+pairOp2 f g (x :!: y) (u :!: v)     = f x u :!: g y v
 
 (.*)            :: (c -> d) -> (a -> b -> c) -> (a -> b -> d)
 infixr 9 .*     -- for mixing with @.@
@@ -581,10 +581,10 @@ pairMd rR aMd bMd   =
     pairBDiv doFull (y :!: z) (m :!: n)
         | aMd.ag.isZero m && doFull.b   =
             let (q, r) = bMd.bDiv doFull z n
-            in  (q, (y :!: r))
+            in  (q, y :!: r)
         | otherwise                     =
             let (q, r)  = aMd.bDiv doFull y m
-            in  (q, (r :!: bMd.ag.plus z (bMd.scale (rR.neg q) n)))
+            in  (q, r :!: bMd.ag.plus z (bMd.scale (rR.neg q) n))
 
 mdModF              :: Module r a -> Op1 a -> MonoidFlags -> Module r (Cls a)
 {- ^ @(mdModF md reduce extraFlags)@ is @md@ modulo a submodule, using @reduce@ to produce @Cls@
@@ -664,25 +664,18 @@ showT           = T.pack . show
 
 -- ** With Precedence
 
-parensPrec      :: Prec
--- ^ precedence of a parenthesized expression; higher than a number or variable
-parensPrec      = 12
-atomPrec        :: Prec
-{- ^ precedence of an atomic expression, such as a positive number, atomic variable, or atomic
-    constant -}
-atomPrec        = 11
-exptPrec        :: Prec
--- ^ precedence of exponentiation or negation (prefix @\"-\"@), right associative
-exptPrec        = 8
-multPrec        :: Prec
--- ^ precedence of multiplication and division, left associative
-multPrec        = 7
-addPrec         :: Prec
--- ^ precedence of addition and subtraction, left associative
-addPrec         = 6
-commaPrec       :: Prec
--- ^ precedence of a comma
-commaPrec       = 0
+{- | Precedence of a prefix, infix, or postfix operator. Numeric values may differ from
+    Haskell's built-in ones, and new ones may be added in the future. -}
+data Prec       =
+          CommaPrec
+        | AddPrec       -- ^ addition or subtraction, left associative
+        | MultPrec      -- ^ multiplication or division, left associative
+        | ExptPrec      -- ^ exponentiation or negation (prefix @\"-\"@), right associative
+        | AtomPrec      {- ^ an atomic expression, such as an unsigned number, atomic variable,
+                            or atomic constant -}
+        | FencePrec     {- ^ a parenthesized or otherwise \"fenced\" expression; note higher
+                            than 'AtomPrec' -}
+    deriving (Eq, Ord, Enum, Bounded, Show)
 
 data PrecText   = PrecText { prec :: Prec, t :: Text }
     deriving (Eq, Show)     -- e.g. for testing & debugging
@@ -700,53 +693,53 @@ ensurePrec      :: Prec -> PrecText -> Text
 -- ^ parenthesize an expression if its precedence is below the given value
 ensurePrec minP pt  = parensIf (pt.prec < minP) pt.t
 
-infixGenPT      :: Int -> Int -> Prec -> Text -> Op2 PrecText
+infixGenPT      :: Op1 Prec -> Op1 Prec -> Prec -> Text -> Op2 PrecText
 {- ^ format using an infix operator that requires the given left and right precedence increments
     arounds its operands -}
 infixGenPT dl dr prec op x y    =
-    PrecText prec (T.concat [ensurePrec (prec + dl) x, op, ensurePrec (prec + dr) y])
+    PrecText prec (T.concat [ensurePrec (dl prec) x, op, ensurePrec (dr prec) y])
 
 infixLPT        :: Prec -> Text -> Op2 PrecText
 -- ^ format using a non-associative @infixl@ operator
-infixLPT        = infixGenPT 0 1
+infixLPT        = infixGenPT id succ
 
 infixRPT        :: Prec -> Text -> Op2 PrecText
 -- ^ format using a non-associative @infixr@ operator
-infixRPT        = infixGenPT 1 0
+infixRPT        = infixGenPT succ id
 
 infixAssocPT    :: Prec -> Text -> Op2 PrecText
 {- ^ format using an infix operator that doesn't require parentheses around operands of the same
     precedence -}
-infixAssocPT    = infixGenPT 0 0
+infixAssocPT    = infixGenPT id id
 
 infixPT         :: Prec -> Text -> Op2 PrecText
 {- ^ format using an infix operator that requires parentheses around operands of the same
     precedence -}
-infixPT         = infixGenPT 1 1
+infixPT         = infixGenPT succ succ
 
 infixListPT     :: Foldable f => Prec -> Bool -> Text -> f PrecText -> PrecText
 {- ^ @(infixListPT opPrec parenTies op args)@ combines the @args@ using the infix operator @op@.
     @parenTies@ says whether to parenthesize arguments whose precedence is exactly @opPrec@. -}
 infixListPT opPrec parenTies op (toList -> args)
-    | null args         = PrecText 0 ""
-    | arg : [] <- args  = arg
-    | let minP = opPrec + (if parenTies then 1 else 0)
+    | null args         = PrecText minBound ""
+    | [arg] <- args     = arg
+    | let minP = (if parenTies then succ else id) opPrec
                         = PrecText opPrec (T.intercalate op (map (ensurePrec minP) args))
 
 fencePT         :: Text -> Text -> Text -> PrecText
 {-^ @(fencePT open inner close)@ creates a \"fenced\" (parenthesized, bracketed, etc.)
     expression around @inner@. -}
-fencePT open inner close    = PrecText parensPrec (T.concat [open, inner, close])
+fencePT open inner close    = PrecText FencePrec (T.concat [open, inner, close])
 
 sumPT           :: Foldable f => f PrecText -> PrecText
 -- ^ Sum of expressions, checking args for 0 and prefix @\"-\"@.
 sumPT           = go . filter (\pt -> pt.t /= "0") . toList
   where
-    go []           = PrecText atomPrec "0"
+    go []           = PrecText AtomPrec "0"
     go [pt]         = pt
-    go pts          = PrecText addPrec (dropPlus (T.concat (map toSignedArg pts)))
+    go pts          = PrecText AddPrec (dropPlus (T.concat (map toSignedArg pts)))
     dropPlus t      = fromMaybe t (T.stripPrefix "+" t)
-    toSignedArg     = addPlus . ensurePrec addPrec
+    toSignedArg     = addPlus . ensurePrec AddPrec
     addPlus t       = if T.isPrefixOf "-" t then t else "+" <> t
 
 plusPT          :: Op2 PrecText
@@ -759,26 +752,27 @@ timesPT aPT bPT
     | aPT.t == "1"      = bPT
     | bPT.t == "1"      = aPT
     | aPT.t == "-1"     =
-        PrecText (if bPT.prec == multPrec then multPrec else exptPrec) ("-" <> bT)
-    | otherwise         = PrecText multPrec (ensurePrec multPrec aPT <> b1T)
+        PrecText (if bPT.prec < MultPrec then ExptPrec else min bPT.prec ExptPrec) ("-" <> bT)
+    | otherwise         = PrecText MultPrec (ensurePrec MultPrec aPT <> b1T)
   where
-    ~bT             = ensurePrec multPrec bPT
+    ~bT             = ensurePrec MultPrec bPT
     ~b1T            = parensIf (needsLParen bT) bT
-    needsLParen     = (maybe False (\(c, _) -> c == '-' || isDigit c)) . T.uncons
+    needsLParen     = maybe False (\(c, _) -> c == '-' || isDigit c) . T.uncons
 
 productPT       :: Foldable f => f PrecText -> PrecText
 -- ^ Product of expressions, checking args for 1, prefix @\"-\"@, and concatenating digits.
-productPT       = foldl' timesPT (PrecText atomPrec "1")
+productPT       = foldl' timesPT (PrecText AtomPrec "1")
 
 exptPT          :: Op2 PrecText
 -- ^ @\"^\"@ of two expressions
-exptPT          = infixRPT exptPrec "^"
+exptPT          = infixRPT ExptPrec "^"
 
 type ShowPrec a = a -> PrecText
+-- ^ convert to a mathematical expression and its outermost precedence
 
 integralPT      :: (Integral a, Show a) => ShowPrec a
 -- ^ show an 'Int'/'Integer'/etc. with precedence
-integralPT n    = PrecText (if n < 0 then exptPrec else atomPrec) (showT n)
+integralPT n    = PrecText (if n < 0 then ExptPrec else AtomPrec) (showT n)
 
 zzShowPrec      :: ShowPrec Integer
 -- ^ show an 'Integer' with precedence
@@ -786,31 +780,31 @@ zzShowPrec      = integralPT
 
 hex0xPT         :: (Integral a, Show a) => ShowPrec a
 -- ^ show in hexadecimal with a "0x" prefix; the argument must be nonnegative
-hex0xPT n       = assert (n >= 0) $ PrecText atomPrec (T.pack (show0x n))
+hex0xPT n       = assert (n >= 0) $ PrecText AtomPrec (T.pack (show0x n))
 
 integralPowPT   :: (Integral d, Show d) => PrecText -> ShowPrec d
 -- ^ Power of a given base, checking the exponent for 0 or 1.
 integralPowPT bPT d     = case d of
-    0   -> PrecText atomPrec "1"
+    0   -> PrecText AtomPrec "1"
     1   -> bPT
     _   -> exptPT bPT (integralPT d)
 
 sPairShowPrec   :: ShowPrec a -> ShowPrec b -> ShowPrec (a :!: b)
 -- ^ show a strict pair with precedence
-sPairShowPrec aSP bSP (a :!: b)     = PrecText parensPrec (T.concat ["(", aT, ", ", bT, ")"])
+sPairShowPrec aSP bSP (a :!: b)     = PrecText FencePrec (T.concat ["(", aT, ", ", bT, ")"])
   where
-    aT      = ensurePrec (commaPrec + 1) (aSP a)
-    bT      = ensurePrec (commaPrec + 1) (bSP b)
+    aT      = ensurePrec (succ CommaPrec) (aSP a)
+    bT      = ensurePrec (succ CommaPrec) (bSP b)
 
 infixCommasPT   :: Foldable f => Text -> f PrecText -> Text -> PrecText
 -- ^ show a 'Foldable' as a fenced list separated by commas, with precedence
-infixCommasPT open args close   = fencePT open (infixListPT commaPrec True ", " args).t close
+infixCommasPT open args     = fencePT open (infixListPT CommaPrec True ", " args).t
 
 listShowPrec    :: (Functor f, Foldable f) => ShowPrec e -> ShowPrec (f e)
 -- ^ show a 'Foldable' as a list, with precedence
 listShowPrec eSP es     = infixCommasPT "[" (fmap eSP es) "]"
 
-gensShowPrec    :: (Functor f, Foldable f) => (ShowPrec g) -> f g -> PrecText
+gensShowPrec    :: (Functor f, Foldable f) => ShowPrec g -> f g -> PrecText
 -- ^ show a list of generators, with precedence
 gensShowPrec gSP gs     = infixCommasPT "⟨" (fmap gSP gs) "⟩"
 
@@ -875,8 +869,8 @@ rngParse        :: Ring r -> Parser r -> Parser r
 rngParse rR@(Ring { .. }) pAtom     = pR
   where
     pPower  = liftA2 (rExpt rR) (pAtom <|> pParens pR) (pSymbol "^" *> zzParse <|> pure 1)
-    pOp     = pSymbol "/" *> pure (exactQuo rR)
-         <|> (pSymbol "*" <|> notFollowedBy digitChar *> pure "") *> pure times
+    pOp     = pSymbol "/" $> exactQuo rR
+         <|> (pSymbol "*" <|> notFollowedBy digitChar $> "") $> times
     pR      = agParse ag (pInfixL pPower pOp pPower)
 
 zzGensRingParse     :: Ring r -> Parser r -> Parser r
@@ -893,7 +887,7 @@ zzGensRingParse rR pGen     = rngParse rR pAtom
 numVarPT        :: Text -> Int -> PrecText
 {- ^ Create a variable name from a prefix, usually a single unicode letter, followed by a
     number, which is usually nonnegative. -}
-numVarPT prefix n   = PrecText atomPrec (prefix <> showT n)
+numVarPT prefix n   = PrecText AtomPrec (prefix <> showT n)
 
 alphaNumVarNames    :: [Text]
 -- ^ An infinite list of variable names: @a-z, A-Z, xN@ for @N > 0@.
@@ -902,10 +896,10 @@ alphaNumVarNames    = (T.singleton <$> ['a' .. 'z'] ++ ['A' .. 'Z'])
 
 varNameParse    :: Parser Text
 -- ^ Parse a mathematical variable name: a unicode letter, optionally followed by digits.
-varNameParse    = T.pack <$> (liftA2 (:) letterChar (many digitChar))
+varNameParse    = T.pack <$> liftA2 (:) letterChar (many digitChar)
 
 varParse        :: [Text] -> [a] -> Parser a
 -- ^ Parse a mathematical variable name, using lists of names and values.
 varParse names vals     = do
     name        <- varNameParse
-    pure $ maybe (error ("Name not found: "+|name|+"")) id (lookup name (zip names vals))
+    pure $ fromMaybe (error ("Name not found: "+|name|+"")) (lookup name (zip names vals))

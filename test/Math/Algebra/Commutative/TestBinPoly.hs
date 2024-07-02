@@ -11,7 +11,6 @@ import Math.Algebra.Commutative.BinPoly
 import Math.Algebra.General.TestAlgebra
 import Math.Algebra.Commutative.TestGroebnerBasis
 
-import Hedgehog ((===))
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 

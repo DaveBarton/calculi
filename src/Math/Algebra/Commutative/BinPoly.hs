@@ -146,7 +146,7 @@ bp58Ops evCmp isGraded descVarTs useSugar   = assert (nVars <= 58)
     isRev               = nVars > 1 && evCmp (fromBits58 1) (fromBits58 2) == GT
     varBitJsDesc        =   -- most main first
         (if isRev then id else reverse) [0 .. nVars - 1]
-    evShowPrec w        = productPT (map (PrecText atomPrec) (catMaybes mVarTs))
+    evShowPrec w        = productPT (map (PrecText AtomPrec) (catMaybes mVarTs))
       where
         mVarTs      = zipWith (pureIf . testBit w.w64) varBitJsDesc descVarTs
     

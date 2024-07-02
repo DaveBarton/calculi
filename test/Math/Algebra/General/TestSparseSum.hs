@@ -24,7 +24,7 @@ ssTestOps cAG dCmp sumRange cTA dTA     = TestOps tSP tCheck gen ssAG.eq
   where
     UnivL ssAG (TgtArrsF dcToSS) _univF     = ssAGUniv cAG dCmp
     cdTA            = TestOps cdSP cdTCheck undefined undefined
-    cdSP cd         = infixPT multPrec " " (cTA.tSP cd.c) (dTA.tSP cd.d)    -- always show c & d
+    cdSP cd         = infixPT MultPrec " " (cTA.tSP cd.c) (dTA.tSP cd.d)    -- always show c & d
     cdTCheck notes cd   = do
         cTA.tCheck notes1 cd.c
         dTA.tCheck notes1 cd.d
