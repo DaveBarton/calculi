@@ -42,7 +42,7 @@ module Math.Algebra.Linear.SparseVector (
     -- * Addition
     unionWith, plusU, mkAG,
     -- * Multiplication
-    dotWith, timesNzdC, timesC, monicizeU,
+    dotWith, timesNzdC, timesNzdCU, timesC, monicizeUnit,
     -- * I/O
     showPrec
 ) where
@@ -620,6 +620,7 @@ aPlusU bs0 nzs0 bs1 nzs1    = runST $ do
     go bsAll bsAll 0 0 0
 {-# SPECIALIZE aPlusU :: KnownNat m => Word64 -> PrimArray (Mod m) ->
     Word64 -> PrimArray (Mod m) -> Word64 :!: PrimArray (Mod m) #-}
+{-# INLINABLE aPlusU #-}
 
 plusU           :: (Eq c, Num c, Prim c) => Op2 (VectorU c)
 {- ^ \(m + n\) steps, or more precisely for sparse vectors, \(k + b t\) where \(k\) and \(t\)
@@ -644,6 +645,7 @@ plusU           = go
         ~v0             = go (C.index nzts 0) v
     goGT (SVE {}) _             = undefined
 {-# SPECIALIZE plusU :: KnownNat m => Op2 (VectorU (Mod m)) #-}
+{-# INLINABLE plusU #-}
 
 mkAG            :: (C.Contiguous arr, C.Element arr c) =>
                     AbelianGroup c -> AbelianGroup (VectorA arr c)
@@ -700,20 +702,26 @@ timesNzdC       :: (C.Contiguous arr, C.Element arr c) => Ring c -> c -> Op1 (Ve
 timesNzdC (Ring { times }) c    = mapNzFC (`times` c)
 {-# INLINE timesNzdC #-}
 
+timesNzdCU      :: (Num c, Prim c) => c -> Op1 (VectorU c)
+{- ^ 'timesNzdC' over an unboxed type, for speed. -}
+timesNzdCU c (SVE bs nzs)       = SVE bs (C.map' (* c) nzs)
+timesNzdCU c (SVV bs iW2 nzts)  = SVV bs iW2 (C.map' (timesNzdCU c) nzts)
+{-# INLINABLE timesNzdCU #-}
+
 timesC          :: (C.Contiguous arr, C.Element arr c) => Ring c -> c -> Op1 (VectorA arr c)
 {- ^ If the @c@ is not a right zero divisor, then 'timesNzdC' is faster. Usually \(m\) steps, or
     up to \((d - log_{64} m) m\) for a very sparse vector. -}
 timesC cR@(Ring { times }) c    = mapC cR.isZero (`times` c)
 {-# INLINE timesC #-}
 
-monicizeU       :: (C.Contiguous arr, C.Element arr c) => Ring c -> Int -> Op1 (VectorA arr c)
-{- ^ @(monicizeU cR i v)@ requires that the @i@'th coefficient of @v@ is a unit. Usually \(m\)
-    steps, or up to \((d - log_{64} m) m\) for a very sparse vector, but checks first whether
-    @v@ is already monic. -}
-monicizeU cR@(Ring { times }) i v   =
+monicizeUnit    :: (C.Contiguous arr, C.Element arr c) => Ring c -> Int -> Op1 (VectorA arr c)
+{- ^ @(monicizeUnit cR i v)@ requires that the @i@'th coefficient of @v@ is a unit. Usually
+    \(m\) steps, or up to \((d - log_{64} m) m\) for a very sparse vector, but checks first
+    whether @v@ is already monic. -}
+monicizeUnit cR@(Ring { times }) i v    =
     let c       = index cR.zero v i   -- check for c = 1 for speed
     in  if rIsOne cR c then v else mapNzFC (`times` rInv cR c) v
-{-# SPECIALIZE monicizeU :: Ring c -> Int -> Op1 (Vector c) #-}
+{-# SPECIALIZE monicizeUnit :: Ring c -> Int -> Op1 (Vector c) #-}
 
 -- * I/O
 

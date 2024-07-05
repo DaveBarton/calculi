@@ -19,6 +19,7 @@ import Control.Monad ((<$!>))
 import Data.Bits ((.|.), complement, finiteBitSize, shift, unsafeShiftL, unsafeShiftR)
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List (transpose)
+import Data.Mod.Word (Mod)
 -- import Data.Poly.Multi (toMultiPoly)
 import Data.Strict.Classes (toStrict)
 import qualified Data.Strict.Tuple as S
@@ -106,19 +107,26 @@ showNtSparse, showNtDense       :: Int -> String
 op2SF                   :: (c -> String) -> String -> (c -> String) -> c -> String
 op2SF xSF opS ySF c     = xSF c <> opS <> ySF c
 
+type ModP       = Mod 2_000_003
+type SV         = SV.VectorU ModP
+
 benchesSV       :: [Benchmark]
-benchesSV       = picBenches <> plusBenches
+benchesSV       = {- picBenches <> plusBenches <> -} scaleBenches
   where
-    vAG             = SV.mkAG intRing.ag :: AbelianGroup (SV.Vector Int)
-    iCToV           = SV.fromPIC intRing.ag.isZero
+    vAG             = (SV.mkAG numAG :: AbelianGroup SV) { plus = SV.plusU }
+    iCToV           = SV.fromPIC (== 0)
     makeSV g (m, n) = sumL' vAG $ take m    -- sum m terms in dim n; 11 should not divide n
-        [iCToV (r `rem` n) (r `rem` 11 - 5) :: SV.Vector Int
+        [iCToV (r `rem` n) (fromIntegral (r `rem` 11 - 5)) :: SV
             | r <- randomsBy (uniformR (0, 11 * n - 1)) g]
     (g0, g1)        = split (mkStdGen 37)
-    iToVs i         = sum [SV.index 0 (SV.fromNzIC i n :: SV.Vector Int) i | n <- [1 .. 1000]]
+    iToVs i         = sum [SV.index 0 (SV.fromNzIC i n :: SV) i | n <- [1 .. 1000]]
     picBenches      = benchWhnf iToVs (("index iCToV x1000 " <>) . show) id <$>
                         [10 ^ n | n <- [0 :: Int, 2, 4, 6, 12, 18]]
     plusBenches     = bench2Whnf vAG.plus (("Add " <>) . show) (makeSV g0) (makeSV g1) <$>
+                        [(20, 1000), (300, 1000), (700, 1000),
+                         (1000, 100_000), (10_000, 100_000), (30_000, 100_000),
+                         (1000, 2 ^ (finiteBitSize (0 :: Int) - 5))]
+    scaleBenches    = bench2Whnf SV.timesNzdCU (("Scale " <>) . show) (const 23) (makeSV g1) <$>
                         [(20, 1000), (300, 1000), (700, 1000),
                          (1000, 100_000), (10_000, 100_000), (30_000, 100_000),
                          (1000, 2 ^ (finiteBitSize (0 :: Int) - 5))]

@@ -25,9 +25,9 @@ source-repository   head
 
 common deps
     default-language:   GHC2021
-    default-extensions: DuplicateRecordFields LambdaCase MonoLocalBinds NegativeLiterals
-                        NoFieldSelectors OverloadedRecordDot OverloadedStrings PatternSynonyms
-                        RecordWildCards
+    default-extensions: DerivingStrategies DuplicateRecordFields LambdaCase MonoLocalBinds
+                        NegativeLiterals NoFieldSelectors OverloadedRecordDot OverloadedStrings
+                        PatternSynonyms RecordWildCards
     other-extensions:   CPP DataKinds FunctionalDependencies Strict ViewPatterns
     ghc-options:        -Wall -Wcompat -feager-blackholing -threaded
     if impl(ghc >= 9.8.1)
@@ -38,6 +38,7 @@ common deps
         extra >= 1.6 && < 1.8,
         fmt >= 0.4 && < 0.7,
         megaparsec < 9.7,
+        mod >= 0.1.2 && < 0.3,
         parser-combinators < 1.4,
         safe < 0.4,
         strict >= 0.4 && < 0.6,
@@ -69,7 +70,6 @@ library
         ghc-trace-events < 0.2,
         -- hashable, unordered-containers,
         -- inspection-testing >= 0.3 && < 0.6,
-        mod >= 0.1.2 && < 0.3,
         -- poly >= 0.5.1, deepseq, finite-typelits, vector-sized,
         primitive >= 0.8 && < 0.10,
         random >= 1.2.1 && < 1.3,

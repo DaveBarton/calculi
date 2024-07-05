@@ -52,7 +52,7 @@ testOps cAG sumRange iTA cTA    = TestOps tSP tCheck gen vAG.eq
     gen             = sumL' vAG <$> Gen.list sumRange (liftA2 iCToV iTA.gen cTA.gen)
 
 type V          = SV.Vector Integer     -- the main type for testing SparseVector.hs
-type U          = Int                   -- V maps almost injectively to U
+type Y          = Int                   -- V maps almost injectively to Y
 type VL         = [Int :!: Integer]     -- only DistinctAscNzs; V->VL->V == id, so VL->V is a
                                             -- surjection
 -- type IM         = IM.IntMap             -- only nonzero terms; V->IM->V == id
@@ -68,15 +68,15 @@ tests           = testGroup "SparseVector" testsL
     cTA             = zzTestOps { gen = zzExpGen 200 }
     vTA             = testOps cAG (Range.linear 0 20) iTA cTA
     vAG             = SV.mkAG cAG
-    vToU            :: V -> U
-    iCToU i c       = (3 * i `rem` 101 + 5) * fromIntegral c
-    vToU            = SV.foldBIMap' (+) 0 iCToU
+    vToY            :: V -> Y
+    iCToY i c       = (3 * i `rem` 101 + 5) * fromIntegral c
+    vToY            = SV.foldBIMap' (+) 0 iCToY
     
     vToIM           = IM.fromDistinctAscList . map toLazy . SV.toDistinctAscNzs
     imNzsToV        = SV.fromDistinctAscNzs . map toStrict . IM.toAscList
     
-    testViaU        :: V -> U -> TestM ()   -- tAnnotate v, and check it maps to u
-    testViaU        = tImageEq vTA (===) vToU
+    testViaY        :: V -> Y -> TestM ()   -- tAnnotate v, and check it maps to u
+    testViaY        = tImageEq vTA (===) vToY
     testViaL        :: TestRel b -> (V -> b) -> (VL -> b) -> TestM ()   -- test the (V -> b)
     testViaL bTestEq f okF  = sameFun1TR vTA bTestEq f (okF . SV.toDistinctAscNzs)
     testEqToVL      :: V -> VL -> TestM ()
@@ -85,9 +85,9 @@ tests           = testGroup "SparseVector" testsL
     fromICTest      = singleTest "fromIC" $ do  -- test fromPIC, fromIMaybeC, fromNzIC
         i       <- genVis iTA
         c       <- genVis cTA
-        when (c /= 0) $ testViaU (SV.fromNzIC i c)       (iCToU i c)
-        testViaU (SV.fromPIC cAG.isZero i c)             (iCToU i c)
-        testViaU (SV.fromIMaybeC i (sJustIf (c /= 0) c)) (iCToU i c)
+        when (c /= 0) $ testViaY (SV.fromNzIC i c)       (iCToY i c)
+        testViaY (SV.fromPIC cAG.isZero i c)             (iCToY i c)
+        testViaY (SV.fromIMaybeC i (sJustIf (c /= 0) c)) (iCToY i c)
     distinctAscNzsTest  = singleTest "distinctAscNzs" $ do
         -- test toDistinctAscNzs, fromDistinctAscNzs
         v           <- genVis vTA
@@ -148,9 +148,9 @@ tests           = testGroup "SparseVector" testsL
     -- :@@@
     
     testsL          = [
-        singleTest "not eq, vToU" $ almostInjectiveTM vTA (==) vToU,
-        -- testViaU is now valid
-        singleTest "plus" $ homomTM vTA vAG.plus (===) (+) vToU,
+        singleTest "not eq, vToY" $ almostInjectiveTM vTA (==) vToY,
+        -- testViaY is now valid
+        singleTest "plus" $ homomTM vTA vAG.plus (===) (+) vToY,
         abelianGroupTests vTA (IsNontrivial True) vAG,
         -- vAG has now been tested (by the above lines), so vTA.gen and vTA.eq have been also
         testOnce "zero" $ vTA.tEq SV.zero vAG.zero, fromICTest, distinctAscNzsTest,

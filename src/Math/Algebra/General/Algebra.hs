@@ -10,7 +10,8 @@
     a type class, because a single type may admit more than one structure as a given type of
     algebra. (For example, consider quotient algebras such as @ℤ/pℤ@ or @R[X, Y]/(f, g)@ for
     various dynamically computed @p@, @f@, and @g@.) Also, treating algebras as first-class
-    values allows us to construct them at arbitrary times in arbitrary ways.
+    values allows us to construct them at arbitrary times in arbitrary ways. On the other hand,
+    type classes are necessary if inlining is desired, e.g. for primitive types.
     
     Note that a set of constructive (e.g. Haskell) values is an attempt to represent a set of
     abstract (mathematical) values. The abstract values have an implicit notion of (abstract)
