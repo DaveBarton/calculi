@@ -5,6 +5,7 @@ import Test.Tasty.Bench (Benchmark, bench, bgroup, defaultMain, whnfIO)
 
 import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
+import Math.Algebra.Commutative.Field.ZModPW
 import Math.Algebra.General.SparseSum
 import Math.Algebra.Commutative.GroebnerBasis
 import Math.Algebra.Commutative.UPoly
@@ -107,19 +108,20 @@ showNtSparse, showNtDense       :: Int -> String
 op2SF                   :: (c -> String) -> String -> (c -> String) -> c -> String
 op2SF xSF opS ySF c     = xSF c <> opS <> ySF c
 
-type ModP       = Mod 2_000_003
+type ModP       = ModWord32 2_000_003
 type SV         = SV.VectorU ModP
 
 benchesSV       :: [Benchmark]
-benchesSV       = {- picBenches <> plusBenches <> -} scaleBenches
+benchesSV       = {- -} picBenches <> plusBenches <> scaleBenches
   where
     vAG             = (SV.mkAG numAG :: AbelianGroup SV) { plus = SV.plusU }
     iCToV           = SV.fromPIC (== 0)
+    fromInt i       = fromInteger . fromIntegral $ (i :: Int)
     makeSV g (m, n) = sumL' vAG $ take m    -- sum m terms in dim n; 11 should not divide n
-        [iCToV (r `rem` n) (fromIntegral (r `rem` 11 - 5)) :: SV
+        [iCToV (r `rem` n) (fromInt (r `rem` 11 - 5)) :: SV
             | r <- randomsBy (uniformR (0, 11 * n - 1)) g]
     (g0, g1)        = split (mkStdGen 37)
-    iToVs i         = sum [SV.index 0 (SV.fromNzIC i n :: SV) i | n <- [1 .. 1000]]
+    iToVs i         = sum [SV.index 0 (SV.fromNzIC i (fromInt n) :: SV) i | n <- [1 .. 1000]]
     picBenches      = benchWhnf iToVs (("index iCToV x1000 " <>) . show) id <$>
                         [10 ^ n | n <- [0 :: Int, 2, 4, 6, 12, 18]]
     plusBenches     = bench2Whnf vAG.plus (("Add " <>) . show) (makeSV g0) (makeSV g1) <$>

@@ -3,7 +3,7 @@
     This module is normally imported qualified.  -}
 
 module Math.Algebra.Linear.TestSparseVector (
-    testOps, tests
+    testOpsAG, tests
 ) where
 
 import Math.Algebra.General.Algebra hiding (assert)
@@ -35,10 +35,10 @@ nToText26       :: Integral n => n -> Text
 nToText26 n     = T.singleton (toEnum (fromEnum 'a' + fromIntegral n `mod` 26))
 
 
-testOps         :: AbelianGroup c -> Range Int -> TestOps Int -> TestOps c ->
+testOpsAG       :: AbelianGroup c -> Range Int -> TestOps Int -> TestOps c ->
                     TestOps (SV.Vector c)
--- ^ @testOps cAG sumRange iTA cTA@. The caller tests @cAG@.
-testOps cAG sumRange iTA cTA    = TestOps tSP tCheck gen vAG.eq
+-- ^ @testOpsAG cAG sumRange iTA cTA@. The caller tests @cAG@.
+testOpsAG cAG sumRange iTA cTA  = TestOps tSP tCheck gen vAG.eq
   where
     tSP             = SV.showPrec iTA.tSP cTA.tSP
     tCheck notes v  = do
@@ -46,7 +46,7 @@ testOps cAG sumRange iTA cTA    = TestOps tSP tCheck gen vAG.eq
         tCheckBool (errs ++ notes1) (null errs)
       where
         notes1  = (tSP v).t : notes
-        errs    = SV.check cAG.isZero v
+        errs    = SV.check (const cAG.isZero) v
     vAG             = SV.mkAG cAG
     iCToV           = SV.fromPIC cAG.isZero
     gen             = sumL' vAG <$> Gen.list sumRange (liftA2 iCToV iTA.gen cTA.gen)
@@ -55,7 +55,7 @@ type V          = SV.Vector Integer     -- the main type for testing SparseVecto
 type Y          = Int                   -- V maps almost injectively to Y
 type VL         = [Int :!: Integer]     -- only DistinctAscNzs; V->VL->V == id, so VL->V is a
                                             -- surjection
--- type IM         = IM.IntMap             -- only nonzero terms; V->IM->V == id
+-- type IM         = IM.IntMap              -- only nonzero terms; V->IM->V == id
 
 tests           :: TestTree
 -- ^ Test the "Math.Algebra.Linear.SparseVector" module.
@@ -66,7 +66,7 @@ tests           = testGroup "SparseVector" testsL
     iTA             = numVarTestOps "u" (Gen.frequency
         [(10, Gen.int (Range.exponential 0 1_000_000)), (1, Gen.element largeInts)])
     cTA             = zzTestOps { gen = zzExpGen 200 }
-    vTA             = testOps cAG (Range.linear 0 20) iTA cTA
+    vTA             = testOpsAG cAG (Range.linear 0 20) iTA cTA
     vAG             = SV.mkAG cAG
     vToY            :: V -> Y
     iCToY i c       = (3 * i `rem` 101 + 5) * fromIntegral c
@@ -75,7 +75,7 @@ tests           = testGroup "SparseVector" testsL
     vToIM           = IM.fromDistinctAscList . map toLazy . SV.toDistinctAscNzs
     imNzsToV        = SV.fromDistinctAscNzs . map toStrict . IM.toAscList
     
-    testViaY        :: V -> Y -> TestM ()   -- tAnnotate v, and check it maps to u
+    testViaY        :: V -> Y -> TestM ()   -- tAnnotate v, and check it maps to y
     testViaY        = tImageEq vTA (===) vToY
     testViaL        :: TestRel b -> (V -> b) -> (VL -> b) -> TestM ()   -- test the (V -> b)
     testViaL bTestEq f okF  = sameFun1TR vTA bTestEq f (okF . SV.toDistinctAscNzs)

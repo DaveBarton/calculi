@@ -4,7 +4,7 @@
 
 module Math.Algebra.Commutative.Field.ZModPW (
     Proxy(Proxy), SomeNat(SomeNat), someNatVal, Mod,
-    zzModPW
+    zzModPW, ModWord32, ModWord16, ModWord8
 ) where
 
 import Math.Algebra.General.Algebra
@@ -28,48 +28,91 @@ zzModPW         = (field numAG (*) 1 fromInteger recip, balRep)
         in  toInteger (fromIntegral (if u > maxBalRep then u - p else u) :: Int)
 
 
--- types to save space from a (Mod m), e.g. in a PrimArray:
-
 toWord          :: Mod m -> Word
--- @@ move to Data.Mod.Word
+-- ^ The result is @\< @m@. @@ move to Data.Mod.Word
 toWord          = unsafeCoerce
 
 unsafeFromWord  :: Word -> Mod m
--- @@ move to Data.Mod.Word
+-- ^ The argument must be @\< m@. @@ move to Data.Mod.Word
 unsafeFromWord  = unsafeCoerce
 
-modW32          :: Word32 -> Mod m
-modW32          = unsafeFromWord . fromIntegral
 
-modW16          :: Word16 -> Mod m
-modW16          = unsafeFromWord . fromIntegral
-
-modW8           :: Word8 -> Mod m
-modW8           = unsafeFromWord . fromIntegral
-
-newtype ModWord32 (m :: Nat)    = ModW32 { unModW32 :: Word32 }
+-- | Like @Mod m@, but requiring @m \<= 2^32@; to save space e.g. in a @PrimArray@.
+newtype ModWord32 (m :: Nat)    = ModW32 { w32 :: Word32 {- ^ @w32 \< m@ -} }
     deriving newtype (Eq, Show, Prim)
 
-{- @@@@ need instance Num, better doc, ModWord16, ModWord8
+modWToW32       :: Mod m -> ModWord32 m
+modWToW32       = ModW32 . fromIntegral . toWord
+
+modW32ToW       :: ModWord32 m -> Mod m
+modW32ToW       = unsafeFromWord . fromIntegral . (.w32)
 
 instance KnownNat m => Num (ModWord32 m) where
-    ModW32 x + ModW32 y     = ModW32 $ modW32 @m x + modW32 @m y
+    x + y           = modWToW32 $ modW32ToW x + modW32ToW y
     {-# INLINE (+) #-}
-    ModW32 x - ModW32 y     = ModW32 $ modW32 @m x - modW32 @m y
+    x - y           = modWToW32 $ modW32ToW x - modW32ToW y
     {-# INLINE (-) #-}
-    ModW32 x * ModW32 y     = ModW32 $ modW32 @m x * modW32 @m y
+    x * y           = modWToW32 $ modW32ToW x * modW32ToW y
     {-# INLINE (*) #-}
--- @@@@:
-    negate (ModW32 x) = Mod $ negateMod (natVal mx) x
+    negate          = modWToW32 . negate . modW32ToW
     {-# INLINE negate #-}
-    abs = id
+    abs             = id
     {-# INLINE abs #-}
-    signum = const x
-    where
-      x = if natVal x > 1 then Mod 1 else Mod 0
+    signum          = modWToW32 . signum . modW32ToW
     {-# INLINE signum #-}
-    fromInteger x = mx
-    where
-      mx = Mod $ fromIntegerMod (natVal mx) x
+    fromInteger     = modWToW32 . fromInteger
     {-# INLINE fromInteger #-}
--}
+
+
+-- | Like @Mod m@, but requiring @m \<= 2^16@; to save space e.g. in a @PrimArray@.
+newtype ModWord16 (m :: Nat)    = ModW16 { w16 :: Word16 {- ^ @w16 \< m@ -} }
+    deriving newtype (Eq, Show, Prim)
+
+modWToW16       :: Mod m -> ModWord16 m
+modWToW16       = ModW16 . fromIntegral . toWord
+
+modW16ToW       :: ModWord16 m -> Mod m
+modW16ToW       = unsafeFromWord . fromIntegral . (.w16)
+
+instance KnownNat m => Num (ModWord16 m) where
+    x + y           = modWToW16 $ modW16ToW x + modW16ToW y
+    {-# INLINE (+) #-}
+    x - y           = modWToW16 $ modW16ToW x - modW16ToW y
+    {-# INLINE (-) #-}
+    x * y           = modWToW16 $ modW16ToW x * modW16ToW y
+    {-# INLINE (*) #-}
+    negate          = modWToW16 . negate . modW16ToW
+    {-# INLINE negate #-}
+    abs             = id
+    {-# INLINE abs #-}
+    signum          = modWToW16 . signum . modW16ToW
+    {-# INLINE signum #-}
+    fromInteger     = modWToW16 . fromInteger
+    {-# INLINE fromInteger #-}
+
+
+-- | Like @Mod m@, but requiring @m \<= 2^8@; to save space e.g. in a @PrimArray@.
+newtype ModWord8 (m :: Nat)    = ModW8 { w8 :: Word8 {- ^ @w8 \< m@ -} }
+    deriving newtype (Eq, Show, Prim)
+
+modWToW8        :: Mod m -> ModWord8 m
+modWToW8        = ModW8 . fromIntegral . toWord
+
+modW8ToW        :: ModWord8 m -> Mod m
+modW8ToW        = unsafeFromWord . fromIntegral . (.w8)
+
+instance KnownNat m => Num (ModWord8 m) where
+    x + y           = modWToW8 $ modW8ToW x + modW8ToW y
+    {-# INLINE (+) #-}
+    x - y           = modWToW8 $ modW8ToW x - modW8ToW y
+    {-# INLINE (-) #-}
+    x * y           = modWToW8 $ modW8ToW x * modW8ToW y
+    {-# INLINE (*) #-}
+    negate          = modWToW8 . negate . modW8ToW
+    {-# INLINE negate #-}
+    abs             = id
+    {-# INLINE abs #-}
+    signum          = modWToW8 . signum . modW8ToW
+    {-# INLINE signum #-}
+    fromInteger     = modWToW8 . fromInteger
+    {-# INLINE fromInteger #-}

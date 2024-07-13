@@ -29,16 +29,16 @@ module Math.Algebra.Linear.SparseVector (
     VectorA, Vector, VectorU, check,
     -- * Create
     zero, fromPIC, fromIMaybeC, fromNzIC, fromDistinctAscNzs,
+    -- * Query
+    isZero, index, indexMaybe, size, headPairMaybe, headPair, lastPairMaybe, lastPair,
+    -- * Fold
+    foldBIMap', iFoldR, iFoldL, toDistinctAscNzs,
+    -- * Map
+    mapC, mapNzFC, mapCMaybeWithIndex,
     -- * Modify/Permute
     vApply, invPermute, swap,
     -- * Split/Join
     split, join,
-    -- * Query
-    isZero, index, indexMaybe, size, headPairMaybe, headPair, lastPairMaybe, lastPair,
-    -- * Map
-    mapC, mapNzFC, mapCMaybeWithIndex,
-    -- * Fold
-    foldBIMap', iFoldR, iFoldL, toDistinctAscNzs,
     -- * Addition
     unionWith, plusU, mkAG,
     -- * Multiplication
@@ -111,28 +111,29 @@ type Vector c   = VectorA SmallArray c
 type VectorU c  = VectorA PrimArray c
 -- ^ A sparse flexible array of unboxed coordinates (elements).
 
-aCheck          :: (C.Contiguous arr, C.Element arr c) => Pred c -> Word64 -> arr c -> [Text]
-aCheck cIsZero bs64 nzs     =
-       ["Lengths don't match: "+|nBs|+" and "+|nNzs|+"" | nBs /= nNzs]
-    ++ [""+|nZs|+" zero elements" | nZs > 0]
+aCheck          :: (C.Contiguous arr, C.Element arr c) => Word64 -> arr c -> [Text]
+aCheck bs64 nzs     = ["Lengths don't match: "+|nBs|+" and "+|nNzs|+"" | nBs /= nNzs]
   where
     nBs     = popCount bs64
     nNzs    = C.size nzs
-    nZs     = C.foldl' (\n c -> if cIsZero c then n + 1 else n) (0 :: Int) nzs
 
-check           :: (C.Contiguous arr, C.Element arr c) => Pred c -> VectorA arr c -> [Text]
-{- ^ (Only needed for testing.) Check the integrity (internal invariants) of a vector, given a
-    @cIsZero@ predicate, and return a list of errors. The integrity of the individual
+check           :: (C.Contiguous arr, C.Element arr c) =>
+                    (Int -> c -> Bool) -> VectorA arr c -> [Text]
+{- ^ (Only needed for testing.) Check the integrity (internal invariants) of a vector, given an
+    @omitIC@ predicate, and return a list of errors. The internal integrity of the individual
     coordinates is not checked. -}
-check cIsZero   = go (finiteBitSize (0 :: Int))
+check omitIC v  = go (finiteBitSize (0 :: Int)) v
+            `orL` ["Indices not omitted: "+|zIs|+"" | not (null zIs)]
   where
-    go _     (SVE bs nzs)       = aCheck cIsZero bs nzs
+    go _     (SVE bs nzs)       = aCheck bs nzs
     go parW2 (SVV bs iW2 nzts)  =
            ["iW2 too big: "+|iW2|+" >= "+|parW2|+"" | iW2 >= parW2]
         ++ ["iW2 illegal: "+|iW2|+""                | iW2 < 6 || iW2 `rem` 6 /= 0]
-        ++ aCheck isZero bs nzts
+        ++ aCheck bs nzts
         ++ ["bs <= 1: "+|show0x bs|+""              | bs <= 1]
         ++ foldMap (go iW2) nzts
+    orL x ~y    = if null x then y else x
+    ~zIs        = iFoldR (\i c t -> if omitIC i c then i : t else t) [] v
 
 getIW2          :: VectorA arr c -> Int
 getIW2 (SVE {})         = 0
@@ -158,33 +159,6 @@ svv bs iW2 nzts
     | bs == 1       = C.index nzts 0
     | otherwise     = zero
 {-# SPECIALIZE svv :: Word64 -> Int -> SmallArray (Vector c) -> Vector c #-}
-
-mkSv            :: C.Contiguous arr' =>
-    (Word64 -> arr c -> Word64 :!: arr' c') ->
-    (Word64 -> SmallArray (VectorA arr c) -> Word64 :!: SmallArray (VectorA arr' c')) ->
-    VectorA arr c -> VectorA arr' c'
-mkSv sveF _ (SVE bs nzs)        = S.uncurry SVE $ sveF bs nzs
-mkSv _ svvF (SVV bs iW2 nzts)   = svv bs' iW2 nzts'
-  where
-    bs' :!: nzts'   = svvF bs nzts
-
-combineSv       :: C.Contiguous arr2 =>
-    (Word64 -> arr0 c0 -> Word64 -> arr1 c1 -> Word64 :!: arr2 c2) ->
-    (Word64 -> SmallArray (VectorA arr0 c0) -> Word64 -> SmallArray (VectorA arr1 c1) ->
-        Word64 :!: SmallArray (VectorA arr2 c2)) ->
-    VectorA arr0 c0 -> VectorA arr1 c1 -> VectorA arr2 c2
-{- For speed, the caller may want to check isZero, or getIW2 x < or > getIW2 y. Else note svvF
-    may be passed an unnormalized argument. -}
-combineSv sveF svvF     = go
-  where
-    go (SVE bs0 nzs0) (SVE bs1 nzs1)    = S.uncurry SVE $ sveF bs0 nzs0 bs1 nzs1
-    go x y
-        | getIW2 x > getIW2 y           = go x (SVV 1 (getIW2 y + 6) (C.singleton y))
-        | getIW2 x < getIW2 y           = go (SVV 1 (getIW2 x + 6) (C.singleton x)) y
-    go (SVV bs0 iW2 nzts0) (SVV bs1 _ nzts1)    = svv bs2 iW2 nzts2
-      where
-        bs2 :!: nzts2   = svvF bs0 nzts0 bs1 nzts1
-    go _ _                              = undefined
 
 fromPIC         :: (C.Contiguous arr, C.Element arr c) => Pred c -> Int -> c -> VectorA arr c
 -- ^ Takes a @cIsZero@ predicate, and creates a singleton or empty result. \(d\) steps.
@@ -240,104 +214,6 @@ fromDistinctAscNzs ((i0 :!: c0) : t0)   = runST $ do
     S.fst <$> mkSV (trunc6 (fbTruncLog2 (maxBound :: Int))) i0 c0 t0
 {-# SPECIALIZE fromDistinctAscNzs :: [Int :!: c] -> Vector c #-}
 
--- * Modify/Permute
-
-aVApply         :: (C.Contiguous dArr, C.Element dArr d, C.Contiguous cArr, C.Element cArr c) =>
-                    (d -> Op1 (S.Maybe c)) -> Word64 -> dArr d -> Word64 -> cArr c ->
-                    Word64 :!: cArr c
-aVApply f bs0 nzs0 bs1 nzs1     = runST $ do
-    let bsAll   = bs0 .|. bs1
-    nzs2        <- C.new (popCount bsAll)
-    let go 0      bs2 _  _  i2  = (bs2 :!: ) <$> unsafeShrinkAndFreeze nzs2 i2
-        go bsTodo bs2 i0 i1 i2
-            | bs0 .&. b == 0        = do
-                C.write nzs2 i2 $! C.index nzs1 i1
-                go bsTodo' bs2 i0 (i1 + 1) (i2 + 1)
-            | bs1 .&. b == 0        = goD S.Nothing i1
-            | otherwise             = goD (S.Just (C.index nzs1 i1)) (i1 + 1)
-          where
-            b               = lowNzBit bsTodo
-            bsTodo'         = bsTodo .^. b
-            goD mc1 i1'     = do
-                let mc          = f !$ C.index nzs0 i0 !$ mc1
-                case mc of
-                    S.Nothing       -> go bsTodo' (bs2 .^. b) (i0 + 1) i1' i2
-                    S.Just c        -> do
-                        C.write nzs2 i2 c
-                        go bsTodo' bs2 (i0 + 1) i1' (i2 + 1)
-    go bsAll bsAll 0 0 0
-{-# SPECIALIZE aVApply :: (d -> Op1 (S.Maybe c)) -> Word64 -> SmallArray d ->
-    Word64 -> SmallArray c -> Word64 :!: SmallArray c #-}
-
-vApply          :: (C.Contiguous dArr, C.Element dArr d, C.Contiguous cArr, C.Element cArr c) =>
-                    (d -> Op1 (S.Maybe c)) -> VectorA dArr d -> Op1 (VectorA cArr c)
-{- ^ @vApply f ds v@ applies @f ds[i]@ to @v[i]@, for each non-missing element in @ds@.
-    Usually \(m + n\) steps, though \(m\) if the input trees have few common nodes, or up to
-    \(64 (d - log_{64} m) m\) if the first input is very sparse and the second input is very
-    dense. -}
-vApply f ds0 v0     = fromMaybeSv $ go ds0 (toMaybeSv v0)
-  where
-    go ds mv
-        | S.Nothing <- mv   = toMaybeSv $ mapCMaybeWithIndex (\_i d -> f d S.Nothing) ds
-        | isZero ds         = mv
-        | S.Just v  <- mv   = toMaybeSv $ combineSv (aVApply f) (aVApply go) ds v
-{-# SPECIALIZE vApply :: (d -> Op1 (S.Maybe c)) -> Vector d -> Op1 (Vector c) #-}
-
-invPermute      :: (C.Contiguous jArr, C.Element jArr Int, C.Contiguous arr, C.Element arr c) =>
-                    VectorA jArr Int -> Op1 (VectorA arr c)
-{- ^ @invPermute js v@ applies the inverse of the sparse permutation @js@, moving each
-    @v[js[i]]@ to index @i@ in the result. If @js[i]@ is missing in @js@, then @v[i]@ is used.
-    Thus the result is the same as @vApply (\j _ -> indexMaybe v j) js v@. \(d m\) steps if @js@
-    is dense, or up to \(d m + 64 (d - log_{64} m) m\) steps if @js@ is very sparse and @v@ is
-    very dense. -}
-invPermute js v     = vApply (\j _ -> indexMaybe v j) js v
-{-# SPECIALIZE invPermute :: Vector Int -> Op1 (Vector c) #-}
-
-swap            :: (C.Contiguous arr, C.Element arr c) => Int -> Int -> Op1 (VectorA arr c)
--- ^ swap two coordinates. Up to \(128 d\) steps for a very dense vector.
-swap i j
-    | i < j     = invPermute (fromDistinctAscNzs [i :!: j, j :!: i] :: Vector Int)
-    | i > j     = swap j i
-    | otherwise = id
-{-# SPECIALIZE swap :: Int -> Int -> Op1 (Vector c) #-}
-
--- * Split/Join
-
-split           :: (C.Contiguous arr, C.Element arr c) => Int -> VectorA arr c ->
-                    VectorA arr c :!: VectorA arr c
-{- ^ @split i v@ splits @v@ into parts with indices @\< i@, and @>= i@. Up to \(64 d\) steps
-    for a dense @v@, or fewer if @i@ is a multiple of a high power of 2. -}
-split i         = go (max i 0)
-  where
-    go k w
-        | w.bs == lowBs         = w :!: zero
-        | k == 0                = zero :!: w
-        | SVE bs nzs    <- w    = SVE lowBs          (C.clone (C.slice nzs 0 j))
-                              :!: SVE (bs .^. lowBs) (C.clone (C.slice nzs j (n1s - j)))
-        | SVV bs iW2 nzts   <- w,
-          let highBs        = bs .&. (negate 2 !<<. k0)
-              v0            = svv lowBs  iW2 (C.clone (C.slice nzts 0 j))
-              j1            = if bs .&. b == 0 then j else j + 1
-              v3            = svv highBs iW2 (C.clone (C.slice nzts j1 (n1s - j1)))
-            = if bs .&. b == 0 then v0 :!: v3 else
-                let v1 :!: v2   = go (k - k0 !<<. iW2) (C.index nzts j)
-                    raise v     = if isZero v then v else svv b iW2 (C.singleton v)
-                in  join v0 (raise v1) :!: join (raise v2) v3
-      where
-        k0          = k !>>. getIW2 w
-        b           = if k0 >= 64 then 0 else b64 k0
-        lowBs       = w.bs .&. (b - 1)
-        ~j          = popCount lowBs
-        ~n1s        = popCount w.bs
-{-# SPECIALIZE split :: Int -> Vector c -> Vector c :!: Vector c #-}
-
-join            :: (C.Contiguous arr, C.Element arr c) => Op2 (VectorA arr c)
-{- ^ Concatenate two vectors, e.g. undoing a 'split'. The indices in the first must be smaller
-    than the indices in the second. Up to \(64 d\) steps for a dense vector, or fewer if the
-    parts were split at a multiple of a high power of 2. -}
-join            = unionWith (const False) (\_ _ -> error "SV.join: Non-disjoint vectors")
-{-# SPECIALIZE join :: Op2 (Vector c) #-}
-
 -- * Query
 
 isZero          :: VectorA arr c -> Bool
@@ -392,74 +268,6 @@ lastPair        :: (C.Contiguous arr, C.Element arr c) => VectorA arr c -> Int :
 -- ^ @S.fromJust . lastPairMaybe@. \(d\) steps.
 lastPair        = S.fromJust . lastPairMaybe
 {-# SPECIALIZE lastPair :: Vector c -> Int :!: c #-}
-
--- * Map
-
-aMapC           :: (C.Contiguous arr, C.Element arr c, C.Contiguous arr', C.Element arr' c') =>
-                    Pred c' -> (c -> c') -> Word64 -> arr c -> Word64 :!: arr' c'
--- assumes @popCount bs == C.size nzs@
-aMapC is0 f bs nzs    = assert (popCount bs == C.size nzs) $ runST $ do
-    nzs'    <- C.new (C.size nzs)
-    let go 0      bs' _ j'  = (bs' :!: ) <$> unsafeShrinkAndFreeze nzs' j'
-        go bsTodo bs' j j'  = if is0 c' then go (bsTodo .^. b) (bs' .^. b) (j + 1) j' else do
-            C.write nzs' j' c'
-            go (bsTodo .^. b) bs' (j + 1) (j' + 1)
-          where
-            b       = lowNzBit bsTodo
-            c'      = f $! C.index nzs j
-    go bs bs 0 0
-{-# SPECIALIZE aMapC :: Pred c' -> (c -> c') -> Word64 -> SmallArray c ->
-    Word64 :!: SmallArray c' #-}
-
-mapC            :: (C.Contiguous arr, C.Element arr c, C.Contiguous arr', C.Element arr' c') =>
-                    Pred c' -> (c -> c') -> VectorA arr c -> VectorA arr' c'
-{- ^ @mapC isZero'@ assumes the @(c -> c')@ takes zero to zero. Usually \(m\) steps, or up to
-    \((d - log_{64} m) m\) for a very sparse vector. -}
-mapC is0 f  = go
-  where
-    go      = mkSv (aMapC is0 f) (aMapC isZero go)
-{-# SPECIALIZE mapC :: Pred c' -> (c -> c') -> Vector c -> Vector c' #-}
-
-mapNzFC         :: (C.Contiguous arr, C.Element arr c, C.Contiguous arr', C.Element arr' c') =>
-                    (c -> c') -> VectorA arr c -> VectorA arr' c'
-{- ^ assumes the @(c -> c')@ takes zero to zero, and nonzero values to nonzero values. Usually
-    \(m\) steps, or up to \((d - log_{64} m) m\) for a very sparse vector. -}
-mapNzFC f (SVE bs nzs)          = SVE bs (C.map' f nzs)
-mapNzFC f (SVV bs iW2 nzts)     = SVV bs iW2 (C.map' (mapNzFC f) nzts)
-{-# SPECIALIZE mapNzFC :: (c -> c') -> Vector c -> Vector c' #-}
-
-aMapCWithIndex  :: (C.Contiguous arr, C.Element arr c, C.Contiguous arr', C.Element arr' c') =>
-                    (Int -> c -> S.Maybe c') -> Int -> Int -> Word64 -> arr c ->
-                    Word64 :!: arr' c'
-aMapCWithIndex f start iW2 bs nzs   = assert (popCount bs == C.size nzs) $ runST $ do
-    nzs'    <- C.new (C.size nzs)
-    let go 0      bs' _ j'  = (bs' :!: ) <$> unsafeShrinkAndFreeze nzs' j'
-        go bsTodo bs' j j'  = case mc' of
-            S.Nothing   -> go (bsTodo .^. b) (bs' .^. b) (j + 1) j'
-            S.Just c'   -> do
-                C.write nzs' j' c'
-                go (bsTodo .^. b) bs' (j + 1) (j' + 1)
-          where
-            i0      = countTrailingZeros bsTodo
-            mc'     = f !$ start + i0 !<<. iW2 !$ C.index nzs j
-            b       = b64 i0
-    go bs bs 0 0
-{-# SPECIALIZE aMapCWithIndex :: (Int -> c -> S.Maybe c') -> Int -> Int ->
-                    Word64 -> SmallArray c -> Word64 :!: SmallArray c' #-}
-
-mapCMaybeWithIndex  :: (C.Contiguous arr, C.Element arr c, C.Contiguous arr', C.Element arr' c')
-                        => (Int -> c -> S.Maybe c') -> VectorA arr c -> VectorA arr' c'
-{- ^ @mapCMaybeWithIndex f@ assumes @f i zero@ is zero, for all @i@. Usually \(m\) steps, or up
-    to \((d - log_{64} m) m\) for a very sparse vector. -}
-mapCMaybeWithIndex f    = fromMaybeSv . go 0
-  where
-    go start (SVE bs nzs)       = toMaybeSv $ SVE bs' nzs'
-      where
-        bs' :!: nzs'    = aMapCWithIndex f start 0 bs nzs
-    go start (SVV bs iW2 nzts)  = toMaybeSv $ svv bs' iW2 nzts'
-      where
-        bs' :!: nzts'   = aMapCWithIndex go start iW2 bs nzts
-{-# SPECIALIZE mapCMaybeWithIndex :: (Int -> c -> S.Maybe c') -> Vector c -> Vector c' #-}
 
 -- * Fold
 
@@ -539,6 +347,200 @@ toDistinctAscNzs    :: (C.Contiguous arr, C.Element arr c) => VectorA arr c -> [
 -- ^ @toDistinctAscNzs = iFoldR (\i c -> ((i :!: c) :)) []@. \(m\) steps.
 toDistinctAscNzs    = iFoldR (\i c -> ((i :!: c) :)) []
 {-# SPECIALIZE toDistinctAscNzs :: Vector c -> [Int :!: c] #-}
+
+-- * Map
+
+mkSv            :: C.Contiguous arr' =>
+    (Word64 -> arr c -> Word64 :!: arr' c') ->
+    (Word64 -> SmallArray (VectorA arr c) -> Word64 :!: SmallArray (VectorA arr' c')) ->
+    VectorA arr c -> VectorA arr' c'
+mkSv sveF _ (SVE bs nzs)        = S.uncurry SVE $ sveF bs nzs
+mkSv _ svvF (SVV bs iW2 nzts)   = svv bs' iW2 nzts'
+  where
+    bs' :!: nzts'   = svvF bs nzts
+
+combineSv       :: C.Contiguous arr2 =>
+    (Word64 -> arr0 c0 -> Word64 -> arr1 c1 -> Word64 :!: arr2 c2) ->
+    (Word64 -> SmallArray (VectorA arr0 c0) -> Word64 -> SmallArray (VectorA arr1 c1) ->
+        Word64 :!: SmallArray (VectorA arr2 c2)) ->
+    VectorA arr0 c0 -> VectorA arr1 c1 -> VectorA arr2 c2
+{- For speed, the caller may want to check isZero, or getIW2 x < or > getIW2 y. Else note svvF
+    may be passed an unnormalized argument. -}
+combineSv sveF svvF     = go
+  where
+    go (SVE bs0 nzs0) (SVE bs1 nzs1)    = S.uncurry SVE $ sveF bs0 nzs0 bs1 nzs1
+    go x y
+        | getIW2 x > getIW2 y           = go x (SVV 1 (getIW2 y + 6) (C.singleton y))
+        | getIW2 x < getIW2 y           = go (SVV 1 (getIW2 x + 6) (C.singleton x)) y
+    go (SVV bs0 iW2 nzts0) (SVV bs1 _ nzts1)    = svv bs2 iW2 nzts2
+      where
+        bs2 :!: nzts2   = svvF bs0 nzts0 bs1 nzts1
+    go _ _                              = undefined
+
+aMapC           :: (C.Contiguous arr, C.Element arr c, C.Contiguous arr', C.Element arr' c') =>
+                    Pred c' -> (c -> c') -> Word64 -> arr c -> Word64 :!: arr' c'
+-- assumes @popCount bs == C.size nzs@
+aMapC is0 f bs nzs    = assert (popCount bs == C.size nzs) $ runST $ do
+    nzs'    <- C.new (C.size nzs)
+    let go 0      bs' _ j'  = (bs' :!: ) <$> unsafeShrinkAndFreeze nzs' j'
+        go bsTodo bs' j j'  = if is0 c' then go (bsTodo .^. b) (bs' .^. b) (j + 1) j' else do
+            C.write nzs' j' c'
+            go (bsTodo .^. b) bs' (j + 1) (j' + 1)
+          where
+            b       = lowNzBit bsTodo
+            c'      = f $! C.index nzs j
+    go bs bs 0 0
+{-# SPECIALIZE aMapC :: Pred c' -> (c -> c') -> Word64 -> SmallArray c ->
+    Word64 :!: SmallArray c' #-}
+
+mapC            :: (C.Contiguous arr, C.Element arr c, C.Contiguous arr', C.Element arr' c') =>
+                    Pred c' -> (c -> c') -> VectorA arr c -> VectorA arr' c'
+{- ^ @mapC isZero'@ assumes the @(c -> c')@ takes zero to zero. Usually \(m\) steps, or up to
+    \((d - log_{64} m) m\) for a very sparse vector. -}
+mapC is0 f  = go
+  where
+    go      = mkSv (aMapC is0 f) (aMapC isZero go)
+{-# SPECIALIZE mapC :: Pred c' -> (c -> c') -> Vector c -> Vector c' #-}
+
+mapNzFC         :: (C.Contiguous arr, C.Element arr c, C.Contiguous arr', C.Element arr' c') =>
+                    (c -> c') -> VectorA arr c -> VectorA arr' c'
+{- ^ assumes the @(c -> c')@ takes zero to zero, and nonzero values to nonzero values. Usually
+    \(m\) steps, or up to \((d - log_{64} m) m\) for a very sparse vector. -}
+mapNzFC f (SVE bs nzs)          = SVE bs (C.map' f nzs)
+mapNzFC f (SVV bs iW2 nzts)     = SVV bs iW2 (C.map' (mapNzFC f) nzts)
+{-# SPECIALIZE mapNzFC :: (c -> c') -> Vector c -> Vector c' #-}
+
+aMapCMaybeWithIndex     :: (C.Contiguous arr, C.Element arr c, C.Contiguous arr',
+                            C.Element arr' c') => (Int -> c -> S.Maybe c') -> Int ->
+                            Word64 -> Int -> arr c -> Word64 :!: arr' c'
+aMapCMaybeWithIndex f start bs iW2 nzs  = assert (popCount bs == C.size nzs) $ runST $ do
+    nzs'    <- C.new (C.size nzs)
+    let go 0      bs' _ j'  = (bs' :!: ) <$> unsafeShrinkAndFreeze nzs' j'
+        go bsTodo bs' j j'  = case mc' of
+            S.Nothing   -> go (bsTodo .^. b) (bs' .^. b) (j + 1) j'
+            S.Just c'   -> do
+                C.write nzs' j' c'
+                go (bsTodo .^. b) bs' (j + 1) (j' + 1)
+          where
+            i0      = countTrailingZeros bsTodo
+            mc'     = f !$ start + i0 !<<. iW2 !$ C.index nzs j
+            b       = b64 i0
+    go bs bs 0 0
+{-# SPECIALIZE aMapCMaybeWithIndex :: (Int -> c -> S.Maybe c') -> Int ->
+                    Word64 -> Int -> SmallArray c -> Word64 :!: SmallArray c' #-}
+
+mapCMaybeWithIndex  :: (C.Contiguous arr, C.Element arr c, C.Contiguous arr', C.Element arr' c')
+                        => (Int -> c -> S.Maybe c') -> VectorA arr c -> VectorA arr' c'
+{- ^ @mapCMaybeWithIndex f@ assumes @f i zero@ is zero, for all @i@. Usually \(m\) steps, or up
+    to \((d - log_{64} m) m\) for a very sparse vector. -}
+mapCMaybeWithIndex f    = fromMaybeSv . go 0
+  where
+    go start (SVE bs nzs)       = toMaybeSv $ SVE bs' nzs'
+      where
+        bs' :!: nzs'    = aMapCMaybeWithIndex f start bs 0 nzs
+    go start (SVV bs iW2 nzts)  = toMaybeSv $ svv bs' iW2 nzts'
+      where
+        bs' :!: nzts'   = aMapCMaybeWithIndex go start bs iW2 nzts
+{-# SPECIALIZE mapCMaybeWithIndex :: (Int -> c -> S.Maybe c') -> Vector c -> Vector c' #-}
+
+-- * Modify/Permute
+
+aVApply         :: (C.Contiguous dArr, C.Element dArr d, C.Contiguous cArr, C.Element cArr c) =>
+                    (d -> Op1 (S.Maybe c)) -> Word64 -> dArr d -> Word64 -> cArr c ->
+                    Word64 :!: cArr c
+aVApply f bs0 nzs0 bs1 nzs1     = runST $ do
+    let bsAll   = bs0 .|. bs1
+    nzs2        <- C.new (popCount bsAll)
+    let go 0      bs2 _  _  i2  = (bs2 :!: ) <$> unsafeShrinkAndFreeze nzs2 i2
+        go bsTodo bs2 i0 i1 i2
+            | bs0 .&. b == 0        = do
+                C.write nzs2 i2 $! C.index nzs1 i1
+                go bsTodo' bs2 i0 (i1 + 1) (i2 + 1)
+            | bs1 .&. b == 0        = goD S.Nothing i1
+            | otherwise             = goD (S.Just (C.index nzs1 i1)) (i1 + 1)
+          where
+            b               = lowNzBit bsTodo
+            bsTodo'         = bsTodo .^. b
+            goD mc1 i1'     = do
+                let mc          = f !$ C.index nzs0 i0 !$ mc1
+                case mc of
+                    S.Nothing       -> go bsTodo' (bs2 .^. b) (i0 + 1) i1' i2
+                    S.Just c        -> do
+                        C.write nzs2 i2 c
+                        go bsTodo' bs2 (i0 + 1) i1' (i2 + 1)
+    go bsAll bsAll 0 0 0
+{-# SPECIALIZE aVApply :: (d -> Op1 (S.Maybe c)) -> Word64 -> SmallArray d ->
+    Word64 -> SmallArray c -> Word64 :!: SmallArray c #-}
+
+vApply          :: (C.Contiguous dArr, C.Element dArr d, C.Contiguous cArr, C.Element cArr c) =>
+                    ({- @@@@ Int -> -} d -> Op1 (S.Maybe c)) -> VectorA dArr d -> Op1 (VectorA cArr c)
+{- ^ @vApply f ds v@ applies @f {- @@@ i -} ds[i]@ to @v[i]@, for each non-missing element in @ds@.
+    Usually \(m + n\) steps, though \(m\) if the input trees have few common nodes, or up to
+    \(64 (d - log_{64} m) m\) if the first input is very sparse and the second input is very
+    dense. -}
+vApply f ds0 v0     = fromMaybeSv $ go 0 ds0 (toMaybeSv v0)
+  where
+    go start ds mv
+        | S.Nothing <- mv   = toMaybeSv $
+                                mapCMaybeWithIndex (\i d -> f {- @@@ (start + i) -} d S.Nothing) ds
+        | isZero ds         = mv
+        | S.Just v  <- mv   = toMaybeSv $ combineSv (aVApply f) (aVApply (go start)) ds v
+{-# SPECIALIZE vApply :: (d -> Op1 (S.Maybe c)) -> Vector d -> Op1 (Vector c) #-}
+
+invPermute      :: (C.Contiguous arr, C.Element arr c) => VectorU Int -> Op1 (VectorA arr c)
+{- ^ @invPermute js v@ applies the inverse of the sparse permutation @js@, moving each
+    @v[js[i]]@ to index @i@ in the result. If @js[i]@ is missing in @js@, then @v[i]@ is used.
+    Thus the result is the same as @vApply (\j _ -> indexMaybe v j) js v@. \(d m\) steps if @js@
+    is dense, or up to \(d m + 64 (d - log_{64} m) m\) steps if @js@ is very sparse and @v@ is
+    very dense. -}
+invPermute js v     = vApply (\j _ -> indexMaybe v j) js v
+{-# SPECIALIZE invPermute :: VectorU Int -> Op1 (Vector c) #-}
+{-# SPECIALIZE invPermute :: VectorU Int -> Op1 (VectorU Int) #-}
+
+swap            :: (C.Contiguous arr, C.Element arr c) => Int -> Int -> Op1 (VectorA arr c)
+-- ^ swap two coordinates. Up to \(128 d\) steps for a very dense vector.
+swap i j
+    | i < j     = invPermute (fromDistinctAscNzs [i :!: j, j :!: i])
+    | i > j     = swap j i
+    | otherwise = id
+{-# SPECIALIZE swap :: Int -> Int -> Op1 (Vector c) #-}
+
+-- * Split/Join
+
+split           :: (C.Contiguous arr, C.Element arr c) => Int -> VectorA arr c ->
+                    VectorA arr c :!: VectorA arr c
+{- ^ @split i v@ splits @v@ into parts with indices @\< i@, and @>= i@. Up to \(64 d\) steps
+    for a dense @v@, or fewer if @i@ is a multiple of a high power of 2. -}
+split i         = go (max i 0)
+  where
+    go k w
+        | w.bs == lowBs         = w :!: zero
+        | k == 0                = zero :!: w
+        | SVE bs nzs    <- w    = SVE lowBs          (C.clone (C.slice nzs 0 j))
+                              :!: SVE (bs .^. lowBs) (C.clone (C.slice nzs j (n1s - j)))
+        | SVV bs iW2 nzts   <- w,
+          let highBs        = bs .&. (negate 2 !<<. k0)
+              v0            = svv lowBs  iW2 (C.clone (C.slice nzts 0 j))
+              j1            = if bs .&. b == 0 then j else j + 1
+              v3            = svv highBs iW2 (C.clone (C.slice nzts j1 (n1s - j1)))
+            = if bs .&. b == 0 then v0 :!: v3 else
+                let v1 :!: v2   = go (k - k0 !<<. iW2) (C.index nzts j)
+                    raise v     = if isZero v then v else svv b iW2 (C.singleton v)
+                in  join v0 (raise v1) :!: join (raise v2) v3
+      where
+        k0          = k !>>. getIW2 w
+        b           = if k0 >= 64 then 0 else b64 k0
+        lowBs       = w.bs .&. (b - 1)
+        ~j          = popCount lowBs
+        ~n1s        = popCount w.bs
+{-# SPECIALIZE split :: Int -> Vector c -> Vector c :!: Vector c #-}
+
+join            :: (C.Contiguous arr, C.Element arr c) => Op2 (VectorA arr c)
+{- ^ Concatenate two vectors, e.g. undoing a 'split'. The indices in the first must be smaller
+    than the indices in the second. Up to \(64 d\) steps for a dense vector, or fewer if the
+    parts were split at a multiple of a high power of 2. -}
+join            = unionWith (const False) (\_ _ -> error "SV.join: Non-disjoint vectors")
+{-# SPECIALIZE join :: Op2 (Vector c) #-}
 
 -- * Addition
 
