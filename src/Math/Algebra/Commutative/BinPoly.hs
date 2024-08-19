@@ -31,7 +31,6 @@ import Control.Monad.Extra (pureIf)
 import Data.Bits ((.&.), (.|.), bit, complement, countLeadingZeros, popCount, testBit,
     unsafeShiftL, unsafeShiftR)
 import Data.Foldable (toList)
-import Data.List (sortBy)
 import Data.Maybe (catMaybes, fromJust)
 import Data.Word (Word64)
 import StrictList2 (pattern (:!))
@@ -115,7 +114,7 @@ data BPOtherOps ev vals     = BPOtherOps {
 }
 
 bpSortCancel            :: Cmp ev -> SL.List ev -> BinPoly ev
-bpSortCancel evCmp evs  = cancelRev (sortBy evCmp (SL.toListReversed evs)) SL.Nil
+bpSortCancel evCmp evs  = cancelRev (sortLBy evCmp (SL.toListReversed evs)) SL.Nil
   where
     cancelRev (v : t1@(w : ~t2)) r
         | evCmp v w == EQ   = cancelRev t2 r

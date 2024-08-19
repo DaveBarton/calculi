@@ -28,10 +28,6 @@ zzModPW         = (field numAG (*) 1 fromInteger recip, balRep)
         in  toInteger (fromIntegral (if u > maxBalRep then u - p else u) :: Int)
 
 
-toWord          :: Mod m -> Word
--- ^ The result is @\< @m@. @@ move to Data.Mod.Word
-toWord          = unsafeCoerce
-
 unsafeFromWord  :: Word -> Mod m
 -- ^ The argument must be @\< m@. @@ move to Data.Mod.Word
 unsafeFromWord  = unsafeCoerce
@@ -42,7 +38,7 @@ newtype ModWord32 (m :: Nat)    = ModW32 { w32 :: Word32 {- ^ @w32 \< m@ -} }
     deriving newtype (Eq, Show, Prim)
 
 modWToW32       :: Mod m -> ModWord32 m
-modWToW32       = ModW32 . fromIntegral . toWord
+modWToW32       = ModW32 . fromIntegral . unMod
 
 modW32ToW       :: ModWord32 m -> Mod m
 modW32ToW       = unsafeFromWord . fromIntegral . (.w32)
@@ -69,7 +65,7 @@ newtype ModWord16 (m :: Nat)    = ModW16 { w16 :: Word16 {- ^ @w16 \< m@ -} }
     deriving newtype (Eq, Show, Prim)
 
 modWToW16       :: Mod m -> ModWord16 m
-modWToW16       = ModW16 . fromIntegral . toWord
+modWToW16       = ModW16 . fromIntegral . unMod
 
 modW16ToW       :: ModWord16 m -> Mod m
 modW16ToW       = unsafeFromWord . fromIntegral . (.w16)
@@ -96,7 +92,7 @@ newtype ModWord8 (m :: Nat)    = ModW8 { w8 :: Word8 {- ^ @w8 \< m@ -} }
     deriving newtype (Eq, Show, Prim)
 
 modWToW8        :: Mod m -> ModWord8 m
-modWToW8        = ModW8 . fromIntegral . toWord
+modWToW8        = ModW8 . fromIntegral . unMod
 
 modW8ToW        :: ModWord8 m -> Mod m
 modW8ToW        = unsafeFromWord . fromIntegral . (.w8)

@@ -88,13 +88,6 @@ benchesStrictList   =
         benchWhnf (force . map (+ 1)) (showSize "force map")       numsLL]
 
 
-intRing         :: Ring Int
-intRing         = numRing rFlags (const intDiv)
-  where
-    rFlags  = RingFlags { commutative = True, noZeroDivisors = False, nzInverses = False }
-    intDiv y 0      = (0, y)
-    intDiv y m      = quotRem y m
-
 divDeep'        :: Ring r -> (r -> r -> S.Pair r r)
 divDeep' rR     = toStrict .* rR.bDiv (IsDeep True)
 

@@ -59,6 +59,7 @@ module Math.Algebra.General.Algebra (
     Cmp,
     cmpEq,
     maxBy, minBy,
+    isSortedBy,
     
     -- * Monoids and Groups
     -- $monoids
@@ -96,7 +97,7 @@ module Math.Algebra.General.Algebra (
     -- * Basic numeric rings
     numAG, numRing,
     -- ** Integer
-    zzAG, zzDiv, zzRing,
+    zzAG, zzDiv, zzRing, intRing,
     -- ** Double
     dblAG, dblRing,
     
@@ -123,7 +124,7 @@ module Math.Algebra.General.Algebra (
 #if ! MIN_VERSION_base(4, 18, 0)
     liftA2,
 #endif
-    assert
+    assert, sortLBy
 ) where
 
 import GHC.Records
@@ -132,6 +133,7 @@ import GHC.Records
 import Control.Applicative (liftA2)     -- unnecesary in base 4.18+, since in Prelude
 #endif
 import Control.Exception (assert)
+import Control.Parallel.Cooperative (sortLBy)
 import Data.Bifunctor (bimap, second)
 import Data.Char (isDigit)
 #if ! MIN_VERSION_base(4, 20, 0)
@@ -242,6 +244,16 @@ maxBy cmp x y   = if cmp x y /= GT then y else x
 minBy           :: Cmp a -> Op2 a
 -- ^ > minBy cmp x y = if cmp x y /= GT then x else y
 minBy cmp x y   = if cmp x y /= GT then x else y
+
+-- |  The 'isSortedBy' function returns 'True' iff the predicate returns true
+-- for all adjacent pairs of elements in the list.
+isSortedBy              :: (a -> a -> Bool) -> [a] -> Bool
+-- from Data.List.Ordered in data-ordlist
+isSortedBy lte          = loop
+  where
+    loop []         = True
+    loop [_]        = True
+    loop (x:y:zs)   = (x `lte` y) && loop (y:zs)
 
 
 -- * Monoids and Groups
@@ -641,6 +653,15 @@ zzDiv _ n d
 zzRing          :: Ring Integer
 -- ^ the ring of integers ℤ
 zzRing          = numRing integralDomainFlags zzDiv
+
+intRing         :: Ring Int
+{- ^ Arithmetic mod @2^n@, where an @Int@ has @n@ bits. Division is simply @Int@ division. This
+    is mostly used for testing and benchmarks. -}
+intRing         = numRing rFlags (const intDiv)
+  where
+    rFlags  = RingFlags { commutative = True, noZeroDivisors = False, nzInverses = False }
+    intDiv y 0      = (0, y)
+    intDiv y m      = quotRem y m
 
 -- ** Double
 

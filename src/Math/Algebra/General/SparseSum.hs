@@ -22,7 +22,6 @@ import Math.Algebra.Category.Category
 
 import Data.Bifunctor (Bifunctor(first, second, bimap))
 import Data.Foldable (toList)
-import Data.List (sortBy)
 import Data.Maybe (fromJust)
 import GHC.Stack (HasCallStack)
 import StrictList2 (pattern (:!))
@@ -157,7 +156,7 @@ ssAGUniv (AbelianGroup cFlags eq plus _zero isZero neg) dCmp    =
 ssFoldSort      :: AbelianGroup c -> Cmp d -> [SSTerm c d] -> SparseSum c d
 -- ^ sorts and combines the terms; input terms may have coefs which are 0
 ssFoldSort (AbelianGroup _ _ cPlus _ cIsZero _) dCmp cds0   =
-    go ssZero (sortBy (dCmp `on` (.d)) cds0)
+    go ssZero (sortLBy (dCmp `on` (.d)) cds0)
   where
     go done []          = done
     go done (cd : t)    = go1 done cd.d cd.c t

@@ -22,7 +22,7 @@ import Control.Monad.Extra (ifM, orM, whenM)
 import Data.Bits ((.&.), (.|.))
 import Data.Foldable (find, minimumBy, toList)
 import Data.Int (Int64)
-import Data.List (elemIndex, findIndices, groupBy, sortBy)
+import Data.List (elemIndex, findIndices, groupBy)
 import Data.List.Extra (chunksOf)
 import Data.Maybe (catMaybes, fromJust, isJust, isNothing, listToMaybe, mapMaybe)
 import qualified Data.RRBVector as GBV
@@ -250,7 +250,7 @@ updatePairs (GBPolyOps { nVars, evCmp, extraSPairs, useSugar }) gMGis ijcs tGi  
     itcs            = catMaybes (zipWith (\i -> fmap (giToSp i t)) [0..] itMGis)  :: [SPair ev]
     -- "sloppy" sugar method:
     itcss           = TS.measurePure "1.1.2 sort/group new itcs" $ seqElts $
-                        groupBy (cmpEq lcmCmp) (sortBy lcmCmp itcs)
+                        groupBy (cmpEq lcmCmp) (sortLBy lcmCmp itcs)
     itcsToC         = (.m) . head
     itcss'          = TS.measurePure "1.1.3 M_ik" $ seqElts $ filter (noDivs . itcsToC) itcss
       where     -- criterion M_ik; 3 seqElts calls for TS.measurePure
@@ -713,7 +713,7 @@ groebnerBasis gbpA@(GBPolyOps { .. }) gbTrace gbi0 newGens  = TS.scope $ do
             pure True
         doSP        = maybe (pure False) newG =<< setPop ijcsRef
     mapM_ (\g -> addGenHN =<< reduce_n (EPolyHDeg g (homogDeg0 g)))
-        (sortBy (evCmp `on` leadEvNz) (filter (not . pIsZero) newGens))
+        (sortLBy (evCmp `on` leadEvNz) (filter (not . pIsZero) newGens))
     numSleepingVar  <- newTVarIO (0 :: Int)
     let traceTime   = do
             cpuTime2        <- getCPUTime

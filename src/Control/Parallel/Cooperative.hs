@@ -22,7 +22,8 @@
     If you can guarantee your threads never block during a task, you can allocate them
     one-per-core (really one-per-capability) using 'parNonBlocking', for a small performance
     speedup. Otherwise, it's better to have some extra threads, and let them migrate between
-    cores, using 'parThreads'.
+    cores, using 'parThreads'. In either case, we don't create and destroy threads as often as
+    sparks do, which seems to speed things up.
     
     This module uses "Control.Concurrent.Async" to ensure that uncaught exceptions are
     propagated to parent threads, and orphaned threads are always killed.
@@ -44,7 +45,7 @@ module Control.Parallel.Cooperative (
     vecMapParChunk, rrbMapParChunk,
     
     -- * Folding and sorting
-    foldBalanced, foldBalancedPar, sortByPar,
+    foldBalanced, foldBalancedPar, sortLBy, -- sortByPar,
     
     -- * Utilities
     seqSpine, seqElts, inc1TVar, maybeStateTVar, popTVar,
@@ -54,14 +55,18 @@ module Control.Parallel.Cooperative (
 
 import Control.Monad (when)
 import Control.Monad.Extra (ifM, unlessM, whileM)
+import Control.Monad.ST (runST)
 import Data.Bits (Bits, FiniteBits, (.&.), bit, countLeadingZeros, finiteBitSize, xor)
 import Data.Foldable (toList)
 import qualified Data.IntMap.Strict as IMS
-import Data.List (sortBy, uncons, unfoldr)
-import Data.List.Extra (chunksOf, mergeBy)
+import Data.List (uncons, unfoldr)
+import Data.List.Extra (chunksOf)
 -- import Data.Maybe (isJust)
 import Data.Maybe (isNothing)
+import Data.Primitive.Array (pattern MutableArray)
+import qualified Data.Primitive.Contiguous as C
 import qualified Data.RRBVector as RRB
+import Data.SamSort (sortArrayBy)
 import qualified Data.Sequence as Seq
 import qualified Data.Vector as V
 import GHC.Stack (HasCallStack)
@@ -315,9 +320,25 @@ foldBalancedPar f as    = if null (drop 3 as) then foldBalanced f as else
         buddy k         = (2 * lowNzBit k) `xor` k
         top             = bit (fbTruncLog2 n)
 
+sortLBy         :: (a -> a -> Ordering) -> [a] -> [a]
+{- ^ Like 'Data.List.sortBy', but faster, though not lazy (it always sorts the entire list).
+    'sortLBy' currently uses [samsort](https://hackage.haskell.org/package/samsort), so it's
+    stable and adaptive. Also like 'Data.SamSort.sortArrayBy', 'sortLBy' will inline to get the
+    best performance out of statically known comparison functions. To avoid code duplication,
+    create a wrapping definition and reuse it as necessary. -}
+sortLBy cmp xs  = runST $ do
+    ma@(MutableArray ma')   <- C.fromListMutable xs
+    n                       <- C.sizeMut ma
+    sortArrayBy cmp ma' 0 n
+    C.toListMutable ma
+{-# INLINE sortLBy #-}
+
+{- @@@ faster to just use sortLBy (samsort)
 sortByPar   :: Int -> (a -> a -> Ordering) -> [a] -> [a]
 {- ^ Strict stable sort by sorting chunks in parallel. The chunk size must be positive, and 100
     appears to be a good value. The spine of the result is forced. -}
 sortByPar chunkSize cmp as  = if null as then [] else
     forkJoinPar (chunksOf chunkSize) (foldBalancedPar (\es -> seqSpine . mergeBy cmp es))
-        (seqSpine . sortBy cmp) as
+        (seqSpine . sortLBy cmp) as
+-- @@@ INLINE sortByPar also, doc
+-}

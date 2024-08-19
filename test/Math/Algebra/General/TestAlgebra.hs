@@ -62,7 +62,7 @@ module Math.Algebra.General.TestAlgebra (
     pairTestOps,
     
     -- * List
-    listTestOps, listTestEq, allTM, isSortedBy, slTestOps,
+    listTestOps, listTestEq, allTM, slTestOps,
     
     -- * Parse
     parseTest,
@@ -76,6 +76,7 @@ module Math.Algebra.General.TestAlgebra (
 
 import Math.Algebra.General.Algebra hiding (assert)
 
+-- import Debug.Trace.Text (traceEvent)
 import Hedgehog (Gen, Property, PropertyT, Range,
     (===), annotate, assert, cover, diff, discard, failure, forAllWith, property,
     withDiscards, withTests)
@@ -87,6 +88,7 @@ import Test.Tasty.Hedgehog (testProperty)
 import GHC.Records
 
 import Control.Monad (join, unless, when)
+-- import Control.Monad.IO.Class (liftIO)
 import Data.Functor.Classes (liftEq, liftEq2)
 import Data.Maybe (fromMaybe)
 import Data.Strict.Tuple ((:!:), pattern (:!:))
@@ -554,16 +556,6 @@ allTM aSP p as          = do
         annotateB $ listShowPrec aSP as
         annotateB $ listF qs
         failure
-
--- |  The 'isSortedBy' function returns 'True' iff the predicate returns true
--- for all adjacent pairs of elements in the list.
-isSortedBy              :: (a -> a -> Bool) -> [a] -> Bool
--- from Data.List.Ordered
-isSortedBy lte          = loop
-  where
-    loop []         = True
-    loop [_]        = True
-    loop (x:y:zs)   = (x `lte` y) && loop (y:zs)
 
 
 slTestOps               :: Range Int -> TestOps a -> TestOps (SL.List a)

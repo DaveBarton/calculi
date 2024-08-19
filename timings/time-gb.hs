@@ -29,8 +29,8 @@ import Data.List (unfoldr) -}
 
 main    :: IO ()
 main    = do
-{-    let rands   = take 300000 $ unfoldr (Just . uniform) (mkStdGen 137) :: [Int]
-    print $ sum $ sortByPar 100 compare rands -}
+{-    let rands   = take 300_000 $ unfoldr (Just . uniform) (mkStdGen 137) :: [Int]
+    print $ sum $ sortByPar 100_000 compare rands -}
     
     nCores      <- getNumCapabilities
     args        <- getArgs
