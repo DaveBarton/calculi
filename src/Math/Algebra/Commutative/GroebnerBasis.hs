@@ -33,7 +33,7 @@ import qualified Data.Text.IO as T
 import Data.Tuple.Extra (fst3)
 import qualified Data.Vector as V
 import Fmt ((+|), (|+), (|++|), build, commaizeF, fixedF, fmt, fmtLn, whenF)
-import StrictList2 (pattern (:!))
+import StrictList2 (StrictList, pattern (:!))
 import qualified StrictList2 as SL
 
 import Control.Concurrent.STM.TVar (TVar, modifyTVar', newTVarIO, readTVar, readTVarIO,
@@ -162,7 +162,7 @@ class GBEv ev where
     evLCM       :: Int -> Op2 ev    -- ^ Least Common Multiple, given @nVars@
     evTotDeg    :: ev -> Word
 
-class (GBEv ev, p ~ SL.List term) => GBPoly ev term p | p -> ev where
+class (GBEv ev, p ~ StrictList term) => GBPoly ev term p | p -> ev where
     leadEvNz    :: p -> ev          -- ^ the argument must be nonzero
 -- ^ A polynomial's terms must be nonzero and have decreasing exponent vectors.
 
@@ -220,7 +220,7 @@ giNew (EPolyHDeg p h)   =
 {-# SCC updatePairs #-}
 updatePairs     :: forall ev term p. GBPoly ev term p => GBPolyOps ev p ->
                     [Maybe (GBGenInfo ev)] -> SortedSPairs ev -> GBGenInfo ev ->
-                    (SL.List Int, SortedSPairs ev, SortedSPairs ev)
+                    (StrictList Int, SortedSPairs ev, SortedSPairs ev)
 {-# INLINABLE updatePairs #-}
 updatePairs (GBPolyOps { nVars, evCmp, extraSPairs, useSugar }) gMGis ijcs tGi     =
     (skipIs, skipIJCs, addITCs)
@@ -272,7 +272,7 @@ data SizedEPoly p   = SizedEPoly { n :: Int, p :: p }
 sizeEP               :: (p -> Int) -> p -> SizedEPoly p
 sizeEP numTermsF p   = SizedEPoly (numTermsF p) p
 
-data ENPs p         = ENPs { _e :: Word, _nps :: SL.List (SizedEPoly p) }
+data ENPs p         = ENPs { _e :: Word, _nps :: StrictList (SizedEPoly p) }
 -- exponent and list of sized polys
 
 
@@ -283,22 +283,22 @@ wngFirst f (WithNGens a n)  = WithNGens (f a) n
 
 
 -- nEvGroups > 0, each enpss has increasing es, all p /= 0, (leadEvNz p) unique:
-type KerGens p      = Seq.Seq (SL.List (ENPs p))
+type KerGens p      = Seq.Seq (StrictList (ENPs p))
 
 data GapKerGens p   = G1KGs { gap :: Word, _kgs :: KerGens p }
 
-type GapsKerGens p  = SL.List (GapKerGens p)    -- gaps increasing, 0 gap always present
+type GapsKerGens p  = StrictList (GapKerGens p)     -- gaps increasing, 0 gap always present
 
 data KGsOps term p  = KGsOps {
     gkgsInsert  :: EPolyHDeg p -> Op1 (GapsKerGens p),
     gkgsDelete  :: EPolyHDeg p -> Op1 (GapsKerGens p),
     gkgsReplace :: EPolyHDeg p -> EPolyHDeg p -> Op1 (GapsKerGens p),
-    gkgsReduce      :: GapsKerGens p -> IsDeep -> SL.List term -> p -> (p, Int),
+    gkgsReduce      :: GapsKerGens p -> IsDeep -> StrictList term -> p -> (p, Int),
         -- reduce a polynomial, counting steps, and prependReversed
     gkgsTopReduce   :: IO (WithNGens (GapsKerGens p)) -> EPolyHDeg p ->
                         IO (WithNGens (EPolyHDeg p), Int),
         -- top-reduce a (gh, kN)
-    foldReduce      :: forall f. Foldable f => f p -> SL.List term -> p -> (Bool, p, Int),
+    foldReduce      :: forall f. Foldable f => f p -> StrictList term -> p -> (Bool, p, Int),
         -- fully reduce by folding (not kgs), except stop and return True if/when a deg > 0
         -- quotient, and prependReversed
     foldTopReduce1  :: forall f. Foldable f => f (EPolyHDeg p) -> EPolyHDeg p ->
@@ -353,7 +353,7 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
             m       = maximum es
             v       = fromJust (elemIndex m es)
             np      = sizeEP numTerms p
-            ins             :: Op1 (SL.List (ENPs p))
+            ins             :: Op1 (StrictList (ENPs p))
             ins SL.Nil      = SL.singleton (ENPs m (SL.singleton np))
             ins enpss@(enps@(ENPs e ~nps) :! ~t)
                 | m < e     = ENPs m (SL.singleton np) :! enpss
@@ -382,7 +382,7 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
             v       = fromJust (elemIndex m es)
             np      = sizeEP numTerms p
             eq np1 np2      = kgsSepCmp np1 np2 == EQ
-            del             :: Op1 (SL.List (ENPs p))
+            del             :: Op1 (StrictList (ENPs p))
             del (enps@(ENPs e ~nps) :! t)
                 | m > e     = enps :! del t
                 | m == e    = assert (isJust (find (eq np) nps)) $
@@ -416,7 +416,7 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
             fmap (\g -> EPolyHDeg g (evTotDeg (leadEvNz g) + gap))
                 (kgsFindReducer evGroup p kgs)
 
-    gkgsReduce              :: GapsKerGens p -> IsDeep -> SL.List term -> p -> (p, Int)
+    gkgsReduce              :: GapsKerGens p -> IsDeep -> StrictList term -> p -> (p, Int)
     -- reduce a polynomial, counting steps, and prependReversed
     gkgsReduce gkgs doFull  = go 0
       where
@@ -449,7 +449,7 @@ kgsOps (GBPolyOps { .. })   = KGsOps { .. }
                     go (nRedSteps + nSteps1) rh
             maybe (pure (WithNGens ph nGens, nRedSteps)) go1 (gkgsFindReducer p ker)
 
-    foldReduce      :: Foldable f => f p -> SL.List term -> p -> (Bool, p, Int)
+    foldReduce      :: Foldable f => f p -> StrictList term -> p -> (Bool, p, Int)
     -- fully reduce by folding (not kgs), except stop and return True if/when a deg > 0
     -- quotient, and prependReversed
     foldReduce g0s  = go 0  -- all g0s /= 0, with gap 0

@@ -1,21 +1,29 @@
 {-# LANGUAGE Strict #-}
 
+{-# OPTIONS_GHC -Wno-incomplete-record-selectors #-}
+
 {- |  A sparse 'Vector' or 'VectorA' is a finite sequence of coordinates (basis coefficients),
     implemented as a (base 64) tree where zero subtrees are stored as single bits.
     
-    This data structure is also efficient for vectors that are sometimes or often dense. For
-    vectors that are normally extremely sparse, @IntMap@ in the @sequence@ package is better.
+    This data structure is also efficient for pure vectors that are sometimes or often dense.
+    For vectors that are normally extremely sparse (averaging less than 1% dense or so),
+    @IntMap@ in the @sequence@ package is better. For repeatedly mutating individual elements in
+    a dense vector a huge number of times, a mutable array from e.g. the @contiguous@ or
+    @vector@ package is better.
     
     Approximate worst-case timings are given, using \(m\) and \(n\) for vector 'size's (number
     of nonzero coordinates), and \(d = ceiling(log_{64}(max(N, 64)))\), where \(N\) is the
-    maximum index plus 1. (Note the depth \(d\) is a very small positive integer.) A \"step\" is
-    a small number of instructions, possibly with a single coordinate operation.
+    maximum index plus 1. (Note the depth \(d\) is a very small positive integer, almost always
+    3 or less.) A \"step\" is a small number of instructions, possibly with a single coordinate
+    operation. (Empirically a step takes about 10ns very approximately on a 3GHz core, allowing
+    for some bookkeeping and cache misses / etc., assuming the coordinate operation is very
+    fast.)
     
     It's faster to process or especially create an entire vector with a function in this module,
     rather than repeatedly indexing or setting individual coordinates.
     
-    Any @S.Maybe c@ should be @S.Nothing@ if and only if the @c@ is zero (is omitted in
-    'Vector's or 'VectorA's).
+    Any @S.Maybe c@ in this interface should be @S.Nothing@ if and only if the @c@ is zero (is
+    omitted in 'Vector's or 'VectorA's).
     
     This module uses LANGUAGE Strict. In particular, constructor fields and function arguments
     are strict unless marked with a ~. Also, a 'Vector' or 'VectorA' is strict in both its spine
@@ -29,11 +37,11 @@ module Math.Algebra.Linear.SparseVector (
     VectorA, Vector, VectorU, check,
     -- * Create
     zero, fromPIC, fromIMaybeC, fromNzIC, fromDistinctAscNzs, fromDistinctAscNzsNoCheck,
-    fromDistinctNzs, fromNzs,
+    fromDistinctNzs, fromNzs, random,
     -- * Query
     isZero, index, indexMaybe, size, headPairMaybe, headPair, lastPairMaybe, lastPair,
     -- * Fold
-    foldBIMap', iFoldR, iFoldL, keys, toDistinctAscNzs,
+    foldBIMap', iFoldR, iFoldL, keysSet, keys, toDistinctAscNzs,
     -- * Map
     mapC, mapNzFC, mapCMaybeWithIndex,
     -- * Zip/Combine
@@ -44,21 +52,25 @@ module Math.Algebra.Linear.SparseVector (
     mkAG, mkAGU,
     -- * Multiplication
     dotWith, timesNzdC, timesNzdCU, timesC, monicizeUnit, mkModR, mkModRU,
+    -- * Conversion
+    fromArray, {- @@@ toMutArray, toArray, fromIntMap, toIntMap, -}
     -- * Permute
-    Permute(to, from), pToF, pIdent, pSwap, pCycle, fToP, injToPermute, pCompose, pGroup,
-    permuteV, swap, sortPermute,
+    Permute(Permute, to, from), pToF, pIdent, pSwap, pCycle, fToP, injToPermute, pRandom,
+    pOrbit, pToCycles, pCompose, pGroup, permuteV, swap, sortPermute,
     -- * I/O
-    showPrec
+    showPrec, pShowPrec
 ) where
 
 import Math.Algebra.General.Algebra
+import Math.Prob.Random
 
 import Control.Monad.Extra (pureIf)
-import Control.Monad.ST (ST, runST)
+import Control.Monad.ST (runST)
 import Control.Parallel.Cooperative (fbTruncLog2, lowNzBit)
 import Data.Bits ((.&.), (.|.), (.^.), (!<<.), (!>>.), complement, countTrailingZeros,
     finiteBitSize, popCount)    -- @@ is countLeadingZeros faster on ARM?
 import Data.Functor.Classes (liftEq)
+import qualified Data.IntSet as IS
 import Data.Maybe (fromMaybe)
 import qualified Data.Primitive.Contiguous as C
 import Data.Primitive.PrimArray (PrimArray)
@@ -68,9 +80,11 @@ import Data.Strict.Classes (toLazy)
 import qualified Data.Strict.Maybe as S
 import qualified Data.Strict.Tuple as S
 import Data.Strict.Tuple ((:!:), pattern (:!:))
+import qualified Data.Text as T
 import Data.Word (Word64)
 import Fmt ((+|), (|+))
 import GHC.Stack (HasCallStack)
+import System.Random (uniformShuffleList)
 
 
 nothingIf       :: Pred a -> a -> S.Maybe a     -- move and export?
@@ -87,17 +101,6 @@ b64Index b bs   = popCount ((b - 1) .&. bs)
 b64IndexMaybe   :: Word64 -> Word64 -> S.Maybe Int  -- like elemIndex for bits
 b64IndexMaybe b bs  = if b .&. bs /= 0 then S.Just (b64Index b bs) else S.Nothing
 {-# INLINE b64IndexMaybe #-}
-
-
--- @@ use C.unsafeShrinkAndFreeze after its next release, when it shrinks in place:
-unsafeShrinkAndFreeze       :: (C.Contiguous arr, C.Element arr b) =>
-                                C.Mutable arr s b -> Int -> ST s (arr b)
--- unsafeShrinkAndFreeze       :: SmallMutableArray s b -> Int -> ST s (SmallArray b)
-unsafeShrinkAndFreeze !arr !n = do
-    m       <- C.sizeMut arr
-    if m == n then C.unsafeFreeze arr else C.unsafeShrinkAndFreeze arr n
-  -- shrinkSmallMutableArray arr n
-  -- C.unsafeFreeze arr
 
 
 -- * Vector
@@ -223,7 +226,7 @@ fromDistinctAscNzsNoCheck ((i0 :!: c0) : t0)    =
                 (i' :!: c') : t'    -- beware: iW2 + 6 may be too big for b64:
                     | i' !>>. iW2 <= iRsh .|. 63    -> mkSvv bs' iW2 nzts (j + 1) i' c' t'
                 _                                   -> do
-                    nzts'   <- unsafeShrinkAndFreeze nzts (j + 1)
+                    nzts'   <- C.unsafeShrinkAndFreeze nzts (j + 1)
                     pure (svv bs' iW2 nzts' :!: t)
           where
             iRsh        = i !>>. iW2
@@ -246,6 +249,17 @@ fromNzs             :: forall arr c. (C.Contiguous arr, C.Element arr c) => [c] 
 {- ^ The @c@s must be nonzero. \(n\) steps. -}
 fromNzs             = fromDistinctAscNzsNoCheck . S.zip [0 ..]
 {-# SPECIALIZE fromNzs :: [c] -> Vector c #-}
+
+random              :: (C.Contiguous arr, C.Element arr c, SplitGen g) =>
+                        Pred (Int :!: c) -> Int -> Int -> RandomF2 g c -> g -> VectorA arr c
+{- ^ @random icIsNz n kMax cR2 g@ returns a random sparse vector with indices @< n@ and @kMax@
+    possible terms. This assumes @0 <= kMax <= n@. -}
+random icIsNz n kMax cR2 g  = fromDistinctNzs (filter icIsNz (S.zip inds (randomsBy cR2 g1)))
+  where
+    (g0, g1)    = splitGen g
+    inds        = randomIndsDistinct n kMax g0
+{-# SPECIALIZE random :: SplitGen g =>
+                        Pred (Int :!: c) -> Int -> Int -> RandomF2 g c -> g -> Vector c #-}
 
 -- * Query
 
@@ -281,7 +295,7 @@ size (SVV _ _ nzts)     = foldl' (\acc t -> acc + size t) 0 nzts
 
 headPairMaybe   :: (C.Contiguous arr, C.Element arr c) => VectorA arr c -> S.Maybe (Int :!: c)
 -- ^ The nonzero term with minimal index. \(d\) steps.
-headPairMaybe   = iFoldR (\i c _ -> S.Just (i :!: c)) S.Nothing
+headPairMaybe   = iFoldR (\i c ~_ -> S.Just (i :!: c)) S.Nothing
 {-# SPECIALIZE headPairMaybe :: Vector c -> S.Maybe (Int :!: c) #-}
 
 headPair        :: (C.Contiguous arr, C.Element arr c) => VectorA arr c -> Int :!: c
@@ -291,7 +305,7 @@ headPair        = S.fromJust . headPairMaybe
 
 lastPairMaybe   :: (C.Contiguous arr, C.Element arr c) => VectorA arr c -> S.Maybe (Int :!: c)
 -- ^ The nonzero term with maximal index. \(d\) steps.
-lastPairMaybe   = iFoldL (\i _ c -> S.Just (i :!: c)) S.Nothing
+lastPairMaybe   = iFoldL (\i ~_ c -> S.Just (i :!: c)) S.Nothing
 {-# SPECIALIZE lastPairMaybe :: Vector c -> S.Maybe (Int :!: c) #-}
 
 lastPair        :: (C.Contiguous arr, C.Element arr c) => VectorA arr c -> Int :!: c
@@ -373,6 +387,10 @@ iFoldL f        = go 0
     go start ~z (SVV bs iW2 nzts)   = aIFoldL go z start bs iW2 nzts
 {-# SPECIALIZE iFoldL :: (Int -> t -> c -> t) -> t -> Vector c -> t #-}
 
+keysSet         :: (C.Contiguous arr, C.Element arr c) => VectorA arr c -> IS.IntSet
+-- ^ The set of (non-missing) keys. \(m\) steps.
+keysSet         = foldBIMap' IS.union IS.empty (\i _c -> IS.singleton i)
+
 keys            :: (C.Contiguous arr, C.Element arr c) => VectorA arr c -> [Int]
 -- ^ Non-missing indices of the vector, in increasing order. \(m\) steps.
 keys            = iFoldR (\i _c -> (i :)) []
@@ -417,7 +435,7 @@ aMapC           :: (C.Contiguous arr, C.Element arr c, C.Contiguous arr', C.Elem
 -- assumes @popCount bs == C.size nzs@
 aMapC is0 f bs nzs    = assert (popCount bs == C.size nzs) $ runST $ do
     nzs'    <- C.new (C.size nzs)
-    let go 0      bs' _ j'  = (bs' :!:) <$> unsafeShrinkAndFreeze nzs' j'
+    let go 0      bs' _ j'  = (bs' :!:) <$> C.unsafeShrinkAndFreeze nzs' j'
         go bsTodo bs' j j'  = if is0 c' then go (bsTodo .^. b) (bs' .^. b) (j + 1) j' else do
             C.write nzs' j' c'
             go (bsTodo .^. b) bs' (j + 1) (j' + 1)
@@ -450,7 +468,7 @@ aMapCMaybeWithIndex     :: (C.Contiguous arr, C.Element arr c, C.Contiguous arr'
                             Word64 -> Int -> arr c -> Word64 :!: arr' c'
 aMapCMaybeWithIndex f start bs iW2 nzs  = assert (popCount bs == C.size nzs) $ runST $ do
     nzs'    <- C.new (C.size nzs)
-    let go 0      bs' _ j'  = (bs' :!:) <$> unsafeShrinkAndFreeze nzs' j'
+    let go 0      bs' _ j'  = (bs' :!:) <$> C.unsafeShrinkAndFreeze nzs' j'
         go bsTodo bs' j j'  = case mc' of
             S.Nothing   -> go (bsTodo .^. b) (bs' .^. b) (j + 1) j'
             S.Just c'   -> do
@@ -491,7 +509,7 @@ aUnionWith _   _ bs0 nzs0 bs1 nzs1  -- to make SV.join fast
 aUnionWith is0 f bs0 nzs0 bs1 nzs1  = runST $ do
     let bsAll   = bs0 .|. bs1
     nzs2        <- C.new (popCount bsAll)
-    let go 0      bs2 _  _  j2  = (bs2 :!:) <$> unsafeShrinkAndFreeze nzs2 j2
+    let go 0      bs2 _  _  j2  = (bs2 :!:) <$> C.unsafeShrinkAndFreeze nzs2 j2
         go bsTodo bs2 j0 j1 j2
             | bs0 .&. b == 0        = do
                 C.write nzs2 j2 $! C.index nzs1 j1
@@ -541,7 +559,7 @@ aPlusU          :: (Eq c, Num c, Prim c) => Word64 -> PrimArray c -> Word64 -> P
 aPlusU bs0 nzs0 bs1 nzs1    = runST $ do
     let bsAll   = bs0 .|. bs1
     nzs2        <- C.new (popCount bsAll)
-    let go 0      bs2 _  _  j2  = (bs2 :!:) <$> unsafeShrinkAndFreeze nzs2 j2
+    let go 0      bs2 _  _  j2  = (bs2 :!:) <$> C.unsafeShrinkAndFreeze nzs2 j2
         go bsTodo bs2 j0 j1 j2
             | bs0 .&. b == 0        = do
                 C.write nzs2 j2 $! C.index nzs1 j1
@@ -597,7 +615,7 @@ aVApply         :: (C.Contiguous dArr, C.Element dArr d, C.Contiguous cArr, C.El
 aVApply f start iW2 bs0 nzs0 bs1 nzs1   = runST $ do
     let bsAll   = bs0 .|. bs1
     nzs2        <- C.new (popCount bsAll)
-    let go 0      bs2 _  _  j2  = (bs2 :!:) <$> unsafeShrinkAndFreeze nzs2 j2
+    let go 0      bs2 _  _  j2  = (bs2 :!:) <$> C.unsafeShrinkAndFreeze nzs2 j2
         go bsTodo bs2 j0 j1 j2
             | bs0 .&. b == 0        = do
                 C.write nzs2 j2 $! C.index nzs1 j1
@@ -656,7 +674,7 @@ sveSelect _ _   = undefined
 
 andNot          :: (C.Contiguous arr0, C.Element arr0 c0, C.Contiguous arr1, C.Element arr1 c1)
                     => VectorA arr0 c0 -> VectorA arr1 c1 -> VectorA arr0 c0
-{- Like a set difference, restrict the first vector to its keys that don't occur in the second
+{- ^ Like a set difference, restrict the first vector to its keys that don't occur in the second
     one. \(O(m)\), but usually just 1 step for each subtree in the first vector that isn't in
     the second one. -}
 andNot v@(SVE {}) (SVE bs1 _)   = sveSelect (complement bs1) v
@@ -667,7 +685,7 @@ andNot x          y
     | x.bs .&. y.bs == 0    = x
 andNot (SVV bs0 iW2 nzts0) (SVV bs1 _ nzts1)    = runST $ do    -- same iW2
     nzts2       <- C.new (popCount bs0)
-    let go 0      bs2 _  j2     = svv bs2 iW2 <$> unsafeShrinkAndFreeze nzts2 j2
+    let go 0      bs2 _  j2     = svv bs2 iW2 <$> C.unsafeShrinkAndFreeze nzts2 j2
         go bsTodo bs2 j0 j2
             | bs1 .&. b == 0        = do
                 C.write nzts2 j2 $! C.index nzts0 j0
@@ -862,15 +880,34 @@ mkModRU         :: (Eq c, Num c, Prim c) => Ring c -> ModR c (VectorU c)
 mkModRU cR      = aMkModR cR mkAGU timesNzdCU
 {-# INLINABLE mkModRU #-}
 
+-- * Conversion
+
+fromArray       :: (C.Contiguous arr, C.Element arr c, C.Contiguous vArr, C.Element vArr c) =>
+                    Pred c -> arr c -> VectorA vArr c
+-- ^ @fromArray cIsZero a@
+fromArray cIsZero cs    = fromDistinctAscNzsNoCheck (filter icIsNz (S.zip [0 ..] (C.toList cs)))
+  where
+    icIsNz  = not . cIsZero . S.snd
+{-# SPECIALIZE fromArray :: Pred c -> C.Array c -> Vector c #-}
+
+{- @@@ incl. SPECIALIZE:
+toMutArray      :: (C.Contiguous vArr, C.Element vArr c, C.Contiguous arr, C.Element arr c) =>
+toArray
+fromIntMap
+toIntMap -}
+
+
 -- * Permute
 
 {- | A t'Permute' is a permutation, i.e. a bijection from @[0 .. r - 1]@ to @[0 .. r - 1]@ for
     some (non-unique) @r@. It is stored sparsely, with fixpoints omitted. -}
 data Permute    = Permute { to :: Vector Int, from :: Vector Int }
-    deriving Show;  -- ^ e.g. for testing & debugging
 
 instance Eq Permute where
     p == q          = p.to == q.to
+
+instance Show Permute where
+    show            = T.unpack . (.t) . pShowPrec
 
 pToF            :: Permute -> Op1 Int
 -- ^ Use a permutation as a function. \(d\) steps per function call.
@@ -900,13 +937,13 @@ pCycle ks@(h : t)   = Permute (fromDistinctNzs (S.zip ks rotL))
 fToP            :: Int -> Op1 Int -> Permute
 {- ^ Convert @r@ and a bijection on @[0, 1 .. r - 1]@ to a permutation. Fixpoints (@i@ where
     @f i == i@) are compressed (stored compactly). \(O(r log_2 r)\). -}
-fToP r f        = Permute (fromDistinctAscNzs toL) (fromDistinctNzs (map S.swap toL))
+fToP r f        = Permute (fromDistinctAscNzsNoCheck toL) (fromDistinctNzs (map S.swap toL))
   where
     toL             = [i :!: e | i <- [0, 1 .. r - 1], let e = f i, e /= i]
 
 injToPermute    :: Vector Int -> Permute
-{- ^ Extend an injective (finite) partial function on [0 ..] to a minimal permutation. The newly
-    defined part of the function will be monotonic. -}
+{- ^ Extend an injective (finite) partial function on [0 ..] to a minimal 'size' permutation.
+    The newly defined part of the function will be monotonic. -}
 injToPermute to0    = Permute to from
   where
     keysAndNot  = keys .* andNot
@@ -914,8 +951,31 @@ injToPermute to0    = Permute to from
     from1       = (fromDistinctNzs . map S.swap . toDistinctAscNzs) to1
     is          = keysAndNot to1 from1
     js          = keysAndNot from1 to1
-    to          = unionDisj to1   (fromDistinctAscNzs (S.zip js is))
-    from        = unionDisj from1 (fromDistinctAscNzs (S.zip is js))
+    to          = unionDisj to1   (fromDistinctAscNzsNoCheck (S.zip js is))
+    from        = unionDisj from1 (fromDistinctAscNzsNoCheck (S.zip is js))
+
+pRandom         :: SplitGen g => Int -> Int -> g -> Permute
+{- ^ @pRandom n kMax g@ returns a random permutation of @n@ elements that moves at most @kMax@
+    of them. This assumes @0 <= kMax <= n@. The average number of moved elements is @kMax - 1@
+    if @kMax /= 0@. -}
+pRandom n kMax g    = Permute (fromDistinctNzs ijs) (fromDistinctNzs (map S.swap ijs))
+  where
+    (g0, g1)    = splitGen g
+    inds        = randomIndsDistinct n kMax g0
+    images      = fst (uniformShuffleList inds g1)
+    ijs         = filter (S.uncurry (/=)) (S.zip inds images)
+
+pOrbit          :: Permute -> Int -> [Int]
+{- ^ @pOrbit p i = [i, p(i), p(p(i)), ...]@, stopping just before @i@ is repeated. -}
+pOrbit p i0     = i0 : takeWhile (/= i0) (tail (iterate (pToF p) i0))
+
+pToCycles       :: Permute -> [[Int]]
+{- ^ Convert a permutation to a product of disjoint cycles. \(O(n log_2 n)\). -}
+pToCycles p     = go (keysSet p.to)
+  where
+    go todo         = if IS.null todo then [] else
+        let cyc          = pOrbit p (IS.findMin todo)
+        in  cyc : go (IS.difference todo (IS.fromList cyc))
 
 rComposePTo     :: Vector Int -> Vector Int -> Vector Int -> Vector Int
 -- Compute (.to) of the right composition of (Permute pTo pFrom) and qTo.
@@ -933,7 +993,7 @@ pCompose (Permute pTo pFrom) (Permute qTo qFrom)    = Permute to from
     from    = rComposePTo pFrom pTo qFrom
 
 pGroup          :: Group Permute
--- ^ The (infinite) group of permutations under (left) composition.
+-- ^ The (infinite) group of permutations under (left) composition. @pGroup.inv@ is \(O(1)\).
 pGroup          = MkMonoid { .. }
   where
     monFlags        = MonoidFlags { nontrivial = True, abelian = False, isGroup = True }
@@ -973,7 +1033,7 @@ permuteV2 (SVV toBs iW2 toNzts) v@(SVV vBs _ vNzts) ics0    =
     if fixBs0 == vBs then v :!: ics0 else runST $ do
         fixNztsMut  <- C.new (popCount vBs)
         let go 0      fixBs _  fixJ ics   = do
-                fixNzts     <- unsafeShrinkAndFreeze fixNztsMut fixJ
+                fixNzts     <- C.unsafeShrinkAndFreeze fixNztsMut fixJ
                 pure (svv fixBs iW2 fixNzts :!: ics)
             go bsTodo fixBs vJ fixJ ics
                 | toBs .&. b == 0   = do
@@ -998,7 +1058,7 @@ permuteV2 _ _ _                                             = undefined
 {-# INLINEABLE permuteV2 #-}
 
 permuteV        :: (C.Contiguous arr, C.Element arr c) => Permute -> Op1 (VectorA arr c)
-{- Permute the coordinates of a vector. For a free module @R^n@, this is the linear map where
+{- ^ Permute the coordinates of a vector. For a free module @R^n@, this is the linear map where
     the permutation acts on the standard basis elements. -}
 permuteV p v    = unionDisj v1 (fromDistinctNzs ics)
   where
@@ -1020,6 +1080,7 @@ sortPermute cmp v   = (fromNzs cs, pGroup.inv (injToPermute (fromNzs is)))
     (is, cs)    = S.unzip (sortLBy (cmp `on` S.snd) (toDistinctAscNzs v))
 {-# SPECIALIZE sortPermute :: Cmp c -> Vector c -> (Vector c, Permute) #-}
 
+
 -- * I/O
 
 showPrec        :: (C.Contiguous arr, C.Element arr c) =>
@@ -1028,3 +1089,11 @@ showPrec        :: (C.Contiguous arr, C.Element arr c) =>
 showPrec iSP cSP    = sumPT . map termSP . toDistinctAscNzs
   where
     termSP (i :!: c)    = timesPT (cSP c) (iSP i)
+
+pShowPrec       :: ShowPrec Permute
+-- ^ Show a permutation as a product of cycles.
+pShowPrec       = fromCycleTs . map showT . pToCycles
+  where
+    fromCycleTs []      = PrecText FencePrec "[]"
+    fromCycleTs [cycT]  = PrecText FencePrec cycT
+    fromCycleTs cycTs   = PrecText MultPrec (T.concat cycTs)

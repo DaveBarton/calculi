@@ -1,5 +1,3 @@
-{-# LANGUAGE DataKinds #-}
-
 {- |  This module tests the "Math.Algebra.Commutative.EPoly" module.  -}
 
 module Math.Algebra.Commutative.TestEPoly (

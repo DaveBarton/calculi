@@ -1,4 +1,4 @@
-{-# LANGUAGE DataKinds, Strict #-}
+{-# LANGUAGE Strict #-}
 
 {- |  The field of integers mod @p@, for a prime @p@ that fits in a 'Word'.  -}
 

@@ -87,7 +87,7 @@ import qualified Debug.TimeStats as TS
 
 seqSpine        :: Foldable t => t a -> t a
 -- ^ Evaluate the spine of a structure, and return it.
-seqSpine xs     = foldr (\ _ y -> y) xs xs
+seqSpine xs     = foldr (\ ~_ y -> y) xs xs
 
 seqElts         :: Foldable t => t a -> t a
 -- ^ @seq@ all elements of a structure, and return it.

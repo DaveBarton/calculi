@@ -1,4 +1,4 @@
-{-# LANGUAGE CPP, DataKinds, Strict, ViewPatterns #-}
+{-# LANGUAGE Strict, ViewPatterns #-}
 
 {- |  This module defines the most common types of algebras, and simple functions using them.
     
@@ -118,27 +118,15 @@ module Math.Algebra.General.Algebra (
     numVarPT, alphaNumVarNames, varNameParse, varParse,
     
     -- * Re-exports
-#if ! MIN_VERSION_base(4, 20, 0)
-    foldl',
-#endif
-#if ! MIN_VERSION_base(4, 18, 0)
-    liftA2,
-#endif
     assert, sortLBy
 ) where
 
 import GHC.Records
 
-#if ! MIN_VERSION_base(4, 18, 0)
-import Control.Applicative (liftA2)     -- unnecesary in base 4.18+, since in Prelude
-#endif
 import Control.Exception (assert)
 import Control.Parallel.Cooperative (sortLBy)
 import Data.Bifunctor (bimap, second)
 import Data.Char (isDigit)
-#if ! MIN_VERSION_base(4, 20, 0)
-import Data.Foldable (foldl')           -- unnecesary in base 4.20+, since in Prelude
-#endif
 import Data.Foldable (toList)
 import Data.Function (on)
 import Data.Functor (($>))
@@ -918,7 +906,7 @@ alphaNumVarNames    = (T.singleton <$> ['a' .. 'z'] ++ ['A' .. 'Z'])
 
 varNameParse    :: Parser Text
 -- ^ Parse a mathematical variable name: a unicode letter, optionally followed by digits.
-varNameParse    = T.pack <$> liftA2 (:) letterChar (many digitChar)
+varNameParse    = T.pack <$> liftA2 (:) (pLexeme letterChar) (many digitChar)
 
 varParse        :: [Text] -> [a] -> Parser a
 -- ^ Parse a mathematical variable name, using lists of names and values.

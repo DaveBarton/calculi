@@ -1,5 +1,3 @@
-{-# LANGUAGE DataKinds #-}
-
 {- |  This module helps test the "Math.Algebra.General.Algebra" module and its clients.
 
     We use the [tasty](https://hackage.haskell.org/package/tasty) test framework to run
@@ -95,6 +93,7 @@ import Data.Strict.Tuple ((:!:), pattern (:!:))
 import qualified Data.Text as T
 import Fmt (Buildable, (+||), (||+), build, fmt, listF)
 import qualified StrictList2 as SL
+import StrictList2 (StrictList)
 
 
 data ShowWith a     = ShowWith { _showT :: a -> Text, val :: a }
@@ -558,7 +557,7 @@ allTM aSP p as          = do
         failure
 
 
-slTestOps               :: Range Int -> TestOps a -> TestOps (SL.List a)
+slTestOps               :: Range Int -> TestOps a -> TestOps (StrictList a)
 -- ^ t'TestOps' for a strict list, given a 'Hedgehog.Range.Range' for the length
 slTestOps lenRange aTA  = TestOps tSP tCheck gen (SL.eqBy aTA.eq)
   where

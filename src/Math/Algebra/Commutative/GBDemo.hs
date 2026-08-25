@@ -1,4 +1,4 @@
-{-# LANGUAGE DataKinds, Strict #-}
+{-# LANGUAGE Strict #-}
 
 {- |  Groebner Basis demo examples  -}
 

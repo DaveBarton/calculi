@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      matrix:
+        ghc: ["9.10", "9.12", "9.14"]
+
+    steps:
+    - uses: actions/checkout@v7
+    - uses: haskell-actions/setup@v2.11
+      id: setup
+      with:
+        ghc-version: ${{ matrix.ghc }}
+
+    - name: Configure the build
+      run: |
+        cabal configure --enable-tests --enable-benchmarks --enable-documentation
+        cabal freeze
+
+    - name: Cache dependencies
+      uses: actions/cache@v6
+      with:
+        path: ${{ steps.setup.outputs.cabal-store }}
+        key: ${{ runner.os }}-ghc-${{ matrix.ghc }}-cabal-${{ steps.setup.outputs.cabal-version }}-${{ hashFiles('cabal.project.freeze') }}
+        restore-keys: |
+          ${{ runner.os }}-ghc-${{ matrix.ghc }}-cabal-${{ steps.setup.outputs.cabal-version }}-
+          ${{ runner.os }}-ghc-${{ matrix.ghc }}-
+
+    - name: Build dependencies
+      run: cabal build --only-dependencies
+    - name: Build project
+      run: cabal build all
+    - name: Run tests
+      run: cabal test all
+#    - name: Documentation
+#      run: cabal haddock all

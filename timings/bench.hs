@@ -1,7 +1,7 @@
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 
 import Test.Tasty (withResource)
-import Test.Tasty.Bench (Benchmark, bench, bgroup, defaultMain, whnfIO)
+import Test.Tasty.Bench (Benchmark, bench, bgroup, defaultMain, whnf, whnfIO)
 
 import Math.Algebra.General.Algebra
 import Math.Algebra.Category.Category
@@ -17,12 +17,14 @@ import Math.Prob.Random
 
 import Control.DeepSeq (force)
 import Control.Monad ((<$!>))
+import Data.Bifunctor (first)
 import Data.Bits ((.|.), complement, finiteBitSize, shift, unsafeShiftL, unsafeShiftR)
+import qualified Data.IntMap.Strict as IM
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.List (transpose)
-import Data.Mod.Word (Mod)
+-- import Data.Mod.Word (Mod)
 -- import Data.Poly.Multi (toMultiPoly)
-import Data.Strict.Classes (toStrict)
+import Data.Strict.Classes (toLazy, toStrict)
 import qualified Data.Strict.Tuple as S
 import Data.Tuple.Extra (both)
 -- import qualified Data.Vector as PV
@@ -30,7 +32,8 @@ import Data.Tuple.Extra (both)
 import Data.Word (Word64)
 import Fmt ((+|), (|+))
 import qualified StrictList2 as SL
-import System.Random (mkStdGen, uniformR, split)
+import StrictList2 (StrictList)
+import System.Random (mkStdGen, uniformR)
 
 
 main            :: IO ()
@@ -57,7 +60,7 @@ bench2Whnf      :: (a -> b -> r) -> (c -> String) -> (c -> a) -> (c -> b) -> c -
 bench2Whnf f nameF xF yF    = benchWhnf (S.uncurry f) nameF (\c -> xF c S.:!: yF c)
 
 
-stMap           :: (a -> b) -> SL.List a -> SL.List b
+stMap           :: (a -> b) -> StrictList a -> StrictList b
 -- @map@ for strict lists using the stack (recursion)
 stMap  f (x :! xs)  = f x :! stMap f xs
 stMap _f SL.Nil     = SL.Nil
@@ -102,29 +105,68 @@ op2SF                   :: (c -> String) -> String -> (c -> String) -> c -> Stri
 op2SF xSF opS ySF c     = xSF c <> opS <> ySF c
 
 type ModP       = ModWord32 2_000_003
-type SV         = SV.VectorU ModP
+type SVU        = SV.VectorU ModP
+type SVZ        = SV.Vector Integer
+-- type IMV        = IM.IntMap ModP    -- only nonzero terms
 
 benchesSV       :: [Benchmark]
-benchesSV       = {- -} picBenches <> plusBenches <> scaleBenches
+benchesSV       = picBenches <> sizeBenches <> plusBenches <> scaleBenches <> permuteBenches
   where
-    vAG             = (SV.mkAG numAG :: AbelianGroup SV) { plus = SV.plusU }
-    iCToV           = SV.fromPIC (== 0)
+    vuAG            = SV.mkAGU      :: AbelianGroup SVU
+    vzAG            = SV.mkAG zzAG  :: AbelianGroup SVZ
+    plusIM1 x y     = IM.filter (/= 0) (IM.unionWith (+) x y)
+    maybePlus _ a b     = let c = a + b in if c == 0 then Nothing else Just c
+    plusIM2         = IM.mergeWithKey maybePlus id id
+    scaleIMNzd c    = IM.map (c *)
+
+    icIsNz          = (/= 0) . S.snd
     fromInt i       = fromInteger . fromIntegral $ (i :: Int)
-    makeSV g (m, n) = sumL' vAG $ take m    -- sum m terms in dim n; 11 should not divide n
-        [iCToV (r `rem` n) (fromInt (r `rem` 11 - 5)) :: SV
-            | r <- randomsBy (uniformR (0, 11 * n - 1)) g]
-    (g0, g1)        = split (mkStdGen 37)
-    iToVs i         = sum [SV.index 0 (SV.fromNzIC i (fromInt n) :: SV) i | n <- [1 .. 1000]]
-    picBenches      = benchWhnf iToVs (("index iCToV x1000 " <>) . show) id <$>
-                        [10 ^ n | n <- [0 :: Int, 2, 4, 6, 12, 18]]
-    plusBenches     = bench2Whnf vAG.plus (("Add " <>) . show) (makeSV g0) (makeSV g1) <$>
-                        [(20, 1000), (300, 1000), (700, 1000),
-                         (1000, 100_000), (10_000, 100_000), (30_000, 100_000),
-                         (1000, 2 ^ (finiteBitSize (0 :: Int) - 5))]
-    scaleBenches    = bench2Whnf SV.timesNzdCU (("Scale " <>) . show) (const 23) (makeSV g1) <$>
-                        [(20, 1000), (300, 1000), (700, 1000),
-                         (1000, 100_000), (10_000, 100_000), (30_000, 100_000),
-                         (1000, 2 ^ (finiteBitSize (0 :: Int) - 5))]
+    makeSV g (m, n) =   -- at most m terms in dim n
+        SV.random icIsNz n m (first fromInt . uniformR (-5, 5)) g
+    makeSVU         = makeSV :: _ -> _ -> SVU
+    makeSVZ         = makeSV :: _ -> _ -> SVZ
+    showMN (m, n)   = "≤"+|m|+" terms in dim "+|n|+""
+    someMNs         = ((, 1000) <$> [20, 300, 700]) ++
+                        ((, 100_000) <$> [1000, 10_000, 30_000]) ++
+                        [(1000, 2 ^ (finiteBitSize (0 :: Int) - 5))]
+    (g0, g1)        = splitGen (mkStdGen 37)
+    iToVUs i        = sum [SV.index 0 (SV.fromNzIC i (fromInt n) :: SVU) i | n <- [1 .. 1000]]
+    iToVZs i        = sum [SV.index 0 (SV.fromNzIC i (fromInt n) :: SVZ) i | n <- [1 .. 1000]]
+    
+    vToIM           = IM.fromDistinctAscList . map toLazy . SV.toDistinctAscNzs
+    makeIM          = vToIM .* makeSVU
+
+    picBenches      = (benchWhnf iToVUs (("index . iCToVU, x1000 / ind " <>) . show) id <$>
+                        [10 ^ n | n <- [0 :: Int, 2, 4, 6, 12, 18]])
+                ++    (benchWhnf iToVZs (("index . iCToVZ, x1000 / ind " <>) . show) id <$>
+                        [10 ^ n | n <- [0 :: Int, 2, 4, 6, 12, 18]])
+    sizeBenches     = benchWhnf @SVU SV.size (("sizeU / " <>) . showMN) (makeSV g1) <$> someMNs
+    plusBenches     =
+        (bench2Whnf vuAG.plus (("AddU / " <>) . showMN) (makeSVU g0) (makeSVU g1) <$> someMNs)
+     ++ (bench2Whnf vzAG.plus (("AddZ / " <>) . showMN) (makeSVZ g0) (makeSVZ g1) <$> someMNs)
+     ++ (bench2Whnf plusIM1 (("AddIM1 / " <>) . showMN) (makeIM  g0) (makeIM  g1) <$> someMNs)
+     ++ (bench2Whnf plusIM2 (("AddIM2 / " <>) . showMN) (makeIM  g0) (makeIM  g1) <$> someMNs)
+    scaleBenches    =
+        (bench2Whnf SV.timesNzdCU         (("ScaleU / " <>) . showMN) (const 23) (makeSVU g1)
+            <$> someMNs)
+     ++ (bench2Whnf (SV.timesNzdC zzRing) (("ScaleZ / " <>) . showMN) (const 23) (makeSVZ g1)
+            <$> someMNs)
+     ++ (bench2Whnf scaleIMNzd           (("ScaleIM / " <>) . showMN) (const 23) (makeIM  g1)
+            <$> someMNs)
+    
+    pKMaxs          = [2, 10, 100, 1000]   :: [Int]
+    pRand1000 kMax g    = if kMax == 2 then SV.pCycle (randomIndsDistinct 1000 2 g) else
+        SV.pRandom 1000 kMax g
+    perm0s          = map (`pRand1000` g0) pKMaxs
+    perm1s          = map (`pRand1000` g1) pKMaxs
+    permuteBenches  = concat (zipWith f pKMaxs perm0s)
+      where
+        f kMax0 p0      = concat (zipWith g pKMaxs perm1s)
+          where
+            g kMax1 p1      =
+                [bench ("Permute.Compose ≤"+|kMax0|+","+|kMax1|+" of 1000 moved")
+                        (whnf (SV.pCompose p0) p1)
+                    | kMax0 + kMax1 > 15]
 
 benchesUPoly    :: [Benchmark]
 benchesUPoly    = concat [plusBenches, timesBenches, divBenches]

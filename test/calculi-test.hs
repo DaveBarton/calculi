@@ -10,5 +10,5 @@ import Math.Algebra.Commutative.TestBinPoly
 
 main    :: IO ()
 main    = defaultMain $ testGroup "calculi"
-    [algebraTests, zModPWTests, SV.tests, uPolyTests, ePolyTests, binPolyTests
+    [algebraTests, zModPWTests, SV.tests, SV.pTests, uPolyTests, ePolyTests, binPolyTests
         {- @@ , other modules -}]

@@ -3,7 +3,7 @@
     This module is normally imported qualified.  -}
 
 module Math.Algebra.Linear.TestSparseVector (
-    testOpsAG, tests
+    testOpsAG, permuteTestOps, tests, pTests
 ) where
 
 import Math.Algebra.General.Algebra hiding (assert)
@@ -16,7 +16,10 @@ import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
 import Control.Monad (when)
+import Control.Monad.Extra (anyM)
+import Control.Monad.IO.Class (liftIO)
 import Data.Bifunctor (second)
+import Data.Containers.ListUtils (nubInt)
 import qualified Data.IntMap.Strict as IM
 import Data.Maybe (fromMaybe)
 import qualified Data.Primitive.Contiguous as C
@@ -25,6 +28,8 @@ import qualified Data.Strict.Maybe as S
 import qualified Data.Strict.Tuple as S
 import Data.Strict.Tuple ((:!:), pattern (:!:))
 import qualified Data.Text as T
+import GHC.Exts.Heap (Closure, GenClosure(ThunkClosure, SelectorClosure, APClosure, BCOClosure),
+    Box, allClosures, asBox, getBoxedClosureData)
 
 
 sJustIf         :: Bool -> a -> S.Maybe a
@@ -36,15 +41,35 @@ nToText26       :: Integral n => n -> Text
 nToText26 n     = T.singleton (toEnum (fromEnum 'a' + fromIntegral n `mod` 26))
 
 
+closureIsThunk :: Closure -> Bool
+-- copied from the nothunks package
+-- Indirections are not considered to be thunks.
+closureIsThunk ThunkClosure{}    = True
+closureIsThunk SelectorClosure{} = True
+closureIsThunk APClosure{}       = True
+closureIsThunk BCOClosure{}      = True
+closureIsThunk _                 = False
+
+anyThunksDeepBoxedM     :: Box -> IO Bool
+-- whether the box's contents contains any thunks at any level
+anyThunksDeepBoxedM b   = do
+    closureData     <- getBoxedClosureData b
+    if closureIsThunk closureData then pure True else
+        anyM anyThunksDeepBoxedM (allClosures closureData)
+
+
 testOpsAG       :: (C.Contiguous arr, C.Element arr c, Show (SV.VectorA arr c)) =>
                     AbelianGroup c ->
                     Range Int -> TestOps Int -> TestOps c -> TestOps (SV.VectorA arr c)
--- ^ @testOpsAG cAG sumRange iTA cTA@. The caller tests @cAG@.
+{- ^ @testOpsAG cAG sumRange iTA cTA@. The caller tests @cAG@, and @c@ must be a deeply strict
+    type (no thunks). -}
 testOpsAG cAG sumRange iTA cTA  = TestOps tSP tCheck gen vAG.eq
   where
     tSP             = SV.showPrec iTA.tSP cTA.tSP
     tCheck notes v  = do
-        SV.iFoldL (\_i _ c -> cTA.tCheck notes1 c) (pure ()) v  -- show i on failure?
+        anyThunks       <- liftIO (anyThunksDeepBoxedM (asBox $! v))
+        tCheckBool ("Unforced thunk(s)" : notes1) (not anyThunks)
+        SV.iFoldL (\_i t c -> t >> cTA.tCheck notes1 c) (pure ()) v     -- show i on failure?
         tCheckBool (errs ++ notes1) (null errs)
       where
         notes1  = {- (tSP v).t -} showT v : notes
@@ -52,6 +77,30 @@ testOpsAG cAG sumRange iTA cTA  = TestOps tSP tCheck gen vAG.eq
     vAG             = SV.mkAG cAG
     iCToV           = SV.fromPIC cAG.isZero
     gen             = sumL' vAG <$> Gen.list sumRange (liftA2 iCToV iTA.gen cTA.gen)
+
+permuteTestOps  :: Range Int -> Range Int -> TestOps SV.Permute
+{- ^ @permuteTestOps nRange kMaxRange@. @gen@ produces permutations of @n@ elements that move at
+    most @kMax@ of them. This assumes @nRange@ and @kMaxRange@ only produce values @>= 0@. -}
+permuteTestOps nRange kMaxRange     = TestOps tSP tCheck gen (==)
+  where
+    tSP             = SV.pShowPrec
+    tCheck notes p  = do
+        tCheckBool (toErrs   ++ "Permute.to"   : notes) (null toErrs)
+        tCheckBool (fromErrs ++ "Permute.from" : notes) (null fromErrs)
+        tCheckBool ("to /= inv(from):" : showT toL : showT fromL : notes) (toL == fromL)
+      where
+        toErrs          = SV.check (==) p.to
+        fromErrs        = SV.check (==) p.from
+        toL             = SV.toDistinctAscNzs p.to
+        fromL           = sortLBy (compare `on` S.fst) (map S.swap (SV.toDistinctAscNzs p.from))
+    gen             = do
+        n               <- Gen.int nRange
+        kMax            <- Gen.int kMaxRange
+        inds            <- if n < kMax then pure [0 .. n - 1] else
+            nubInt <$> Gen.list (Range.singleton kMax) (Gen.int (Range.constant 0 (n - 1)))
+        images          <- Gen.shuffle inds
+        let ijs         = filter (S.uncurry (/=)) (S.zip inds images)
+        pure $ SV.Permute (SV.fromDistinctNzs ijs) (SV.fromDistinctNzs (map S.swap ijs))
 
 type C          = Int
 type V          = SV.Vector C   -- the main type for testing SparseVector.hs
@@ -61,7 +110,7 @@ type IM         = IM.IntMap C   -- only nonzero terms; V->IM->V == id
 type VU         = SV.VectorU C  -- isomorphic to V as right modules over C
 
 tests           :: TestTree
--- ^ Test the "Math.Algebra.Linear.SparseVector" module.
+-- ^ Test the "Math.Algebra.Linear.SparseVector" module, except for 'SV.Permute'.
 tests           = testGroup "SparseVector" testsL
   where
     cAG             = intRing.ag
@@ -213,4 +262,16 @@ tests           = testGroup "SparseVector" testsL
         -- vToVU and vuToV are now valid
         unionTest, plusUTest, vApplyTest, dotWithTest, timesCsTest,
         swapTest
+        ]
+
+pTests          :: TestTree
+-- ^ Test the "Math.Algebra.Linear.SparseVector" module's 'SV.Permute' type.
+pTests          = testGroup "Permute" testsL
+  where
+    pTA             = permuteTestOps (Range.exponential 0 10_000) (Range.linear 0 10)
+    
+    groupFlags      = MonoidFlags { nontrivial = False, abelian = False, isGroup = True }
+    testsL          = [
+        -- @@@:
+        monoidTests pTA groupFlags SV.pGroup
         ]

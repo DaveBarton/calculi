@@ -13,33 +13,35 @@ license:            BSD-3-Clause
 license-file:       LICENSE
 author:             Dave Barton
 maintainer:         Dave Barton
-copyright:          Copyright (c) David R. Barton, 2022-2024
+copyright:          Copyright (c) David R. Barton, 2022-2026
 
 category:           Math, Algebra
 extra-doc-files:    CHANGELOG.md dirs.txt timings/timings.txt
-tested-with:        ghc == 9.4.8 || == 9.6.1 || == 9.8.1 || == 9.10.1
+tested-with:        ghc == 9.10 || == 9.12 || == 9.14
 
 source-repository   head
     type:               git
     location:           https://github.com/DaveBarton/calculi
 
 common deps
-    default-language:   GHC2021
-    default-extensions: DerivingStrategies DuplicateRecordFields LambdaCase MonoLocalBinds
+    default-language:   GHC2024
+    default-extensions: DuplicateRecordFields
                         NegativeLiterals NoFieldSelectors OverloadedRecordDot OverloadedStrings
-                        PatternSynonyms RecordWildCards
-    other-extensions:   CPP DataKinds FunctionalDependencies Strict ViewPatterns
-    ghc-options:        -Wall -Wcompat -feager-blackholing -threaded
+                        PartialTypeSignatures PatternSynonyms RecordWildCards
+    other-extensions:   CPP FunctionalDependencies Strict ViewPatterns
+    ghc-options:        -Wall -Wno-partial-type-signatures -feager-blackholing -threaded
+                        -- -Wcompat
     if impl(ghc >= 9.8.1)
         ghc-options:        -Wno-x-partial
     build-depends:
         base >= 4.17 && < 5.0,
-        containers >= 0.6 && < 0.8,
+        containers >= 0.6 && < 0.9,
         contiguous >= 0.6.1.1 && < 0.7,
-        extra >= 1.6 && < 1.8,
+        extra >= 1.6 && < 1.9,
         fmt >= 0.4 && < 0.7,
         ghc-trace-events < 0.2,
-        megaparsec < 9.7,
+            -- ghc-trace-events may be unnec. as of ghc 9.12.1?
+        megaparsec < 9.9,
         mod >= 0.1.2 && < 0.3,
         parser-combinators < 1.4,
         -- safe < 0.4,
@@ -72,11 +74,11 @@ library
         -- inspection-testing >= 0.3 && < 0.6,
         -- poly >= 0.5.1, deepseq, finite-typelits, vector-sized,
         primitive >= 0.8 && < 0.10,
-        random >= 1.2.1 && < 1.3,
+        random >= 1.3 && < 1.4,
         rrb-vector >= 0.2.1 && < 0.3,
         samsort < 0.2,
         stm >= 2.4 && < 2.6,
-        strict-list < 0.2,
+        strict-list >= 1.0 && < 1.1,
         time >= 1.9.3 && < 2,
         timestats < 0.3,
         vector < 0.14
@@ -112,8 +114,8 @@ test-suite calculi-test
         Math.Algebra.Commutative.TestEPoly
         Math.Algebra.Commutative.TestBinPoly
 
-    build-depends:      calculi, hedgehog == 1.*, rrb-vector, strict-list, tasty < 1.6,
-                        tasty-hedgehog < 1.5
+    build-depends:      calculi, ghc-heap, hedgehog == 1.*, rrb-vector, strict-list,
+                        tasty < 1.6, tasty-hedgehog < 1.5
 
     hs-source-dirs:     test
     ghc-options:        -rtsopts "-with-rtsopts=-N -A64m"
@@ -136,7 +138,7 @@ benchmark bench
     import:             deps
     main-is:            bench.hs
     type:               exitcode-stdio-1.0
-    build-depends:      calculi, deepseq < 2, random >= 1.2 && < 1.3, tasty, tasty-bench < 0.5
+    build-depends:      calculi, deepseq < 2, random, tasty, tasty-bench < 0.6
                         -- , poly, vector, vector-sized
     hs-source-dirs:     timings
     ghc-options:        -rtsopts -with-rtsopts=-T

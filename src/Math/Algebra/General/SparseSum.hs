@@ -24,7 +24,7 @@ import Data.Bifunctor (Bifunctor(first, second, bimap))
 import Data.Foldable (toList)
 import Data.Maybe (fromJust)
 import GHC.Stack (HasCallStack)
-import StrictList2 (pattern (:!))
+import StrictList2 (StrictList, pattern (:!))
 import qualified StrictList2 as SL
 
 
@@ -43,7 +43,7 @@ instance Bifunctor SSTerm where
     second g cd             = cd { d = g cd.d }
     {-# INLINE second #-}
 
-type SparseSum c d  = SL.List (SSTerm c d)
+type SparseSum c d  = StrictList (SSTerm c d)
 -- ^ a sorted list of non-\"zero\" terms, with \"degrees\" (or "basis elements") decreasing
 -- according to a total order.
 

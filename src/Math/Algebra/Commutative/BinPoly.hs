@@ -33,7 +33,7 @@ import Data.Bits ((.&.), (.|.), bit, complement, countLeadingZeros, popCount, te
 import Data.Foldable (toList)
 import Data.Maybe (catMaybes, fromJust)
 import Data.Word (Word64)
-import StrictList2 (pattern (:!))
+import StrictList2 (StrictList, pattern (:!))
 import qualified StrictList2 as SL
 
 import Control.Parallel.Cooperative
@@ -83,7 +83,7 @@ evCmp58             = \case
     GrRevLexCmp -> grRevLexCmp58
 
 
-type BinPoly ev     = SL.List ev
+type BinPoly ev     = StrictList ev
 -- ^ nonzero terms, in decreasing order
 
 instance GBEv EV58 where
@@ -113,7 +113,7 @@ data BPOtherOps ev vals     = BPOtherOps {
     pParse          :: Parser (BinPoly ev)
 }
 
-bpSortCancel            :: Cmp ev -> SL.List ev -> BinPoly ev
+bpSortCancel            :: Cmp ev -> StrictList ev -> BinPoly ev
 bpSortCancel evCmp evs  = cancelRev (sortLBy evCmp (SL.toListReversed evs)) SL.Nil
   where
     cancelRev (v : t1@(w : ~t2)) r
