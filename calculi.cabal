@@ -29,18 +29,15 @@ common deps
                         NegativeLiterals NoFieldSelectors OverloadedRecordDot OverloadedStrings
                         PartialTypeSignatures PatternSynonyms RecordWildCards
     other-extensions:   CPP FunctionalDependencies Strict ViewPatterns
-    ghc-options:        -Wall -Wno-partial-type-signatures -feager-blackholing -threaded
+    ghc-options:        -Wall -Wno-x-partial -Wno-partial-type-signatures
+                        -feager-blackholing -threaded
                         -- -Wcompat
-    if impl(ghc >= 9.8.1)
-        ghc-options:        -Wno-x-partial
     build-depends:
         base >= 4.17 && < 5.0,
         containers >= 0.6 && < 0.9,
         contiguous >= 0.6.1.1 && < 0.7,
         extra >= 1.6 && < 1.9,
         fmt >= 0.4 && < 0.7,
-        ghc-trace-events < 0.2,
-            -- ghc-trace-events may be unnec. as of ghc 9.12.1?
         megaparsec < 9.9,
         mod >= 0.1.2 && < 0.3,
         parser-combinators < 1.4,

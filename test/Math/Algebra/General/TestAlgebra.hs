@@ -74,7 +74,7 @@ module Math.Algebra.General.TestAlgebra (
 
 import Math.Algebra.General.Algebra hiding (assert)
 
--- import Debug.Trace.Text (traceEvent)
+-- import Debug.Trace (traceEvent)
 import Hedgehog (Gen, Property, PropertyT, Range,
     (===), annotate, assert, cover, diff, discard, failure, forAllWith, property,
     withDiscards, withTests)

@@ -48,7 +48,7 @@ import System.IO.Unsafe (unsafePerformIO)
 
 import Data.Time.Clock.System (SystemTime(..), getSystemTime)
 import qualified Debug.TimeStats as TS
-import Debug.Trace.String (traceEvent, traceEventIO)
+import Debug.Trace (traceEvent, traceEventIO)
 import GHC.Stats (RTSStats, getRTSStats, getRTSStatsEnabled, mutator_cpu_ns, mutator_elapsed_ns)
 import System.CPUTime (getCPUTime)
 import System.IO (hFlush, stderr, stdout)
